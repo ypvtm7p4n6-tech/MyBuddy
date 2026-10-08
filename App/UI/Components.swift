@@ -17,6 +17,9 @@ struct PageScaffold<Content: View>: View {
                 .padding(.bottom, 28)
                 .frame(maxWidth: Theme.pageMaxWidth)
                 .frame(maxWidth: .infinity)
+                #if DEBUG
+                .offset(y: -DebugLaunch.scrollOffset)
+                #endif
         }
         .background { MeshBackground() }
         .navigationTitle(title)
@@ -57,7 +60,7 @@ struct GlassBlock<Content: View>: View {
             content
         }
         .padding(Theme.cardInset)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .glassCard(tint: tint, interactive: interactive)
     }
 
@@ -242,7 +245,30 @@ struct EmptyHint: View {
     }
 }
 
-/// Kleine glazen capsule-knop met een icoon, voor acties in een blok.
+/// Uiterlijk van alle acties in de app: één hoogte, vult de beschikbare breedte.
+/// Staan er meerdere naast elkaar in een HStack, dan zijn ze even breed.
+struct ChipLabel: View {
+    let title: String
+    var symbol: String? = nil
+    var destructive = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let symbol { Image(systemName: symbol) }
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .font(.footnote.weight(.semibold))
+        .foregroundStyle(destructive ? Theme.negative : Color.primary)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
+        .contentShape(Capsule())
+        .glassSurface(Capsule(), interactive: true)
+    }
+}
+
+/// Glazen capsule-knop voor acties in een blok.
 struct ChipButton: View {
     let title: String
     var symbol: String? = nil
@@ -251,16 +277,35 @@ struct ChipButton: View {
 
     var body: some View {
         Button(role: role, action: action) {
-            HStack(spacing: 5) {
-                if let symbol { Image(systemName: symbol) }
-                Text(title)
-            }
-            .font(.footnote.weight(.semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            ChipLabel(title: title, symbol: symbol, destructive: role == .destructive)
         }
         .buttonStyle(.plain)
-        .glassSurface(Capsule(), interactive: true)
+    }
+}
+
+/// Zelfde knop, maar die naar een pagina leidt.
+struct ChipLink: View {
+    let title: String
+    var symbol: String? = nil
+    let destination: Destination
+
+    var body: some View {
+        NavigationLink(value: destination) {
+            ChipLabel(title: title, symbol: symbol)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Rij met knoppen die even groot zijn en op een smal scherm netjes onder elkaar komen.
+struct ChipGrid<Content: View>: View {
+    var minimumWidth: CGFloat = 150
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumWidth), spacing: 10)], spacing: 10) {
+            content
+        }
     }
 }
 
@@ -327,5 +372,87 @@ struct PeriodControl: View {
         if first > store.now { return "Verwacht" }
         if last > store.now { return "Deels verwacht" }
         return nil
+    }
+}
+
+// MARK: - Even grote blokken
+
+/// Legt blokken in kolommen. Elk blok is even breed én even hoog (zo hoog als het hoogste blok).
+/// Het aantal kolommen volgt de beschikbare breedte: één op een iPhone, meer op iPad en Mac.
+struct EqualSizeGrid: Layout {
+    var minimumColumnWidth: CGFloat = 340
+    var spacing: CGFloat = Theme.pageSpacing
+
+    private func columns(for width: CGFloat, items: Int) -> Int {
+        guard items > 0 else { return 1 }
+        let fit = Int(((width + spacing) / (minimumColumnWidth + spacing)).rounded(.down))
+        return max(1, min(items, fit))
+    }
+
+    private func usableWidth(_ proposal: ProposedViewSize) -> CGFloat {
+        guard let w = proposal.width, w.isFinite, w > 0 else { return minimumColumnWidth }
+        return w
+    }
+
+    private func cellSize(width: CGFloat, subviews: Subviews) -> (columns: Int, cellWidth: CGFloat, cellHeight: CGFloat) {
+        let cols = columns(for: width, items: subviews.count)
+        let cellWidth = (width - spacing * CGFloat(cols - 1)) / CGFloat(cols)
+        let tallest = subviews
+            .map { $0.sizeThatFits(ProposedViewSize(width: cellWidth, height: nil)).height }
+            .max() ?? 0
+        return (cols, cellWidth, tallest)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = usableWidth(proposal)
+        let cell = cellSize(width: width, subviews: subviews)
+        let rows = Int((Double(subviews.count) / Double(cell.columns)).rounded(.up))
+        let height = CGFloat(rows) * cell.cellHeight + CGFloat(max(0, rows - 1)) * spacing
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let cell = cellSize(width: bounds.width, subviews: subviews)
+        for (index, subview) in subviews.enumerated() {
+            let row = index / cell.columns
+            let column = index % cell.columns
+            let origin = CGPoint(x: bounds.minX + CGFloat(column) * (cell.cellWidth + spacing),
+                                 y: bounds.minY + CGFloat(row) * (cell.cellHeight + spacing))
+            subview.place(at: origin, anchor: .topLeading,
+                          proposal: ProposedViewSize(width: cell.cellWidth, height: cell.cellHeight))
+        }
+    }
+}
+
+// MARK: - Verdeelbalk
+
+/// Eén balk die in stukken is verdeeld, bijvoorbeeld hoe je inkomen over uitgaven, sparen en overschot gaat.
+struct SegmentBar: View {
+    struct Segment: Identifiable {
+        let id: String
+        let value: Double
+        let color: Color
+    }
+
+    let segments: [Segment]
+    var height: CGFloat = 12
+
+    var body: some View {
+        let positive = segments.filter { $0.value > 0 }
+        let total = max(positive.reduce(0) { $0 + $1.value }, 0.0001)
+        GeometryReader { geo in
+            HStack(spacing: 2) {
+                ForEach(positive) { segment in
+                    Capsule()
+                        .fill(segment.color)
+                        .frame(width: max(4, (geo.size.width - CGFloat(max(0, positive.count - 1)) * 2) * segment.value / total))
+                }
+                if positive.isEmpty {
+                    Capsule().fill(Color.primary.opacity(0.12))
+                }
+            }
+        }
+        .frame(height: height)
+        .clipShape(Capsule())
     }
 }

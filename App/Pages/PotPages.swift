@@ -31,7 +31,7 @@ struct PotsPage: View {
                               spacing: Theme.pageSpacing) {
                         ForEach(d.pots) { pot in PotRowCard(pot: pot) }
                     }
-                    HStack(spacing: 10) {
+                    ChipGrid {
                         ChipButton(title: "Nieuwe spaarpot", symbol: "plus") { showNew = true }
                         ChipButton(title: "Kies potten voor Home", symbol: "slider.horizontal.3") { showPicker = true }
                     }
@@ -166,7 +166,7 @@ struct PotDetailPage: View {
                 }
 
                 GlassBlock(title: "Geld bewegen", symbol: "arrow.up.arrow.down") {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ChipGrid {
                         actionButton(.deposit)
                         actionButton(.withdraw)
                         actionButton(.setBalance)
@@ -179,16 +179,9 @@ struct PotDetailPage: View {
                         StatTile(title: "Deze maand erbij", value: Fmt.euro(thisMonth))
                         StatTile(title: "Standaard per maand", value: Fmt.euro(pot.monthlyContribution))
                     }
-                    HStack(spacing: 10) {
+                    ChipGrid {
                         ChipButton(title: "Doel en instellingen", symbol: "pencil") { showEdit = true }
-                        NavigationLink(value: Destination.distribute) {
-                            Label("Verdelen", systemImage: "square.split.2x2")
-                                .font(.footnote.weight(.semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .glassSurface(Capsule(), interactive: true)
-                        }
-                        .buttonStyle(.plain)
+                        ChipLink(title: "Verdelen", symbol: "square.split.2x2", destination: .distribute)
                     }
                 }
 
@@ -221,13 +214,7 @@ struct PotDetailPage: View {
     }
 
     private func actionButton(_ a: PotAction) -> some View {
-        Button { action = a } label: {
-            Label(a.title, systemImage: a.symbol)
-                .font(.footnote.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-        }
-        .glassButton()
+        ChipButton(title: a.title, symbol: a.symbol) { action = a }
     }
 
     @ViewBuilder
@@ -296,6 +283,7 @@ struct PotEntrySheet: View {
     @State private var amount = 0.0
     @State private var note = ""
     @State private var targetID: UUID?
+    @State private var viaBank = false
 
     private var others: [Pot] { store.data.pots.filter { $0.id != pot.id } }
 
@@ -316,6 +304,9 @@ struct PotEntrySheet: View {
                 }
                 if action != .transfer {
                     TextField("Waarvoor? (optioneel)", text: $note)
+                }
+                if action == .deposit || action == .withdraw {
+                    Toggle(action == .deposit ? "Van de bankrekening" : "Naar de bankrekening", isOn: $viaBank)
                 }
             } header: {
                 Text("Huidig saldo \(Fmt.euro(balance))")
@@ -348,9 +339,17 @@ struct PotEntrySheet: View {
         let target = targetID
         switch action {
         case .deposit:
-            store.mutate { $0.addPotEntry(potID: id, amount: a, kind: .deposit, note: n) }
+            if viaBank {
+                store.mutate { $0.transferBankToPot(potID: id, amount: a, note: n) }
+            } else {
+                store.mutate { $0.addPotEntry(potID: id, amount: a, kind: .deposit, note: n) }
+            }
         case .withdraw:
-            store.mutate { $0.addPotEntry(potID: id, amount: -a, kind: .withdrawal, note: n) }
+            if viaBank {
+                store.mutate { $0.transferPotToBank(potID: id, amount: a, note: n) }
+            } else {
+                store.mutate { $0.addPotEntry(potID: id, amount: -a, kind: .withdrawal, note: n) }
+            }
         case .setBalance:
             store.mutate { $0.setPotBalance(id, to: a, current: now, note: n) }
         case .transfer:

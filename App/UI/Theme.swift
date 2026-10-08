@@ -35,6 +35,8 @@ enum Theme {
     static let cardInset: CGFloat = 16
     static var tileRadius: CGFloat { cardRadius - cardInset }   // 14
     static let chipRadius: CGFloat = 10
+    /// Alle knoppen in de app zijn even hoog.
+    static let buttonHeight: CGFloat = 42
     static let pageSpacing: CGFloat = 16
     static let pageMaxWidth: CGFloat = 960
 
@@ -49,6 +51,7 @@ enum Theme {
 
     // Kleuren van de grafiek "waar gaat je geld heen"
     static let flowExpenses = Color(hex: 0xC4704A)
+    static let flowVariable = Color(hex: 0xD9A441)
     static let flowSaved = Color(hex: 0x8FA84F)
     static let flowInvested = Color(hex: 0x4E8F86)
     static let flowFree = Color(hex: 0xC9BE8E)

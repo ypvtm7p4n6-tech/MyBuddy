@@ -228,42 +228,49 @@ struct IncomePage: View {
     }
 }
 
-// MARK: - Uitgaven
-
-struct ExpensesPage: View {
-    @Environment(Router.self) private var router
-
-    var body: some View {
-        PageScaffold(title: "Uitgaven") {
-            VStack(spacing: Theme.pageSpacing) {
-                MonthPickerBlock()
-                MoneyLinesBlock(kind: .expense, month: router.focusMonth)
-                Text("Terugkerende uitgaven, zoals huur, worden automatisch naar de volgende maanden gekopieerd.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-            }
-        }
-    }
-}
+// MARK: - Regels: inkomsten en uitgaven
 
 /// Lijst met regels (extra inkomsten of uitgaven) voor één maand, met toevoegen, wijzigen en verwijderen.
+/// Bij uitgaven kun je kiezen of je alleen vaste of alleen variabele posten toont.
 struct MoneyLinesBlock: View {
     let kind: FinanceData.LineKind
+    var expenseKind: ExpenseKind? = nil
     let month: YearMonth
 
     @Environment(AppStore.self) private var store
     @State private var showAdd = false
     @State private var editing: MoneyLine?
 
+    private var title: String {
+        if kind == .income { return "Overige inkomsten" }
+        switch expenseKind {
+        case .fixed: return "Vaste uitgaven"
+        case .variable: return "Variabele uitgaven"
+        case nil: return "Uitgaven deze maand"
+        }
+    }
+
+    private var symbol: String {
+        if kind == .income { return "plus.circle.fill" }
+        return expenseKind == .variable ? "cart.fill" : "lock.fill"
+    }
+
+    private var emptyText: String {
+        if kind == .income { return "Geen andere inkomsten deze maand." }
+        switch expenseKind {
+        case .fixed: return "Nog geen vaste uitgaven. Denk aan huur, verzekeringen en abonnementen."
+        case .variable: return "Nog geen variabele uitgaven. Denk aan boodschappen, uit eten en kleding."
+        case nil: return "Nog geen uitgaven ingevuld voor deze maand."
+        }
+    }
+
     var body: some View {
         let plan = store.data.plan(for: month)
-        let lines = kind == .income ? plan.extraIncome : plan.expenses
-        GlassBlock(title: kind == .income ? "Overige inkomsten" : "Uitgaven deze maand",
-                   symbol: kind == .income ? "plus.circle.fill" : "cart.fill",
-                   subtitle: "Totaal \(Fmt.euro(lines.total))") {
+        let all = kind == .income ? plan.extraIncome : plan.expenses
+        let lines = all.filter { expenseKind == nil || kind == .income || $0.kind == expenseKind }
+        GlassBlock(title: title, symbol: symbol, subtitle: "Totaal \(Fmt.euro(lines.total))") {
             if lines.isEmpty {
-                Text(kind == .income ? "Geen andere inkomsten deze maand." : "Nog geen uitgaven ingevuld voor deze maand.")
+                Text(emptyText)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -271,15 +278,20 @@ struct MoneyLinesBlock: View {
                 ForEach(lines) { line in
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(line.name).font(.subheadline.weight(.semibold))
+                            Text(line.name)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(2)
                             if line.isRecurring {
                                 Label("Terugkerend", systemImage: "arrow.triangle.2.circlepath")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        Spacer()
-                        Text(Fmt.euro(line.amount)).font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 6)
+                        Text(Fmt.euro(line.amount))
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                         Menu {
                             Button("Wijzig") { editing = line }
                             Button("Verwijder", role: .destructive) {
@@ -298,8 +310,12 @@ struct MoneyLinesBlock: View {
             }
             ChipButton(title: "Toevoegen", symbol: "plus") { showAdd = true }
         }
-        .sheet(isPresented: $showAdd) { MoneyLineSheet(line: nil, kind: kind, month: month) }
-        .sheet(item: $editing) { line in MoneyLineSheet(line: line, kind: kind, month: month) }
+        .sheet(isPresented: $showAdd) {
+            MoneyLineSheet(line: nil, kind: kind, month: month, defaultExpenseKind: expenseKind ?? .fixed)
+        }
+        .sheet(item: $editing) { line in
+            MoneyLineSheet(line: line, kind: kind, month: month, defaultExpenseKind: line.kind)
+        }
     }
 }
 
@@ -307,11 +323,13 @@ struct MoneyLineSheet: View {
     let line: MoneyLine?
     let kind: FinanceData.LineKind
     let month: YearMonth
+    var defaultExpenseKind: ExpenseKind = .fixed
 
     @Environment(AppStore.self) private var store
     @State private var name = ""
     @State private var amount = 0.0
     @State private var recurring = false
+    @State private var expenseKind: ExpenseKind = .fixed
 
     var body: some View {
         SheetScaffold(title: titleText,
@@ -320,16 +338,24 @@ struct MoneyLineSheet: View {
             Section {
                 TextField(kind == .income ? "Naam, bijv. Zorgtoeslag" : "Naam, bijv. Huur", text: $name)
                 NumberRow(title: "Bedrag", value: $amount)
+                if kind == .expense {
+                    Picker("Soort", selection: $expenseKind) {
+                        ForEach(ExpenseKind.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
                 Toggle("Terugkerend, elke maand", isOn: $recurring)
             } footer: {
-                Text("Voor \(Fmt.month(month)). Terugkerende regels verschijnen automatisch in de volgende maanden.")
+                Text("Voor \(Fmt.month(month)). Vast zijn kosten die elke maand gelijk zijn, zoals huur. Variabel zijn kosten die schommelen, zoals boodschappen. Terugkerende regels verschijnen automatisch in de volgende maanden.")
             }
         }
         .onAppear {
+            expenseKind = defaultExpenseKind
             if let line {
                 name = line.name
                 amount = line.amount
                 recurring = line.isRecurring
+                expenseKind = line.kind
             }
         }
     }
@@ -348,6 +374,7 @@ struct MoneyLineSheet: View {
         updated.name = name.trimmingCharacters(in: .whitespaces)
         updated.amount = amount.cents
         updated.isRecurring = recurring
+        updated.kind = kind == .expense ? expenseKind : .fixed
         let kind = kind
         let month = month
         store.mutate { $0.upsertLine(updated, kind: kind, in: month) }
@@ -388,17 +415,15 @@ struct DistributePage: View {
                             .font(.footnote)
                             .foregroundStyle(Theme.negative)
                     }
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ChipButton(title: "Standaardverdeling", symbol: "arrow.counterclockwise") {
-                                store.mutate { $0.applyDefaultAllocations(in: month) }
-                            }
-                            ChipButton(title: "Rest verdelen over potten", symbol: "divide") {
-                                store.mutate { $0.spreadRemainingOverPots(in: month) }
-                            }
-                            ChipButton(title: "Alles op nul", symbol: "xmark.circle") {
-                                store.mutate { $0.clearAllocations(in: month) }
-                            }
+                    ChipGrid {
+                        ChipButton(title: "Standaardverdeling", symbol: "arrow.counterclockwise") {
+                            store.mutate { $0.applyDefaultAllocations(in: month) }
+                        }
+                        ChipButton(title: "Rest over potten", symbol: "divide") {
+                            store.mutate { $0.spreadRemainingOverPots(in: month) }
+                        }
+                        ChipButton(title: "Alles op nul", symbol: "xmark.circle") {
+                            store.mutate { $0.clearAllocations(in: month) }
                         }
                     }
                 }
@@ -440,115 +465,426 @@ struct DistributePage: View {
     }
 }
 
-// MARK: - Bankrekening
+// MARK: - Bankrekening (ook je uitgaven)
 
+enum BankAction: String, Identifiable {
+    case balance, deposit, withdraw, toPot, fromPot
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .balance: return "Saldo invullen"
+        case .deposit: return "Geld storten"
+        case .withdraw: return "Geld opnemen"
+        case .toPot: return "Naar spaarpot"
+        case .fromPot: return "Van spaarpot"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .balance: return "square.and.pencil"
+        case .deposit: return "plus.circle"
+        case .withdraw: return "minus.circle"
+        case .toPot: return "arrow.right.circle"
+        case .fromPot: return "arrow.left.circle"
+        }
+    }
+}
+
+/// De bankrekening in de app: hier komt je salaris binnen, hier gaan je uitgaven vanaf
+/// en vanaf hier zet je geld over naar spaarpotten en beleggingen. Het is geen echte bank.
 struct BankPage: View {
+    @Environment(Router.self) private var router
+    @State private var action: BankAction?
+
+    var body: some View {
+        let month = router.focusMonth
+        PageScaffold(title: "Bankrekening") {
+            VStack(spacing: Theme.pageSpacing) {
+                BankBalanceBlock(action: $action)
+                MonthPickerBlock()
+                BankFlowBlock(month: month)
+                MoneyLinesBlock(kind: .expense, expenseKind: .fixed, month: month)
+                MoneyLinesBlock(kind: .expense, expenseKind: .variable, month: month)
+                BankTransfersBlock(month: month)
+                BankForecastBlock()
+                BankBufferBlock()
+                BankHistoryBlock()
+            }
+        }
+        .sheet(item: $action) { act in BankActionSheet(action: act) }
+    }
+}
+
+struct BankBalanceBlock: View {
     @Environment(AppStore.self) private var store
-    @State private var showEntry = false
+    @Binding var action: BankAction?
 
     var body: some View {
         let d = store.data
         let now = store.now
-        let snapshots = Array(d.sortedBankSnapshots.reversed())
-        let series = d.bankSeries(from: now.adding(-3), count: 16, current: now).map { TimePoint($0) }
-
-        PageScaffold(title: "Bankrekening") {
-            VStack(spacing: Theme.pageSpacing) {
-                GlassBlock(title: "Saldo nu", symbol: "building.columns.fill", tint: Theme.olive.opacity(0.3)) {
-                    if d.hasBankBalance {
-                        BigAmount(value: d.bankBalanceNow(current: now))
-                        if let last = snapshots.first {
-                            Text("Laatst ingevuld: \(Fmt.euro(last.balance)) op \(Fmt.date(last.date)). Daarna rekent de app het overschot van elke maand erbij.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        EmptyHint(symbol: "building.columns", title: "Vul je saldo in",
-                                  message: "Je koppelt geen bank. Jij vult het saldo in, de app bewaart het en rekent ermee verder.")
-                    }
-                    ChipButton(title: "Saldo invullen", symbol: "square.and.pencil") { showEntry = true }
+        GlassBlock(title: "Saldo nu", symbol: "building.columns.fill", tint: Theme.olive.opacity(0.3)) {
+            if d.hasBankBalance {
+                BigAmount(value: d.bankBalanceNow(current: now))
+                if let last = d.sortedBankSnapshots.last {
+                    Text("Laatst ingevuld: \(Fmt.euro(last.balance)) op \(Fmt.date(last.date)). Stortingen, opnames en het overschot van elke maand komen daar bovenop.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Het saldo volgt je stortingen, opnames en het overschot van elke maand.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
-
-                if series.count > 1 {
-                    GlassBlock(title: "Verwacht verloop", symbol: "chart.line.uptrend.xyaxis") {
-                        TimeLineChart(points: series, height: 160)
-                        Text("Gebaseerd op je inkomen, uitgaven en verdeling per maand.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+            } else {
+                EmptyHint(symbol: "building.columns", title: "Begin met je saldo",
+                          message: "Je koppelt geen bank. Vul je saldo in of zet er geld op; de app houdt het bij en rekent ermee verder.")
+            }
+            ChipGrid {
+                ChipButton(title: "Geld storten", symbol: BankAction.deposit.symbol) { action = .deposit }
+                ChipButton(title: "Geld opnemen", symbol: BankAction.withdraw.symbol) { action = .withdraw }
+                if !d.pots.isEmpty {
+                    ChipButton(title: "Naar spaarpot", symbol: BankAction.toPot.symbol) { action = .toPot }
+                    ChipButton(title: "Van spaarpot", symbol: BankAction.fromPot.symbol) { action = .fromPot }
                 }
-
-                if d.hasBankBalance {
-                    GlassBlock(title: "Buffer", symbol: "shield.lefthalf.filled") {
-                        HStack(spacing: 8) {
-                            StatTile(title: "Gewenste buffer", value: Fmt.euroWhole(d.bankBuffer(current: now)))
-                            StatTile(title: "Daarboven", value: Fmt.euroWhole(d.bankSurplusAboveBuffer(current: now)),
-                                     color: Theme.positive)
-                        }
-                        NumberRow(title: "Buffer in maanden aan uitgaven",
-                                  value: Binding(get: { store.data.settings.bankBufferMonths },
-                                                 set: { v in store.mutate { $0.settings.bankBufferMonths = v } }),
-                                  unit: .plain("mnd"), maxDigits: 1)
-                        Text("Het bedrag boven je buffer gebruikt de app bij Versnellers: dat geld kan voor je doelen werken.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if !snapshots.isEmpty {
-                    GlassBlock(title: "Geschiedenis", symbol: "clock.arrow.circlepath") {
-                        VStack(spacing: 0) {
-                            ForEach(snapshots) { snap in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(Fmt.date(snap.date)).font(.subheadline.weight(.semibold))
-                                        if !snap.note.isEmpty {
-                                            Text(snap.note).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    Spacer()
-                                    Text(Fmt.euro(snap.balance)).font(.subheadline.weight(.semibold))
-                                    Menu {
-                                        Button("Verwijder", role: .destructive) {
-                                            store.mutate { $0.deleteBankSnapshot(snap.id) }
-                                        }
-                                    } label: {
-                                        Image(systemName: "ellipsis.circle")
-                                    }
-                                    .menuStyle(.borderlessButton)
-                                    .menuIndicator(.hidden)
-                                    .fixedSize()
-                                }
-                                .padding(.vertical, 8)
-                                if snap.id != snapshots.last?.id { Divider() }
-                            }
-                        }
-                    }
-                }
+                ChipButton(title: "Saldo invullen", symbol: BankAction.balance.symbol) { action = .balance }
             }
         }
-        .sheet(isPresented: $showEntry) { BankBalanceSheet() }
     }
 }
 
-struct BankBalanceSheet: View {
+/// Wat er in een maand binnenkomt, uitgaat en overblijft, met een knop om de standaardposten in te vullen.
+struct BankFlowBlock: View {
+    let month: YearMonth
     @Environment(AppStore.self) private var store
-    @State private var balance = 0.0
-    @State private var note = ""
+    @State private var message: String?
 
     var body: some View {
-        SheetScaffold(title: "Saldo invullen", onSave: {
-            let b = balance
-            let n = note
-            store.mutate { $0.addBankSnapshot(balance: b, note: n) }
-        }) {
-            Section {
-                NumberRow(title: "Saldo nu", value: $balance)
-                TextField("Notitie (optioneel)", text: $note)
-            } footer: {
-                Text("Vul het saldo in zoals het nu op je rekening staat. Je kunt dit zo vaak doen als je wilt; elke invoer wordt bewaard.")
+        let d = store.data
+        let o = d.expenseOverview(in: month)
+        let missing = d.missingStandardExpenses(in: month).count
+        GlassBlock(title: "Binnen en eruit", symbol: "arrow.left.arrow.right",
+                   subtitle: month > store.now ? "\(Fmt.month(month)) · verwacht" : Fmt.month(month)) {
+            SegmentBar(segments: [
+                SegmentBar.Segment(id: "fixed", value: o.fixed, color: Theme.flowExpenses),
+                SegmentBar.Segment(id: "variable", value: o.variable, color: Theme.flowVariable),
+                SegmentBar.Segment(id: "pots", value: o.toPots, color: Theme.flowSaved),
+                SegmentBar.Segment(id: "invest", value: o.toInvestments, color: Theme.flowInvested),
+                SegmentBar.Segment(id: "free", value: max(0, o.leftAfterTransfers), color: Theme.flowFree)
+            ])
+            VStack(spacing: 0) {
+                FlowRow(title: "Salaris en inkomsten", value: o.income, sign: "+", color: Theme.positive)
+                FlowRow(title: "Vaste uitgaven", value: o.fixed, sign: "−", dot: Theme.flowExpenses)
+                FlowRow(title: "Variabele uitgaven", value: o.variable, sign: "−", dot: Theme.flowVariable)
+                Divider().padding(.vertical, 4)
+                FlowRow(title: "Over na uitgaven", value: o.leftAfterExpenses, bold: true,
+                        color: o.leftAfterExpenses < 0 ? Theme.negative : Color.primary)
+                FlowRow(title: "Naar spaarpotten", value: o.toPots, sign: "−", dot: Theme.flowSaved)
+                FlowRow(title: "Naar beleggingen", value: o.toInvestments, sign: "−", dot: Theme.flowInvested)
+                Divider().padding(.vertical, 4)
+                FlowRow(title: "Over op de rekening", value: o.leftAfterTransfers, bold: true,
+                        color: o.leftAfterTransfers < 0 ? Theme.negative : Theme.positive)
+            }
+            if o.leftAfterTransfers < 0 {
+                Text("Je geeft meer uit en verdeelt meer dan je inkomen. Pas je uitgaven of je verdeling aan.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.negative)
+            }
+            ChipGrid {
+                ChipButton(title: missing == 0 ? "Standaardposten staan erin" : "Standaard uitgaven invullen",
+                           symbol: "wand.and.stars") {
+                    let added = store.data.missingStandardExpenses(in: month).count
+                    store.mutate { $0.fillStandardExpenses(in: month) }
+                    message = added == 0 ? "Alle standaardposten staan al in deze maand."
+                                         : "\(added) standaardposten ingevuld met een richtbedrag. Pas ze aan naar jouw situatie."
+                }
+                ChipLink(title: "Geld verdelen", symbol: "square.split.2x2", destination: .distribute)
+            }
+            if let message {
+                Text(message).font(.caption).foregroundStyle(.secondary)
+            } else if missing > 0 {
+                Text("De knop vult gangbare vaste en variabele posten in met een richtbedrag. Je kunt alles daarna aanpassen of verwijderen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
-        .onAppear { balance = store.data.bankBalanceNow(current: store.now) }
+    }
+}
+
+struct FlowRow: View {
+    let title: String
+    let value: Double
+    var sign: String = ""
+    var bold = false
+    var color: Color = .primary
+    var dot: Color? = nil
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let dot { Circle().fill(dot).frame(width: 8, height: 8) }
+            Text(title)
+                .font(bold ? .subheadline.weight(.semibold) : .subheadline)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Text(sign + Fmt.euro(value))
+                .font(bold ? .subheadline.weight(.bold) : .subheadline)
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+/// Overschrijvingen vanaf de rekening naar spaarpotten en beleggingen, volgens je maandverdeling.
+struct BankTransfersBlock: View {
+    let month: YearMonth
+    @Environment(AppStore.self) private var store
+
+    private struct Row: Identifiable {
+        let id: UUID
+        let symbol: String
+        let color: Color
+        let title: String
+        let amount: Double
+    }
+
+    var body: some View {
+        let d = store.data
+        let potRows: [Row] = d.pots.map { pot in
+            Row(id: pot.id, symbol: pot.symbol, color: Theme.color(pot.colorIndex), title: pot.name,
+                amount: d.allocation(pot.id, in: month))
+        }.filter { $0.amount != 0 }
+        let holdingRows: [Row] = d.holdings.map { h in
+            Row(id: h.id, symbol: h.kind.symbol, color: Theme.flowInvested, title: h.name,
+                amount: d.allocation(h.id, in: month))
+        }.filter { $0.amount != 0 }
+        let rows = potRows + holdingRows
+        let total = rows.reduce(0) { $0 + $1.amount }
+        GlassBlock(title: "Overschrijvingen", symbol: "arrow.up.right.circle.fill",
+                   subtitle: "Van de rekening naar spaarpotten en beleggingen", headerLink: .distribute) {
+            if rows.isEmpty {
+                Text("Je hebt voor \(Fmt.month(month)) nog niets verdeeld. Tik hier om geld te verdelen.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(rows) { row in
+                        TransferRow(symbol: row.symbol, color: row.color, title: row.title, amount: row.amount)
+                    }
+                }
+                .padding(10)
+                .tile()
+                HStack {
+                    Text("Totaal overgeschreven").font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Text(Fmt.euro(total)).font(.subheadline.weight(.bold))
+                }
+            }
+        }
+    }
+}
+
+struct TransferRow: View {
+    let symbol: String
+    let color: Color
+    let title: String
+    let amount: Double
+
+    var body: some View {
+        HStack(spacing: 10) {
+            SymbolBadge(symbol: symbol, color: color, size: 28)
+            Text(title).font(.footnote.weight(.semibold)).lineLimit(1)
+            Spacer(minLength: 6)
+            Text("−" + Fmt.euro(amount))
+                .font(.footnote.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+    }
+}
+
+struct BankForecastBlock: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let now = store.now
+        let series = store.data.bankSeries(from: now.adding(-3), count: 16, current: now).map { TimePoint($0) }
+        if series.count > 1 {
+            GlassBlock(title: "Verwacht verloop", symbol: "chart.line.uptrend.xyaxis") {
+                TimeLineChart(points: series, height: 160)
+                Text("Gebaseerd op je saldo, inkomen, uitgaven en verdeling per maand. De grafiek past zich aan als je iets wijzigt.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct BankBufferBlock: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let d = store.data
+        let now = store.now
+        if d.hasBankBalance {
+            GlassBlock(title: "Buffer", symbol: "shield.lefthalf.filled") {
+                HStack(spacing: 8) {
+                    StatTile(title: "Gewenste buffer", value: Fmt.euroWhole(d.bankBuffer(current: now)))
+                    StatTile(title: "Daarboven", value: Fmt.euroWhole(d.bankSurplusAboveBuffer(current: now)),
+                             color: Theme.positive)
+                }
+                NumberRow(title: "Buffer in maanden aan uitgaven",
+                          value: Binding(get: { store.data.settings.bankBufferMonths },
+                                         set: { v in store.mutate { $0.settings.bankBufferMonths = v } }),
+                          unit: .plain("mnd"), maxDigits: 1)
+                ChipLink(title: "Buffercalculator", symbol: "shield.lefthalf.filled", destination: .buffer)
+            }
+        }
+    }
+}
+
+struct BankHistoryBlock: View {
+    @Environment(AppStore.self) private var store
+
+    private struct Item: Identifiable {
+        let id: UUID
+        let date: Date
+        let title: String
+        let detail: String
+        let amount: Double
+        let isSnapshot: Bool
+    }
+
+    var body: some View {
+        let d = store.data
+        let items: [Item] = (d.bankSnapshots.map { s in
+            Item(id: s.id, date: s.date, title: "Saldo ingevuld", detail: s.note, amount: s.balance, isSnapshot: true)
+        } + d.bankEntries.map { e in
+            Item(id: e.id, date: e.date, title: e.kind.title, detail: e.note, amount: e.amount, isSnapshot: false)
+        }).sorted { $0.date > $1.date }
+
+        if !items.isEmpty {
+            GlassBlock(title: "Geschiedenis", symbol: "clock.arrow.circlepath") {
+                VStack(spacing: 0) {
+                    ForEach(items.prefix(40)) { item in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.title).font(.subheadline.weight(.semibold))
+                                Text(item.detail.isEmpty ? Fmt.date(item.date) : "\(Fmt.date(item.date)) · \(item.detail)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            Spacer(minLength: 6)
+                            Text(item.isSnapshot ? Fmt.euro(item.amount) : (item.amount >= 0 ? "+" : "") + Fmt.euro(item.amount))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(item.isSnapshot || item.amount >= 0 ? Color.primary : Theme.negative)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            Menu {
+                                Button("Verwijder", role: .destructive) {
+                                    let id = item.id
+                                    let snapshot = item.isSnapshot
+                                    store.mutate { data in
+                                        if snapshot { data.deleteBankSnapshot(id) } else { data.deleteBankEntry(id) }
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                            }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                        }
+                        .padding(.vertical, 8)
+                        if item.id != items.prefix(40).last?.id { Divider() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct BankActionSheet: View {
+    let action: BankAction
+
+    @Environment(AppStore.self) private var store
+    @State private var amount = 0.0
+    @State private var note = ""
+    @State private var potID: UUID?
+
+    var body: some View {
+        let d = store.data
+        let now = store.now
+        let bank = d.bankBalanceNow(current: now)
+        let potBalance = potID.map { d.potBalance($0, at: now) } ?? 0
+        SheetScaffold(title: action.title, canSave: canSave(potBalance: potBalance), onSave: { save() }) {
+            Section {
+                if action == .toPot || action == .fromPot {
+                    if d.pots.isEmpty {
+                        Text("Je hebt nog geen spaarpotten.").foregroundStyle(.secondary)
+                    } else {
+                        Picker("Spaarpot", selection: $potID) {
+                            ForEach(d.pots) { pot in Text(pot.name).tag(pot.id as UUID?) }
+                        }
+                    }
+                }
+                NumberRow(title: action == .balance ? "Saldo nu" : "Bedrag", value: $amount)
+                TextField("Notitie (optioneel)", text: $note)
+            } header: {
+                Text(headerText(bank: bank, potBalance: potBalance))
+            } footer: {
+                Text(footerText)
+            }
+        }
+        .onAppear {
+            if action == .balance { amount = bank }
+            if potID == nil { potID = d.pots.first?.id }
+        }
+    }
+
+    private func headerText(bank: Double, potBalance: Double) -> String {
+        switch action {
+        case .fromPot: return "Saldo spaarpot \(Fmt.euro(potBalance)) · bankrekening \(Fmt.euro(bank))"
+        default: return "Saldo bankrekening \(Fmt.euro(bank))"
+        }
+    }
+
+    private var footerText: String {
+        switch action {
+        case .balance: return "Vul het saldo in zoals het nu op je rekening staat. Elke invoer wordt bewaard."
+        case .deposit: return "Dit zet geld op de bankrekening in de app. Er gebeurt niets bij een echte bank."
+        case .withdraw: return "Dit haalt geld van de bankrekening in de app, bijvoorbeeld voor contant geld of een grote uitgave."
+        case .toPot: return "Het bedrag gaat van de bankrekening naar de spaarpot en staat in de geschiedenis van beide."
+        case .fromPot: return "Het bedrag gaat van de spaarpot terug naar de bankrekening."
+        }
+    }
+
+    private func canSave(potBalance: Double) -> Bool {
+        switch action {
+        case .balance: return true
+        case .deposit, .withdraw: return amount > 0
+        case .toPot: return amount > 0 && potID != nil
+        case .fromPot: return amount > 0 && potID != nil && amount <= potBalance + 0.005
+        }
+    }
+
+    private func save() {
+        let a = amount
+        let n = note.trimmingCharacters(in: .whitespaces)
+        let pot = potID
+        switch action {
+        case .balance:
+            store.mutate { $0.addBankSnapshot(balance: a, note: n) }
+        case .deposit:
+            store.mutate { $0.addBankEntry(amount: a, note: n) }
+        case .withdraw:
+            store.mutate { $0.addBankEntry(amount: -a, note: n) }
+        case .toPot:
+            if let pot { store.mutate { $0.transferBankToPot(potID: pot, amount: a, note: n) } }
+        case .fromPot:
+            if let pot { store.mutate { $0.transferPotToBank(potID: pot, amount: a, note: n) } }
+        }
     }
 }

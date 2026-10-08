@@ -9,6 +9,12 @@ enum DebugLaunch {
 
     static var isDemo: Bool { arguments.contains("-mybuddy-demo") }
 
+    /// Schuift de inhoud omhoog, zodat screenshots ook lager gelegen delen van een pagina tonen.
+    static var scrollOffset: Double {
+        guard let raw = value(for: "-mybuddy-scroll"), let v = Double(raw) else { return 0 }
+        return v
+    }
+
     static func value(for key: String) -> String? {
         guard let i = arguments.firstIndex(of: key), i + 1 < arguments.count else { return nil }
         return arguments[i + 1]

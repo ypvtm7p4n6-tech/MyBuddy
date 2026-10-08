@@ -17,8 +17,7 @@ struct HomeView: View {
                         WelcomeBlock()
                     }
                     RemainingHeader()
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.pageSpacing, alignment: .top)],
-                              spacing: Theme.pageSpacing) {
+                    EqualSizeGrid {
                         OverviewBlock()
                         PotsBlock()
                         InvestBlock()
@@ -185,20 +184,43 @@ struct PotsBlock: View {
                           message: "Maak een pot voor je buffer, vakantie of een grote aankoop.",
                           actionTitle: "Nieuwe spaarpot") { showNewPot = true }
             } else {
+                PotsTotals()
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(pots) { pot in PotMiniTile(pot: pot) }
                     ForEach(0..<max(0, 3 - pots.count), id: \.self) { _ in
                         EmptySlotTile { showPicker = true }
                     }
                 }
-                HStack {
-                    Spacer()
-                    ChipButton(title: "Kies potten", symbol: "slider.horizontal.3") { showPicker = true }
-                }
+                ChipButton(title: "Kies potten", symbol: "slider.horizontal.3") { showPicker = true }
             }
         }
         .sheet(isPresented: $showPicker) { PotPickerSheet() }
         .sheet(isPresented: $showNewPot) { PotEditSheet(pot: nil) }
+    }
+}
+
+/// Boven de spaarpotten op Home: wat je in totaal hebt gespaard en wat je totale doel is.
+struct PotsTotals: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let d = store.data
+        let now = store.now
+        let saved = d.totalSaved(current: now)
+        let goal = d.totalGoal()
+        let towardGoals = d.savedTowardGoals(current: now)
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                StatTile(title: "Totaal gespaard", value: Fmt.euroWhole(saved))
+                StatTile(title: "Totaal doel", value: goal > 0 ? Fmt.euroWhole(goal) : "–")
+            }
+            if goal > 0 {
+                ProgressBar(progress: towardGoals / goal, tint: Theme.accent, height: 8)
+                Text("\(Fmt.percent(min(towardGoals / goal, 9.99), digits: 0)) van je totale doel gehaald")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
@@ -301,10 +323,7 @@ struct InvestBlock: View {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                     ForEach(tiles) { h in HoldingTile(holding: h) }
                 }
-                HStack {
-                    Spacer()
-                    ChipButton(title: "Kies beleggingen", symbol: "slider.horizontal.3") { showPicker = true }
-                }
+                ChipButton(title: "Kies beleggingen", symbol: "slider.horizontal.3") { showPicker = true }
             }
         }
         .sheet(isPresented: $showPicker) { HoldingPickerSheet() }

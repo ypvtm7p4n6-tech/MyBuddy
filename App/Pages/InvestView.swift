@@ -12,6 +12,7 @@ struct InvestView: View {
                           spacing: Theme.pageSpacing) {
                     PortfolioBlock()
                     ProjectionBlock()
+                    SavingsGoalBlock()
                     GoalsBlock()
                     AcceleratorsBlock()
                 }

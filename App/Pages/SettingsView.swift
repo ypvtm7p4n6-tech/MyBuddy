@@ -14,15 +14,20 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                AccountSection()
+
                 Section {
                     NumberRow(title: "Inflatie per jaar", value: setting(\.inflation), unit: .percent, maxDigits: 2)
                     NumberRow(title: "Opnamepercentage", value: setting(\.defaultWithdrawalRate), unit: .percent, maxDigits: 2)
+                    NumberRow(title: "Spaarrente", value: setting(\.savingsRate), unit: .percent, maxDigits: 2)
                     NumberRow(title: "Buffer op bankrekening", value: setting(\.bankBufferMonths), unit: .plain("mnd"), maxDigits: 1)
                 } header: {
                     Text("Rekenen")
                 } footer: {
                     Text("Inflatie gebruikt de app voor 'koopkracht van vandaag'. Het opnamepercentage is het deel van je kapitaal dat je per jaar opneemt (4% is gebruikelijk). De buffer is het aantal maanden aan uitgaven dat op je rekening blijft staan.")
                 }
+
+                MarketDataSection()
 
                 Section {
                     Toggle("Koersen automatisch ophalen", isOn: setting(\.autoRefreshPrices))
@@ -46,6 +51,8 @@ struct SettingsView: View {
                 } footer: {
                     Text("Koersen komen van Yahoo Finance. Dat is een gratis, onofficiële bron zonder garantie op beschikbaarheid of juistheid. Gebruik de cijfers als indicatie.")
                 }
+
+                BackupSection()
 
                 Section {
                     Button("Voorbeelddata laden") { confirmSample = true }

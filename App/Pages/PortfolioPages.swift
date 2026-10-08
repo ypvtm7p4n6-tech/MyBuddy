@@ -101,10 +101,10 @@ struct PortfolioPage: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                ChipButton(title: "Vernieuwen", symbol: "arrow.clockwise") {
-                    Task { await store.refreshPrices(force: true) }
-                }
+                Spacer(minLength: 0)
+            }
+            ChipButton(title: "Koersen vernieuwen", symbol: "arrow.clockwise") {
+                Task { await store.refreshPrices(force: true) }
             }
         }
     }
@@ -306,10 +306,10 @@ struct HoldingDetailPage: View {
             } else if let date = holding.lastPriceDate {
                 Text("Bijgewerkt \(Fmt.dateTime(date))").font(.caption).foregroundStyle(.secondary)
             }
-            Spacer()
-            ChipButton(title: "Vernieuwen", symbol: "arrow.clockwise") {
-                Task { await store.refreshPrices(force: true) }
-            }
+            Spacer(minLength: 0)
+        }
+        ChipButton(title: "Koers vernieuwen", symbol: "arrow.clockwise") {
+            Task { await store.refreshPrices(force: true) }
         }
     }
 

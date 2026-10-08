@@ -37,6 +37,17 @@ extension FinanceData {
         pots.reduce(0) { $0 + potBalance($1.id, at: current) }.cents
     }
 
+    /// Som van alle doelbedragen van spaarpotten die een doel hebben.
+    func totalGoal() -> Double {
+        pots.compactMap { $0.goalAmount }.filter { $0 > 0 }.reduce(0, +).cents
+    }
+
+    /// Wat er nu gespaard is in de potten die een doel hebben (om te vergelijken met `totalGoal`).
+    func savedTowardGoals(current: YearMonth) -> Double {
+        pots.filter { ($0.goalAmount ?? 0) > 0 }
+            .reduce(0) { $0 + potBalance($1.id, at: current) }.cents
+    }
+
     /// 0...1 (kan boven 1 uitkomen als je het doel hebt gehaald); nil zonder doel.
     func potProgress(_ potID: UUID, current: YearMonth) -> Double? {
         guard let pot = self.pot(potID), let goal = pot.goalAmount, goal > 0 else { return nil }

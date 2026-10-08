@@ -24,15 +24,9 @@ struct GoalsPage: View {
                 }
 
                 GlassBlock(title: "Nieuw doel", symbol: "plus.circle.fill") {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ChipGrid {
                         ForEach(GoalKind.allCases) { kind in
-                            Button { newGoal = d.goalTemplate(kind) } label: {
-                                Label(kind.title, systemImage: kind.symbol)
-                                    .font(.footnote.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                            }
-                            .glassButton()
+                            ChipButton(title: kind.title, symbol: kind.symbol) { newGoal = d.goalTemplate(kind) }
                         }
                     }
                 }
@@ -264,7 +258,7 @@ struct AcceleratorsSection: View {
                         }
                     }
                 }
-                HStack(spacing: 10) {
+                ChipGrid {
                     ChipButton(title: "Alles kiezen", symbol: "checkmark.circle") { selected = Set(list.map(\.id)) }
                     ChipButton(title: "Niets kiezen", symbol: "circle") { selected = [] }
                 }

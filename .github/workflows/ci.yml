@@ -1,6 +1,6 @@
 name: CI
 
-# Bouwt de app voor iOS en macOS en draait de tests van de rekenlogica.
+# Bouwt de app voor iOS en macOS, draait de tests en maakt screenshots van alle schermen.
 # Draait bij elke push naar de ontwikkeltak en handmatig via "Run workflow".
 on:
   push:
@@ -17,42 +17,82 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Swift-versie
-        run: swift --version
       - name: swift test
         working-directory: CoreTests
         run: swift test
 
+  live-network:
+    name: Live netwerktest (koersen en marktdata)
+    runs-on: macos-26
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift test met internet
+        working-directory: CoreTests
+        env:
+          MYBUDDY_LIVE: "1"
+        run: swift test --filter "Live" 2>&1 | tail -n 250
+
   build-ios:
-    name: Bouwen iOS
+    name: Bouwen en testen iOS
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Xcode-versie
-        run: xcodebuild -version
-      - name: XcodeGen
-        run: brew install xcodegen
-      - name: Project genereren
-        run: xcodegen
+      - run: brew install xcodegen
+      - run: xcodegen
       - name: Bouwen voor iOS Simulator
         run: |
           set -o pipefail
           xcodebuild -project MyBuddy.xcodeproj -scheme MyBuddy \
             -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)|\*\* " | head -n 150
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* " | head -n 150
+      - name: App-tests in de simulator
+        run: |
+          set -o pipefail
+          UDID=$(xcrun simctl list devices available | grep -E "iPhone 1[0-9] Pro \(" | head -1 | grep -oE '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}')
+          xcodebuild test -project MyBuddy.xcodeproj -scheme MyBuddy \
+            -destination "id=$UDID" CODE_SIGNING_ALLOWED=NO 2>&1 \
+            | grep -E "error:|Test Case.*(passed|failed)|Executed|TEST (SUCCEEDED|FAILED)|\*\* " | tail -n 200
 
   build-macos:
     name: Bouwen macOS
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: XcodeGen
-        run: brew install xcodegen
-      - name: Project genereren
-        run: xcodegen
+      - run: brew install xcodegen
+      - run: xcodegen
       - name: Bouwen voor macOS
         run: |
           set -o pipefail
           xcodebuild -project MyBuddy.xcodeproj -scheme MyBuddy \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* " | head -n 150
+
+  screenshots:
+    name: Screenshots
+    runs-on: macos-26
+    continue-on-error: true
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen
+      - name: Screenshots maken
+        run: scripts/ci-screenshots.sh screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: screenshots
+      - name: Screenshots publiceren op de tak ci-screenshots
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git worktree add --orphan -b ci-screenshots ../shots
+          cp screenshots/*.png ../shots/ || true
+          cd ../shots
+          git add -A
+          git commit -m "Screenshots van ${GITHUB_SHA}" || true
+          git push --force origin ci-screenshots

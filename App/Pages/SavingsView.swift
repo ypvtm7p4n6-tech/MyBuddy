@@ -17,10 +17,10 @@ struct SavingsView: View {
                               spacing: Theme.pageSpacing) {
                         PeriodBlock()
                         IncomeBlock()
-                        ExpensesBlock()
+                        BankBlock()
                         DistributeBlock()
                         PotsSummaryBlock()
-                        BankBlock()
+                        BufferBlock()
                     }
                 }
             }
@@ -80,41 +80,6 @@ struct IncomeBlock: View {
                     StatTile(title: "Salaris", value: Fmt.euroWhole(salaryTotal))
                     StatTile(title: "Overig", value: Fmt.euroWhole(extraTotal))
                 }
-            }
-        }
-    }
-}
-
-// MARK: - Uitgaven
-
-struct ExpensesBlock: View {
-    @Environment(AppStore.self) private var store
-    @Environment(Router.self) private var router
-
-    var body: some View {
-        let d = store.data
-        let period = d.periodSummary(router.periodMode, containing: router.focusMonth, current: store.now)
-        let top = d.plan(for: router.focusMonth).expenses.sorted { $0.amount > $1.amount }.prefix(3)
-        LinkedBlock(title: "Uitgaven", symbol: "cart.fill",
-                    subtitle: Fmt.period(router.periodMode, containing: router.focusMonth),
-                    destination: .expenses) {
-            BigAmount(value: period.expenses, font: .system(.title, design: .rounded, weight: .bold))
-            if top.isEmpty {
-                Text("Voeg je vaste lasten en uitgaven toe, dan klopt je overzicht.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 6) {
-                    ForEach(Array(top)) { line in
-                        HStack {
-                            Text(line.name).font(.footnote)
-                            Spacer()
-                            Text(Fmt.euroWhole(line.amount)).font(.footnote.weight(.semibold))
-                        }
-                    }
-                }
-                .padding(10)
-                .tile()
             }
         }
     }
@@ -184,7 +149,7 @@ struct PotsSummaryBlock: View {
     }
 }
 
-// MARK: - Bankrekening
+// MARK: - Bankrekening en uitgaven
 
 struct BankBlock: View {
     @Environment(AppStore.self) private var store
@@ -195,24 +160,30 @@ struct BankBlock: View {
         let months = router.periodMode.months(containing: router.focusMonth)
         let target = months.last ?? router.focusMonth
         let balance = d.bankBalance(at: target)
+        let overviews = months.map { d.expenseOverview(in: $0) }
+        let fixed = overviews.reduce(0) { $0 + $1.fixed }
+        let variable = overviews.reduce(0) { $0 + $1.variable }
+        let left = overviews.reduce(0) { $0 + $1.leftAfterTransfers }
         LinkedBlock(title: "Bankrekening", symbol: "building.columns.fill",
-                    subtitle: balance == nil ? nil : "Eind \(Fmt.period(router.periodMode, containing: router.focusMonth))",
+                    subtitle: "Saldo, uitgaven en overschrijvingen",
                     destination: .bank) {
             if let balance {
                 BigAmount(value: balance, font: .system(.title, design: .rounded, weight: .bold))
                 if target > store.now {
-                    Text("Verwacht, op basis van je laatst ingevulde saldo en je plannen.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Buffer boven \(Fmt.euroWhole(d.bankBuffer(current: store.now))): \(Fmt.euroWhole(d.bankSurplusAboveBuffer(current: store.now)))")
+                    Text("Verwacht eind \(Fmt.period(router.periodMode, containing: router.focusMonth)).")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("Vul het saldo van je bankrekening in. De app houdt het bij en rekent ermee.")
+                Text("Vul je saldo in of zet er geld op. De app houdt het bij en rekent ermee.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 8)], spacing: 8) {
+                StatTile(title: "Vast", value: Fmt.euroWhole(fixed))
+                StatTile(title: "Variabel", value: Fmt.euroWhole(variable))
+                StatTile(title: "Over", value: Fmt.euroWhole(left),
+                         color: left < 0 ? Theme.negative : Color.primary)
             }
         }
     }

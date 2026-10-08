@@ -48,13 +48,11 @@ struct ProjectionPage: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach([1, 5, 10, 20, 30], id: \.self) { years in
-                                ChipButton(title: "\(years) jaar") {
-                                    unit = .years
-                                    horizon = Double(years)
-                                }
+                    ChipGrid(minimumWidth: 90) {
+                        ForEach([1, 5, 10, 20, 30], id: \.self) { years in
+                            ChipButton(title: "\(years) jaar") {
+                                unit = .years
+                                horizon = Double(years)
                             }
                         }
                     }
