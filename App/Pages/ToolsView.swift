@@ -1,13 +1,13 @@
 import SwiftUI
 
 /// Tab 3: beleggingen. Vier blokken, elk met een eigen pagina.
-struct InvestView: View {
+struct ToolsView: View {
     @Environment(Router.self) private var router
 
     var body: some View {
         @Bindable var router = router
-        NavigationStack(path: $router.investPath) {
-            PageScaffold(title: "Beleggingen", showsSettings: true) {
+        NavigationStack(path: $router.toolsPath) {
+            PageScaffold(title: "Tools", showsSettings: true) {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.pageSpacing, alignment: .top)],
                           spacing: Theme.pageSpacing) {
                     PortfolioBlock()

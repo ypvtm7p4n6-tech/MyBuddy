@@ -12,7 +12,7 @@ struct RootView: View {
             switch router.tab {
             case .home: HomeView()
             case .savings: SavingsView()
-            case .investing: InvestView()
+            case .tools: ToolsView()
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {

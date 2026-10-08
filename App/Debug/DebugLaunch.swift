@@ -32,7 +32,7 @@ enum DebugLaunch {
         switch tab {
         case .home: router.homePath = [destination]
         case .savings: router.savingsPath = [destination]
-        case .investing: router.investPath = [destination]
+        case .tools: router.toolsPath = [destination]
         }
     }
 
@@ -52,6 +52,8 @@ enum DebugLaunch {
         case "accelerators": return .accelerators
         case "buffer": return .buffer
         case "savingsgoal": return .savingsGoal
+        case "purchase": return .purchase
+        case "cashflow": return .cashflow
         case "pot0": return d.pots.first.map { .pot($0.id) }
         case "holding0": return d.holdings.first.map { .holding($0.id) }
         case "goal0": return d.goals.first.map { .goal($0.id) }

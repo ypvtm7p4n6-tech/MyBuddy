@@ -17,6 +17,9 @@ final class AppStore {
     /// Melding bij het opstarten (bijv. een onleesbaar opslagbestand).
     var startupNotice: String?
     var saveFailed = false
+    /// Wordt aangeroepen na elke lokale wijziging die is opgeslagen (voor synchronisatie met de cloud).
+    /// Niet aangeroepen bij `applyRemote`, anders zou een binnenkomende wijziging meteen terugkaatsen.
+    @ObservationIgnored var onDataChanged: ((FinanceData) -> Void)?
 
     @ObservationIgnored private let storage: FinanceStorage?
     @ObservationIgnored private let quotes: any QuoteService
@@ -55,7 +58,21 @@ final class AppStore {
     func mutate(_ change: (inout FinanceData) -> Void) {
         var copy = data
         change(&copy)
+        guard copy != data else { return }
+        copy.modifiedAt = Date()
         data = copy
+        persist()
+        onDataChanged?(copy)
+    }
+
+    /// Vandaag, op de seconde nauwkeurig. Dagbedragen (saldo van nu) rekenen hiermee.
+    var today: Date { Date() }
+
+    /// Neemt gegevens van een ander apparaat over zonder ze meteen weer terug te sturen.
+    func applyRemote(_ remote: FinanceData) {
+        var incoming = remote
+        incoming.materialize(upTo: now)
+        data = incoming
         persist()
     }
 

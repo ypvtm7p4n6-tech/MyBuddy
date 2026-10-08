@@ -171,7 +171,7 @@ extension FinanceData {
             let extra = (salary.hourlyRate * 2 * 52 / 12).cents
             if extra >= 10 {
                 candidates.append(("hours", "Werk 2 uur extra per week",
-                                   "Bij je uurloon van \(Fmt.euro(salary.hourlyRate)) levert dat ongeveer \(Fmt.euro(extra)) extra per maand op.",
+                                   "Bij je uurloon van \(Fmt.euroExact(salary.hourlyRate)) levert dat ongeveer \(Fmt.euro(extra)) extra per maand op.",
                                    "clock.badge.plus",
                                    ScenarioChange(extraMonthly: extra)))
             }

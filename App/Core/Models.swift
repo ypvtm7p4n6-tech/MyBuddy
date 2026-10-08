@@ -22,6 +22,10 @@ struct SalarySettings: Codable, Equatable {
     /// Netto uurloon bij `.hourly`.
     var hourlyRate: Double = 0
     var hoursPerWeek: Double = 0
+    /// Dag van de maand waarop het salaris binnenkomt (1...31; korte maanden gebruiken de laatste dag).
+    var payDay: Int = 25
+
+    enum CodingKeys: String, CodingKey { case mode, fixedMonthly, hourlyRate, hoursPerWeek, payDay }
 
     /// Gemiddeld aantal uren per maand: uren per week × 52 / 12.
     var defaultMonthlyHours: Double { hoursPerWeek * 52 / 12 }
@@ -35,11 +39,31 @@ struct SalarySettings: Codable, Equatable {
     }
 }
 
+// decodeIfPresent: oude opslagbestanden zonder `payDay` blijven laden.
+extension SalarySettings {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        mode = try c.decodeIfPresent(SalaryMode.self, forKey: .mode) ?? mode
+        fixedMonthly = try c.decodeIfPresent(Double.self, forKey: .fixedMonthly) ?? fixedMonthly
+        hourlyRate = try c.decodeIfPresent(Double.self, forKey: .hourlyRate) ?? hourlyRate
+        hoursPerWeek = try c.decodeIfPresent(Double.self, forKey: .hoursPerWeek) ?? hoursPerWeek
+        payDay = try c.decodeIfPresent(Int.self, forKey: .payDay) ?? payDay
+    }
+}
+
 /// Vaste lasten (huur, verzekeringen) of variabele uitgaven (boodschappen, uit eten).
 enum ExpenseKind: String, Codable, CaseIterable, Identifiable {
     case fixed, variable
     var id: String { rawValue }
     var title: String { self == .fixed ? "Vast" : "Variabel" }
+}
+
+/// Een deel van een uitgave dat uit een spaarpot betaald wordt.
+struct PotShare: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var potID: UUID
+    var amount: Double
 }
 
 /// Een regel met een bedrag: extra inkomen of uitgave.
@@ -51,8 +75,24 @@ struct MoneyLine: Identifiable, Codable, Equatable {
     var isRecurring: Bool = false
     /// Alleen van belang voor uitgaven.
     var kind: ExpenseKind = .fixed
+    /// Dag van de maand waarop het bedrag binnenkomt of eraf gaat (1...31). nil = inkomsten op de
+    /// salarisdag, uitgaven op de 1e.
+    var day: Int?
+    /// Uitgaven: welk deel uit welke spaarpot komt. Wat overblijft gaat van de bankrekening.
+    var potShares: [PotShare] = []
 
-    enum CodingKeys: String, CodingKey { case id, name, amount, isRecurring, kind }
+    enum CodingKeys: String, CodingKey { case id, name, amount, isRecurring, kind, day, potShares }
+}
+
+extension MoneyLine {
+    /// Totaal dat uit spaarpotten komt (nooit meer dan het bedrag zelf, nooit negatief).
+    var fromPots: Double {
+        let total = potShares.reduce(0) { $0 + $1.amount }
+        return min(max(0, total), max(0, amount)).cents
+    }
+
+    /// Wat van de bankrekening afgaat (of bij inkomsten: erbij komt).
+    var fromBank: Double { (amount - fromPots).cents }
 }
 
 // decodeIfPresent: oude opslagbestanden zonder `kind` blijven laden.
@@ -63,13 +103,17 @@ extension MoneyLine {
                   name: try c.decodeIfPresent(String.self, forKey: .name) ?? "",
                   amount: try c.decodeIfPresent(Double.self, forKey: .amount) ?? 0,
                   isRecurring: try c.decodeIfPresent(Bool.self, forKey: .isRecurring) ?? false,
-                  kind: try c.decodeIfPresent(ExpenseKind.self, forKey: .kind) ?? .fixed)
+                  kind: try c.decodeIfPresent(ExpenseKind.self, forKey: .kind) ?? .fixed,
+                  day: try c.decodeIfPresent(Int.self, forKey: .day),
+                  potShares: try c.decodeIfPresent([PotShare].self, forKey: .potShares) ?? [])
     }
 }
 
 extension Array where Element == MoneyLine {
     var total: Double { reduce(0) { $0 + $1.amount }.cents }
     func total(of kind: ExpenseKind) -> Double { filter { $0.kind == kind }.total }
+    /// Het deel van de regels dat uit spaarpotten betaald wordt.
+    var totalFromPots: Double { reduce(0) { $0 + $1.fromPots }.cents }
 }
 
 struct MonthPlan: Codable, Equatable {
@@ -81,12 +125,15 @@ struct MonthPlan: Codable, Equatable {
     var expenses: [MoneyLine] = []
     /// Verdeling: id van spaarpot of belegging → bedrag deze maand.
     var allocations: [String: Double] = [:]
+    /// Dag van de maand waarop de verdeling over spaarpotten en beleggingen wordt overgeboekt.
+    /// nil = de dag van de pot of belegging zelf, anders de salarisdag.
+    var transferDay: Int?
 }
 
 // MARK: - Spaarpotten
 
 enum PotEntryKind: String, Codable {
-    case opening, deposit, withdrawal, adjustment, transferIn, transferOut
+    case opening, deposit, withdrawal, adjustment, transferIn, transferOut, interest, expense
 
     var title: String {
         switch self {
@@ -96,6 +143,33 @@ enum PotEntryKind: String, Codable {
         case .adjustment: return "Saldo aangepast"
         case .transferIn: return "Overgeboekt naar deze pot"
         case .transferOut: return "Overgeboekt naar andere pot"
+        case .interest: return "Rente"
+        case .expense: return "Uitgave betaald"
+        }
+    }
+}
+
+/// Hoe vaak een spaarpot rente uitbetaalt.
+enum InterestPayout: String, Codable, CaseIterable, Identifiable {
+    case monthly, quarterly, halfYearly, yearly
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .monthly: return "Elke maand"
+        case .quarterly: return "Elk kwartaal"
+        case .halfYearly: return "Elk half jaar"
+        case .yearly: return "Elk jaar"
+        }
+    }
+
+    /// Aantal maanden tussen twee uitbetalingen.
+    var intervalMonths: Int {
+        switch self {
+        case .monthly: return 1
+        case .quarterly: return 3
+        case .halfYearly: return 6
+        case .yearly: return 12
         }
     }
 }
@@ -112,6 +186,42 @@ struct Pot: Identifiable, Codable, Equatable {
     var monthlyContribution: Double = 0
     var startMonth: YearMonth
     var createdAt = Date()
+    /// Rente per jaar als breuk (0,02 = 2%). 0 = geen rente.
+    var interestRate: Double = 0
+    var interestPayout: InterestPayout = .yearly
+    /// Dag van de maand waarop de rente wordt bijgeschreven (1...31).
+    var interestPayoutDay: Int = 1
+    /// De maand (1...12) waarin de eerste uitbetaling van het jaar valt; de volgende volgen
+    /// op `interestPayout.intervalMonths` afstand. Bij maandelijks is dit niet van belang.
+    var interestPayoutMonth: Int = 1
+    /// Dag van de maand waarop de maandelijkse inleg wordt overgeboekt. nil = salarisdag.
+    var transferDay: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, symbol, colorIndex, goalAmount, goalDate, monthlyContribution, startMonth, createdAt
+        case interestRate, interestPayout, interestPayoutDay, interestPayoutMonth, transferDay
+    }
+}
+
+// decodeIfPresent: oude opslagbestanden zonder rente- en overboekvelden blijven laden.
+extension Pot {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+                  name: try c.decodeIfPresent(String.self, forKey: .name) ?? "",
+                  symbol: try c.decodeIfPresent(String.self, forKey: .symbol) ?? "banknote",
+                  colorIndex: try c.decodeIfPresent(Int.self, forKey: .colorIndex) ?? 0,
+                  goalAmount: try c.decodeIfPresent(Double.self, forKey: .goalAmount),
+                  goalDate: try c.decodeIfPresent(Date.self, forKey: .goalDate),
+                  monthlyContribution: try c.decodeIfPresent(Double.self, forKey: .monthlyContribution) ?? 0,
+                  startMonth: try c.decodeIfPresent(YearMonth.self, forKey: .startMonth) ?? YearMonth.current(),
+                  createdAt: try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(),
+                  interestRate: try c.decodeIfPresent(Double.self, forKey: .interestRate) ?? 0,
+                  interestPayout: try c.decodeIfPresent(InterestPayout.self, forKey: .interestPayout) ?? .yearly,
+                  interestPayoutDay: try c.decodeIfPresent(Int.self, forKey: .interestPayoutDay) ?? 1,
+                  interestPayoutMonth: try c.decodeIfPresent(Int.self, forKey: .interestPayoutMonth) ?? 1,
+                  transferDay: try c.decodeIfPresent(Int.self, forKey: .transferDay))
+    }
 }
 
 struct PotEntry: Identifiable, Codable, Equatable {
@@ -245,6 +355,8 @@ struct Holding: Identifiable, Codable, Equatable {
     var annualCost: Double = 0.002
     var monthlyContribution: Double = 0
     var startMonth: YearMonth
+    /// Dag van de maand waarop de maandelijkse inleg wordt overgeboekt. nil = salarisdag.
+    var transferDay: Int?
     var snapshots: [ValueSnapshot] = []
     var lastPrice: Double?
     var lastPriceDate: Date?
@@ -335,9 +447,13 @@ struct AppSettings: Codable, Equatable {
     var savingsRate: Double = 0.02
     /// Wanneer de marktgegevens (inflatie, rente) voor het laatst van internet zijn gehaald.
     var lastMarketUpdate: Date?
+    /// Eigen volgorde van de blokken per pagina: "home", "savings", "tools" → lijst met blok-id's.
+    /// Een ontbrekende pagina of onbekend blok betekent: standaardvolgorde.
+    var blockOrder: [String: [String]] = [:]
 
     enum CodingKeys: String, CodingKey {
         case inflation, defaultWithdrawalRate, bankBufferMonths, autoRefreshPrices, savingsRate, lastMarketUpdate
+        case blockOrder
     }
 }
 
@@ -351,6 +467,38 @@ extension AppSettings {
         autoRefreshPrices = try c.decodeIfPresent(Bool.self, forKey: .autoRefreshPrices) ?? autoRefreshPrices
         savingsRate = try c.decodeIfPresent(Double.self, forKey: .savingsRate) ?? savingsRate
         lastMarketUpdate = try c.decodeIfPresent(Date.self, forKey: .lastMarketUpdate)
+        blockOrder = try c.decodeIfPresent([String: [String]].self, forKey: .blockOrder) ?? [:]
+    }
+}
+
+/// Een toegepaste versneller, met de oude toestand van alles wat hij aanpaste, zodat je hem kunt herstellen.
+struct AppliedAccelerator: Identifiable, Codable, Equatable {
+    var id = UUID()
+    /// Id van de versneller (`Accelerator.id`) en van het doel waarvoor hij gold.
+    var acceleratorID: String
+    var goalID: UUID?
+    var title: String
+    var date: Date
+    /// Samenvatting van wat er is aangepast, in gewone woorden (voor in de lijst).
+    var summary: [String] = []
+    /// Toestand vóór het toepassen van alleen de dingen die zijn aangepast; herstellen zet die terug op id.
+    var before = AcceleratorBackup()
+}
+
+struct AcceleratorBackup: Codable, Equatable {
+    var pots: [Pot] = []
+    var holdings: [Holding] = []
+    var goals: [LifeGoal] = []
+    /// Maandplannen vóór de wijziging, per maandsleutel ("2026-10").
+    var plans: [String: MonthPlan] = [:]
+    /// Maandsleutels die vóór het toepassen nog niet bestonden (herstellen verwijdert ze weer).
+    var newPlanKeys: [String] = []
+    var settings: AppSettings?
+    var salary: SalarySettings?
+
+    var isEmpty: Bool {
+        pots.isEmpty && holdings.isEmpty && goals.isEmpty && plans.isEmpty && newPlanKeys.isEmpty
+            && settings == nil && salary == nil
     }
 }
 
@@ -370,6 +518,10 @@ struct FinanceData: Codable, Equatable {
     /// Welke beleggingen op Home staan (nil = de eerste vier).
     var homeHoldingIDs: [UUID]?
     var settings = AppSettings()
+    /// Versnellers die zijn toegepast en nog hersteld kunnen worden (nieuwste laatst).
+    var appliedAccelerators: [AppliedAccelerator] = []
+    /// Laatste wijziging; de nieuwste kant wint bij synchroniseren tussen apparaten.
+    var modifiedAt: Date?
 
     init(startMonth: YearMonth) {
         self.startMonth = startMonth
@@ -378,6 +530,7 @@ struct FinanceData: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case version, startMonth, salary, months, pots, potEntries, holdings
         case bankSnapshots, bankEntries, goals, homePotIDs, homeHoldingIDs, settings
+        case appliedAccelerators, modifiedAt
     }
 }
 
@@ -399,5 +552,7 @@ extension FinanceData {
         homePotIDs = try c.decodeIfPresent([UUID].self, forKey: .homePotIDs)
         homeHoldingIDs = try c.decodeIfPresent([UUID].self, forKey: .homeHoldingIDs)
         settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
+        appliedAccelerators = try c.decodeIfPresent([AppliedAccelerator].self, forKey: .appliedAccelerators) ?? []
+        modifiedAt = try c.decodeIfPresent(Date.self, forKey: .modifiedAt)
     }
 }

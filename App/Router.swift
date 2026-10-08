@@ -2,14 +2,14 @@ import SwiftUI
 import Observation
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case home, savings, investing
+    case home, savings, tools
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .home: return "Home"
         case .savings: return "Savings"
-        case .investing: return "Beleggingen"
+        case .tools: return "Tools"
         }
     }
 
@@ -17,7 +17,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return selected ? "house.fill" : "house"
         case .savings: return selected ? "banknote.fill" : "banknote"
-        case .investing: return "chart.line.uptrend.xyaxis"
+        case .tools: return selected ? "wrench.and.screwdriver.fill" : "wrench.and.screwdriver"
         }
     }
 }
@@ -32,7 +32,7 @@ enum Destination: Hashable {
     case pots
     case pot(UUID)
     case bank
-    // Beleggingen
+    // Savings: beleggingen, doelen
     case portfolio
     case holding(UUID)
     case projection
@@ -41,6 +41,10 @@ enum Destination: Hashable {
     case accelerators
     case buffer
     case savingsGoal
+    // Tools
+    case purchase
+    // Dag voor dag: wat er per dag op de bankrekening staat
+    case cashflow
 }
 
 @MainActor
@@ -49,7 +53,7 @@ final class Router {
     var tab: AppTab = .home
     var homePath: [Destination] = []
     var savingsPath: [Destination] = []
-    var investPath: [Destination] = []
+    var toolsPath: [Destination] = []
     var showSettings = false
 
     /// De maand waar je naar kijkt op de Savings-pagina's.
@@ -61,7 +65,7 @@ final class Router {
         switch newTab {
         case .home: homePath = []
         case .savings: savingsPath = []
-        case .investing: investPath = []
+        case .tools: toolsPath = []
         }
         tab = newTab
     }

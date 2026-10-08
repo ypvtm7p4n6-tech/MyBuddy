@@ -14,14 +14,23 @@ enum Fmt {
         return f
     }
 
-    /// "€ 1.234,56"
+    /// Standaard weergave van bedragen: afgerond op hele euro's, "€ 1.235". Overal in de app gebruiken.
     static func euro(_ value: Double) -> String {
-        formatter(fractionDigits: 2...2).string(from: NSNumber(value: value)) ?? "€ \(value)"
+        euroWhole(value)
     }
 
-    /// "€ 1.235" (zonder centen)
+    /// "€ 1.235" (zonder centen). Rondt af en toont nooit "-€ 0".
     static func euroWhole(_ value: Double) -> String {
-        formatter(fractionDigits: 0...0).string(from: NSNumber(value: value.rounded())) ?? "€ \(Int(value.rounded()))"
+        var rounded = value.rounded()
+        if rounded == 0 { rounded = 0 }
+        return formatter(fractionDigits: 0...0).string(from: NSNumber(value: rounded)) ?? "€ \(Int(rounded))"
+    }
+
+    /// "€ 1.234,56": alleen voor bedragen waar centen ertoe doen, zoals een uurloon of een koers.
+    static func euroExact(_ value: Double) -> String {
+        var cents = (value * 100).rounded() / 100
+        if cents == 0 { cents = 0 }
+        return formatter(fractionDigits: 2...2).string(from: NSNumber(value: cents)) ?? "€ \(value)"
     }
 
     /// Kort voor assen: "€1,2k", "€3,4 mln".

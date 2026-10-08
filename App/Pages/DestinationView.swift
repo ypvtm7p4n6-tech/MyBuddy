@@ -21,6 +21,8 @@ struct DestinationView: View {
         case .accelerators: AcceleratorsPage()
         case .buffer: BufferPage()
         case .savingsGoal: SavingsGoalPage()
+        case .purchase: PurchasePage()
+        case .cashflow: CashflowPage()
         }
     }
 }
