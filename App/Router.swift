@@ -1,0 +1,66 @@
+import SwiftUI
+import Observation
+
+enum AppTab: String, CaseIterable, Identifiable {
+    case home, savings, investing
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .home: return "Home"
+        case .savings: return "Savings"
+        case .investing: return "Beleggingen"
+        }
+    }
+
+    func symbol(selected: Bool) -> String {
+        switch self {
+        case .home: return selected ? "house.fill" : "house"
+        case .savings: return selected ? "banknote.fill" : "banknote"
+        case .investing: return "chart.line.uptrend.xyaxis"
+        }
+    }
+}
+
+/// Alle pagina's die je alleen bereikt door op een blok te tikken.
+enum Destination: Hashable {
+    // Overzicht en Savings
+    case overview
+    case income
+    case expenses
+    case distribute
+    case pots
+    case pot(UUID)
+    case bank
+    // Beleggingen
+    case portfolio
+    case holding(UUID)
+    case projection
+    case goals
+    case goal(UUID)
+    case accelerators
+}
+
+@MainActor
+@Observable
+final class Router {
+    var tab: AppTab = .home
+    var homePath: [Destination] = []
+    var savingsPath: [Destination] = []
+    var investPath: [Destination] = []
+    var showSettings = false
+
+    /// De maand waar je naar kijkt op de Savings-pagina's.
+    var focusMonth: YearMonth = YearMonth.current()
+    var periodMode: PeriodMode = .month
+
+    /// Schuift de periode op: richting -1 = terug, +1 = vooruit.
+    func shiftPeriod(_ direction: Int) {
+        focusMonth = focusMonth.adding(direction * periodMode.stepMonths)
+    }
+
+    /// Springt naar de huidige maand.
+    func resetFocus(to current: YearMonth) {
+        focusMonth = current
+    }
+}

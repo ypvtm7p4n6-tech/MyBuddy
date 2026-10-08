@@ -1,0 +1,58 @@
+name: CI
+
+# Bouwt de app voor iOS en macOS en draait de tests van de rekenlogica.
+# Draait bij elke push naar de ontwikkeltak en handmatig via "Run workflow".
+on:
+  push:
+    branches: ["claude/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    name: Tests rekenlogica
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift-versie
+        run: swift --version
+      - name: swift test
+        working-directory: CoreTests
+        run: swift test
+
+  build-ios:
+    name: Bouwen iOS
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode-versie
+        run: xcodebuild -version
+      - name: XcodeGen
+        run: brew install xcodegen
+      - name: Project genereren
+        run: xcodegen
+      - name: Bouwen voor iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project MyBuddy.xcodeproj -scheme MyBuddy \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)|\*\* " | head -n 150
+
+  build-macos:
+    name: Bouwen macOS
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: XcodeGen
+        run: brew install xcodegen
+      - name: Project genereren
+        run: xcodegen
+      - name: Bouwen voor macOS
+        run: |
+          set -o pipefail
+          xcodebuild -project MyBuddy.xcodeproj -scheme MyBuddy \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* " | head -n 150
