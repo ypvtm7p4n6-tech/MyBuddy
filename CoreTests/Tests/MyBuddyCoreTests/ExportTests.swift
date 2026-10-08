@@ -353,7 +353,7 @@ final class CSVExportTests: XCTestCase {
         XCTAssertEqual(future.from, oct2026, "een startmaand na nu telt niet")
         XCTAssertEqual(future.count, 13)
 
-        let ancient = CSVExport.defaultMonthRange(FinanceData(startMonth: YearMonth(year: 1990, month: 1)), current: oct2026)
+        let ancient = CSVExport.defaultMonthRange(FinanceData(startMonth: YearMonth(year: 1900, month: 1)), current: oct2026)
         XCTAssertEqual(ancient.count, 600)
         XCTAssertEqual(ancient.from.months(to: oct2026.adding(12)), 599)
     }

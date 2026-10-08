@@ -1,4 +1,8 @@
 import XCTest
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import MyBuddyCore
 
 let aug2026 = YearMonth(year: 2026, month: 8)
