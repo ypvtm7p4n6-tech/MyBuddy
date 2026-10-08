@@ -39,33 +39,45 @@ shoot_device() {
     sleep 3
     xcrun simctl io "$udid" screenshot "$OUT/${label}-${appearance}-${name}.png" >/dev/null
   }
+  # Tabs: home, savings, tools. Beleggingen en doelen staan onder Savings, de aankoopcheck onder Tools.
+  # Met -mybuddy-scroll zie je ook het onderste blok: de tabbalk mag daar niets van afdekken.
   shot home -mybuddy-tab home
   shot home-2 -mybuddy-tab home -mybuddy-scroll 650
   shot savings -mybuddy-tab savings
   shot savings-2 -mybuddy-tab savings -mybuddy-scroll 650
-  shot invest -mybuddy-tab investing
-  shot invest-2 -mybuddy-tab investing -mybuddy-scroll 650
+  shot savings-3 -mybuddy-tab savings -mybuddy-scroll 1300
+  shot savings-4 -mybuddy-tab savings -mybuddy-scroll 1950
+  shot tools -mybuddy-tab tools
+  shot tools-2 -mybuddy-tab tools -mybuddy-scroll 650
   if [ "$appearance" = "light" ]; then
     shot savings-year -mybuddy-tab savings -mybuddy-period year
+    shot order-home -mybuddy-tab home -mybuddy-order home
+    shot order-savings -mybuddy-tab savings -mybuddy-order savings
+    shot order-tools -mybuddy-tab tools -mybuddy-order tools
     shot overview -mybuddy-tab home -mybuddy-open overview
     shot income -mybuddy-tab savings -mybuddy-open income
     shot bank -mybuddy-tab savings -mybuddy-open bank
     shot bank-2 -mybuddy-tab savings -mybuddy-open bank -mybuddy-scroll 700
     shot bank-3 -mybuddy-tab savings -mybuddy-open bank -mybuddy-scroll 1400
+    shot cashflow -mybuddy-tab savings -mybuddy-open cashflow
+    shot cashflow-2 -mybuddy-tab savings -mybuddy-open cashflow -mybuddy-scroll 700
     shot distribute -mybuddy-tab savings -mybuddy-open distribute
     shot pots -mybuddy-tab savings -mybuddy-open pots
     shot pot -mybuddy-tab savings -mybuddy-open pot0
+    shot pot-2 -mybuddy-tab savings -mybuddy-open pot0 -mybuddy-scroll 700
     shot buffer -mybuddy-tab savings -mybuddy-open buffer
     shot buffer-2 -mybuddy-tab savings -mybuddy-open buffer -mybuddy-scroll 700
-    shot portfolio -mybuddy-tab investing -mybuddy-open portfolio
-    shot holding -mybuddy-tab investing -mybuddy-open holding0
-    shot projection -mybuddy-tab investing -mybuddy-open projection
-    shot savingsgoal -mybuddy-tab investing -mybuddy-open savingsgoal
-    shot savingsgoal-2 -mybuddy-tab investing -mybuddy-open savingsgoal -mybuddy-scroll 700
-    shot goals -mybuddy-tab investing -mybuddy-open goals
-    shot goal -mybuddy-tab investing -mybuddy-open goal0
-    shot goal-2 -mybuddy-tab investing -mybuddy-open goal0 -mybuddy-scroll 700
-    shot accelerators -mybuddy-tab investing -mybuddy-open accelerators
+    shot portfolio -mybuddy-tab savings -mybuddy-open portfolio
+    shot holding -mybuddy-tab savings -mybuddy-open holding0
+    shot goals -mybuddy-tab savings -mybuddy-open goals
+    shot goal -mybuddy-tab savings -mybuddy-open goal0
+    shot goal-2 -mybuddy-tab savings -mybuddy-open goal0 -mybuddy-scroll 700
+    shot savingsgoal -mybuddy-tab savings -mybuddy-open savingsgoal
+    shot savingsgoal-2 -mybuddy-tab savings -mybuddy-open savingsgoal -mybuddy-scroll 700
+    shot projection -mybuddy-tab tools -mybuddy-open projection
+    shot accelerators -mybuddy-tab tools -mybuddy-open accelerators
+    shot purchase -mybuddy-tab tools -mybuddy-open purchase
+    shot purchase-2 -mybuddy-tab tools -mybuddy-open purchase -mybuddy-scroll 700
     shot settings -mybuddy-tab home -mybuddy-settings
   fi
 }

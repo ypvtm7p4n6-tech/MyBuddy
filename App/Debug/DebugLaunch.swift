@@ -2,8 +2,11 @@
 import Foundation
 
 /// Alleen voor ontwikkelaars (debug-builds): start de app met voorbeelddata en opent direct een pagina,
-/// zodat CI screenshots kan maken. Voorbeeld:
+/// zodat CI screenshots kan maken. Voorbeelden:
 /// `-mybuddy-demo -mybuddy-tab savings -mybuddy-open pot0`
+/// `-mybuddy-demo -mybuddy-tab tools -mybuddy-open purchase`
+/// `-mybuddy-demo -mybuddy-tab savings -mybuddy-order savings` (opent het blad "Volgorde aanpassen")
+/// Tabs: home, savings, tools. Pagina's: zie `destination(named:store:)`.
 enum DebugLaunch {
     private static var arguments: [String] { ProcessInfo.processInfo.arguments }
 
@@ -26,6 +29,9 @@ enum DebugLaunch {
             router.periodMode = mode
         }
         if arguments.contains("-mybuddy-settings") { router.showSettings = true }
+        if let raw = value(for: "-mybuddy-order"), let page = BlockPage(rawValue: raw) {
+            router.orderPage = page
+        }
         guard let tabName = value(for: "-mybuddy-tab"), let tab = AppTab(rawValue: tabName) else { return }
         router.tab = tab
         guard let name = value(for: "-mybuddy-open"), let destination = destination(named: name, store: store) else { return }

@@ -13,8 +13,26 @@ final class PotsTests: XCTestCase {
         let (d, pot) = makeData()
         XCTAssertEqual(d.potBalance(pot.id, at: aug2026), 700, accuracy: 0.001)
         XCTAssertEqual(d.potBalance(pot.id, at: oct2026), 1100, accuracy: 0.001)
-        XCTAssertEqual(d.totalSaved(current: oct2026), 1100, accuracy: 0.001)
+        // Vandaag buiten oktober: het saldo aan het eind van oktober. Binnen oktober telt de inleg van de 25e
+        // pas mee vanaf die dag (de klok wordt hier niet gebruikt: `today` is vast).
+        XCTAssertEqual(d.totalSaved(current: oct2026, today: day(YearMonth(year: 2026, month: 12), 3)), 1100, accuracy: 0.001)
+        XCTAssertEqual(d.totalSaved(current: oct2026, today: day(oct2026, 8)), 900, accuracy: 0.001)
+        // 25 oktober 2026 is de dag dat de klok terug gaat (Nederland): `oct2026.date(day:)` is altijd 12:00 plaatselijke tijd.
+        XCTAssertEqual(d.totalSaved(current: oct2026, today: oct2026.date(day: 25)), 1100, accuracy: 0.001)
         XCTAssertEqual(d.potBalance(UUID(), at: oct2026), 0)
+    }
+
+    func testBalanceAsOfADayCountsAllocationFromItsTransferDay() {
+        let (d, pot) = makeData()
+        // 500 beginsaldo (2 aug) + inleg van 200 op de 25e van augustus, september en oktober.
+        XCTAssertEqual(d.potBalance(pot.id, asOf: day(aug2026, 1)), 0, accuracy: 0.001)
+        XCTAssertEqual(d.potBalance(pot.id, asOf: day(aug2026, 2)), 500, accuracy: 0.001)
+        XCTAssertEqual(d.potBalance(pot.id, asOf: day(aug2026, 24)), 500, accuracy: 0.001)
+        XCTAssertEqual(d.potBalance(pot.id, asOf: day(aug2026, 25)), 700, accuracy: 0.001)
+        XCTAssertEqual(d.potBalance(pot.id, asOf: day(sep2026, 24)), 700, accuracy: 0.001)
+        XCTAssertEqual(d.potBalance(pot.id, asOf: day(sep2026, 25)), 900, accuracy: 0.001)
+        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: day(oct2026, 10)), 900, accuracy: 0.001)
+        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: day(YearMonth(year: 2027, month: 2), 1)), 1100, accuracy: 0.001)
     }
 
     func testSetBalanceCreatesAdjustment() {
@@ -79,6 +97,20 @@ final class PotsTests: XCTestCase {
         XCTAssertEqual(items.count, 4) // beginsaldo + 3 maandverdelingen
         XCTAssertEqual(items.first?.id, "alloc-2026-10")
         XCTAssertEqual(items.filter { !$0.isMonthlyAllocation }.count, 1)
+        XCTAssertEqual(items.map(\.kind), [.allocation, .allocation, .allocation, .manual])
+    }
+
+    func testTimelineShowsAllocationOnItsTransferDateNotOnTheFirst() {
+        var (d, pot) = makeData()
+        pot.transferDay = 10
+        d.pots[0] = pot
+        let items = d.potTimeline(pot.id, current: oct2026)
+        let october = items.first { $0.id == "alloc-2026-10" }
+        // 12:00 plaatselijke tijd (`day(_:_:)` telt uren op en wijkt af in landen waar de klok in oktober verzet).
+        XCTAssertEqual(october?.date, oct2026.date(day: 10))
+        XCTAssertEqual(items.first?.id, "alloc-2026-10")
+        // Nieuwste eerst.
+        XCTAssertEqual(items.map(\.date), items.map(\.date).sorted(by: >))
     }
 
     func testDeletePotCleansEverything() {
@@ -115,21 +147,30 @@ final class BankTests: XCTestCase {
         return d
     }
 
-    func testBalanceFollowsSnapshotPlusSurplus() {
+    // Sinds het saldo per dag wordt bijgehouden tellen de gebeurtenissen van de maand van het meetpunt ná dat
+    // meetpunt mee: het salaris van de 25e augustus komt dus bij het saldo van 5 augustus (huur en eenmalig
+    // van de 1e vielen er al voor). Eerder bleef de hele meetmaand buiten beeld.
+    func testBalanceFollowsSnapshotPlusEventsAfterIt() {
         let d = makeData()
         XCTAssertNil(d.bankBalance(at: YearMonth(year: 2026, month: 7)))
-        XCTAssertEqual(d.bankBalance(at: aug2026) ?? 0, 1000, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalance(at: sep2026) ?? 0, 3100, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 5200, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalanceNow(current: oct2026), 5200, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(at: aug2026) ?? 0, 4100, accuracy: 0.001) // 1000 + salaris 3000 + toeslag 100
+        XCTAssertEqual(d.bankBalance(at: sep2026) ?? 0, 6200, accuracy: 0.001) // + 3100 - 1000
+        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 8300, accuracy: 0.001)
+        // Vandaag in een andere maand: het saldo aan het eind van de maand. Binnen de maand: dat van vandaag.
+        XCTAssertEqual(d.bankBalanceNow(current: oct2026, today: day(YearMonth(year: 2027, month: 1), 5)), 8300, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalanceNow(current: oct2026, today: day(oct2026, 10)), 5200, accuracy: 0.001) // 6200 - 1000 (huur 1 okt)
+        XCTAssertEqual(d.bankBalanceNow(current: oct2026, today: oct2026.date(day: 25)), 8300, accuracy: 0.001)
     }
 
     func testNewestSnapshotWins() {
         var d = makeData()
         d.addBankSnapshot(balance: 4000, date: day(sep2026, 20))
-        XCTAssertEqual(d.bankBalance(at: aug2026) ?? 0, 1000, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalance(at: sep2026) ?? 0, 4000, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 6100, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(at: aug2026) ?? 0, 4100, accuracy: 0.001)
+        // Vanaf het nieuwe meetpunt van 20 september: 4000 + salaris en toeslag van de 25e.
+        XCTAssertEqual(d.bankBalance(at: sep2026) ?? 0, 7100, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 9200, accuracy: 0.001)
+        // De dag van het meetpunt zelf geeft precies het ingevulde saldo.
+        XCTAssertEqual(d.bankBalance(on: day(sep2026, 20)) ?? 0, 4000, accuracy: 0.001)
     }
 
     func testSeriesMarksProjection() {
@@ -137,7 +178,15 @@ final class BankTests: XCTestCase {
         let series = d.bankSeries(from: aug2026, count: 5, current: oct2026)
         XCTAssertEqual(series.count, 5)
         XCTAssertEqual(series.map(\.isProjected), [false, false, false, true, true])
-        XCTAssertEqual(series.last?.balance ?? 0, 9400, accuracy: 0.001)
+        XCTAssertEqual(series.last?.balance ?? 0, 12500, accuracy: 0.001) // 4100 + vier maanden van 2100
+        XCTAssertEqual(series.map(\.balance), [4100, 6200, 8300, 10400, 12500])
+    }
+
+    func testSeriesSkipsMonthsBeforeTheFirstBalance() {
+        let d = makeData()
+        let july = YearMonth(year: 2026, month: 7)
+        let series = d.bankSeries(from: july, count: 3, current: oct2026)
+        XCTAssertEqual(series.map(\.month), [aug2026, sep2026])
     }
 
     func testBufferAndSurplus() {
@@ -145,7 +194,9 @@ final class BankTests: XCTestCase {
         // Gemiddelde uitgaven: (1050 + 1000 + 1000) / 3 = 1016,67; buffer 2 maanden.
         XCTAssertEqual(d.averageMonthlyExpenses(current: oct2026), 1016.67, accuracy: 0.01)
         XCTAssertEqual(d.bankBuffer(current: oct2026), 2033.34, accuracy: 0.02)
-        XCTAssertEqual(d.bankSurplusAboveBuffer(current: oct2026), 3166.66, accuracy: 0.03)
+        // Saldo eind oktober 8300 (zie hierboven) min de buffer.
+        let endOfOctober = day(YearMonth(year: 2027, month: 1), 5)
+        XCTAssertEqual(d.bankSurplusAboveBuffer(current: oct2026, today: endOfOctober), 8300 - 2033.34, accuracy: 0.03)
     }
 
     func testNoSnapshotMeansNoSurplus() {

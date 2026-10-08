@@ -1,5 +1,17 @@
 import Foundation
 
+/// Wat voor soort regel het is in de geschiedenis van een spaarpot.
+enum PotTimelineKind: String, Codable {
+    /// Maandverdeling (overgeschreven op de overschrijfdatum).
+    case allocation
+    /// Handmatige boeking: storting, opname, overboeking, saldo-aanpassing.
+    case manual
+    /// Rente (opgeslagen of verwacht).
+    case interest
+    /// Een uitgave die (deels) uit deze pot betaald wordt. Het bedrag is negatief.
+    case expense
+}
+
 /// Eén regel in de geschiedenis van een spaarpot.
 struct PotTimelineItem: Identifiable, Equatable {
     var id: String
@@ -9,32 +21,147 @@ struct PotTimelineItem: Identifiable, Equatable {
     var amount: Double
     /// true = maandelijkse verdeling, false = handmatige boeking.
     var isMonthlyAllocation: Bool
+    var kind: PotTimelineKind = .manual
+    /// Ligt na het moment `asOf` van `potTimeline`: nog niet gebeurd, dus nog niet in het saldo van nu.
+    var isPlanned: Bool = false
+}
+
+/// Boekingen op datum met lopende som in hele centen, om snel een saldo op een moment te vinden.
+struct CentsLedger: Equatable {
+    private(set) var dates: [Date] = []
+    private(set) var prefix: [Int] = [0]
+
+    init(items: [(date: Date, cents: Int)] = []) {
+        let sorted = items.sorted { $0.date < $1.date }
+        dates = sorted.map { $0.date }
+        var running = 0
+        var sums = [0]
+        sums.reserveCapacity(sorted.count + 1)
+        for item in sorted {
+            running = CentsMath.add(running, item.cents)
+            sums.append(running)
+        }
+        prefix = sums
+    }
+
+    /// Aantal boekingen met een datum vóór `limit`.
+    func countBefore(_ limit: Date) -> Int {
+        var lo = 0
+        var hi = dates.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if dates[mid] < limit { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
+    }
+
+    /// Aantal boekingen met een datum op of vóór `date`.
+    func countUpTo(_ date: Date) -> Int {
+        var lo = 0
+        var hi = dates.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if dates[mid] <= date { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
+    }
+
+    /// Som van alle boekingen vóór `limit`.
+    func sum(before limit: Date) -> Int {
+        prefix[countBefore(limit)]
+    }
+
+    /// Som van de boekingen na `base` (exclusief) en vóór `limit`.
+    func sum(after base: Date, before limit: Date) -> Int {
+        let hi = countBefore(limit)
+        let lo = min(countUpTo(base), hi)
+        return prefix[hi] - prefix[lo]
+    }
 }
 
 extension FinanceData {
     func pot(_ id: UUID) -> Pot? { pots.first { $0.id == id } }
 
-    /// Saldo aan het eind van `month`. Toekomstige maanden tellen de geplande verdeling mee.
-    func potBalance(_ potID: UUID, at month: YearMonth) -> Double {
-        guard let pot = self.pot(potID) else { return 0 }
-        let limit = month.endExclusive
-        var total = potEntries.reduce(0.0) { sum, e in
-            e.potID == potID && e.date < limit ? sum + e.amount : sum
+    // MARK: Saldo
+
+    /// Alle boekingen van een pot tot en met `last` als lijst op datum: handmatige boekingen, de maandverdelingen
+    /// op hun overschrijfdatum en de potdelen van uitgaven op hun uitgavedatum (negatief).
+    /// `managed` zijn de id's van opgeslagen rente-uitbetalingen; die tellen apart mee (zie `potFlows`).
+    func potLedger(for pot: Pot, throughMonth last: YearMonth, excluding managed: Set<UUID> = []) -> CentsLedger {
+        var items: [(date: Date, cents: Int)] = []
+        for e in potEntries where e.potID == pot.id && !managed.contains(e.id) {
+            items.append((e.date, CentsMath.int(e.amount)))
         }
-        var m = pot.startMonth
-        while m <= month {
-            total += allocation(potID, in: m)
+        // Zelfde regels als `allocation(_:in:)` en `transferDay(for:in:)`, maar zonder elke maand alles opnieuw op te zoeken.
+        let potKey = pot.id.uuidString
+        let anyShares = months.values.contains { plan in plan.expenses.contains { !$0.potShares.isEmpty } }
+        let stored = StoredPlans(anyShares ? months : [:])
+        let cal = YearMonth.calendar
+        var m = startMonth
+        var count = 0
+        while m <= last && count < 2_400 {
+            let storedPlan = months[m.key]
+            let planned = storedPlan?.allocations[potKey] ?? (m >= pot.startMonth ? pot.monthlyContribution : 0)
+            let cents = CentsMath.int(planned)
+            if cents != 0 {
+                let day = min(YearMonth.clampedDay(storedPlan?.transferDay ?? pot.transferDay ?? salary.payDay), m.dayCount)
+                items.append((m.date(day: day, calendar: cal), cents))
+            }
+            if anyShares {
+                // Een nog niet vastgelegde maand krijgt de terugkerende uitgaven van het laatst opgeslagen plan.
+                let lines = storedPlan?.expenses ?? (stored.latest(before: m)?.expenses.filter { $0.isRecurring } ?? [])
+                for line in lines where !line.potShares.isEmpty {
+                    for payment in expenseSplit(of: line).pots where payment.potID == pot.id {
+                        items.append((m.date(day: expenseDay(of: line), calendar: cal), -payment.cents))
+                    }
+                }
+            }
             m = m.adding(1)
+            count += 1
         }
-        return total.cents
+        return CentsLedger(items: items)
     }
 
-    func potBalanceNow(_ potID: UUID, current: YearMonth) -> Double {
-        potBalance(potID, at: current)
+    /// Saldo aan het EIND van `date`. Inleg telt vanaf de overschrijfdatum, uitgaven uit de pot vanaf de
+    /// uitgavedatum en rente vanaf de uitbetaaldatum (ook de verwachte rente die nog niet is opgeslagen).
+    /// Gebeurtenissen van die dag tellen helemaal mee, ook die later op de dag. Voor "wat staat er nu" is
+    /// `potBalanceNow` (of `potBalance(_:atMoment:)`) bedoeld.
+    func potBalance(_ potID: UUID, asOf date: Date) -> Double {
+        guard let pot = self.pot(potID) else { return 0 }
+        let flows = potFlows(pot, throughMonth: YearMonth(date: date))
+        return CentsMath.value(flows.cents(before: DayMath.nextDayStart(after: date)))
     }
 
-    func totalSaved(current: YearMonth) -> Double {
-        pots.reduce(0) { $0 + potBalance($1.id, at: current) }.cents
+    /// Saldo op precies dit moment: alles met een datum op of vóór `moment`. Gebeurtenissen later op dezelfde dag
+    /// (12:00 voor plangebeurtenissen) tellen nog niet mee, net zoals `DayEvent.isPlanned` ze "gepland" noemt.
+    func potBalance(_ potID: UUID, atMoment moment: Date) -> Double {
+        guard let pot = self.pot(potID) else { return 0 }
+        let flows = potFlows(pot, throughMonth: YearMonth(date: moment))
+        return CentsMath.value(flows.cents(before: DayMath.limit(including: moment)))
+    }
+
+    /// Saldo aan het EIND van `month`. Toekomstige maanden tellen de geplande verdeling en verwachte rente mee,
+    /// en ook in de lopende maand telt wat nog moet komen (de inleg van de 25e) al mee. Dit is dus NIET het saldo
+    /// van vandaag: toon je "nu", gebruik dan `potBalanceNow`. Voor grafieken en prognoses is dit de juiste.
+    func potBalance(_ potID: UUID, at month: YearMonth) -> Double {
+        potBalance(potID, asOf: month.date(day: month.dayCount))
+    }
+
+    /// Saldo van nu: op het moment `today` als dat in `current` valt (wat nog moet komen telt niet mee),
+    /// anders het saldo aan het eind van `current`.
+    func potBalanceNow(_ potID: UUID, current: YearMonth, today: Date = Date()) -> Double {
+        if YearMonth(date: today) == current { return potBalance(potID, atMoment: today) }
+        return potBalance(potID, at: current)
+    }
+
+    /// Totaal van alle spaarpotten nu (zoals `potBalanceNow`).
+    func totalSaved(current: YearMonth, today: Date = Date()) -> Double {
+        CentsMath.value(CentsMath.sum(pots.map { CentsMath.int(potBalanceNow($0.id, current: current, today: today)) }))
+    }
+
+    /// Totaal van alle spaarpotten aan het eind van `date`.
+    func totalSaved(asOf date: Date) -> Double {
+        CentsMath.value(CentsMath.sum(pots.map { CentsMath.int(potBalance($0.id, asOf: date)) }))
     }
 
     /// Som van alle doelbedragen van spaarpotten die een doel hebben.
@@ -42,53 +169,105 @@ extension FinanceData {
         pots.compactMap { $0.goalAmount }.filter { $0 > 0 }.reduce(0, +).cents
     }
 
-    /// Wat er nu gespaard is in de potten die een doel hebben (om te vergelijken met `totalGoal`).
-    func savedTowardGoals(current: YearMonth) -> Double {
-        pots.filter { ($0.goalAmount ?? 0) > 0 }
-            .reduce(0) { $0 + potBalance($1.id, at: current) }.cents
+    /// Wat er gespaard is in de potten die een doel hebben (om te vergelijken met `totalGoal`).
+    /// Zonder `today` het saldo aan het eind van `current`; met `today` het saldo van nu (zoals `potBalanceNow`).
+    func savedTowardGoals(current: YearMonth, today: Date? = nil) -> Double {
+        CentsMath.value(CentsMath.sum(pots.filter { ($0.goalAmount ?? 0) > 0 }
+            .map { CentsMath.int(progressBalance($0.id, current: current, today: today)) }))
     }
 
     /// 0...1 (kan boven 1 uitkomen als je het doel hebt gehaald); nil zonder doel.
-    func potProgress(_ potID: UUID, current: YearMonth) -> Double? {
+    /// Zonder `today` het saldo aan het eind van `current`; met `today` het saldo van nu. Geef dezelfde `today`
+    /// mee als aan `potBalanceNow`, anders toont de balk een ander saldo dan de tekst.
+    func potProgress(_ potID: UUID, current: YearMonth, today: Date? = nil) -> Double? {
         guard let pot = self.pot(potID), let goal = pot.goalAmount, goal > 0 else { return nil }
-        return max(0, potBalance(potID, at: current) / goal)
+        return max(0, progressBalance(potID, current: current, today: today) / goal)
     }
 
-    /// Maand waarin het doel gehaald wordt bij de huidige inleg. nil = geen doel of wordt niet gehaald.
+    /// Eind van `current` zonder `today`, anders het saldo van nu.
+    private func progressBalance(_ potID: UUID, current: YearMonth, today: Date?) -> Double {
+        guard let today else { return potBalance(potID, at: current) }
+        return potBalanceNow(potID, current: current, today: today)
+    }
+
+    /// Maand waarin het doel gehaald wordt bij de huidige inleg (met verwachte rente). nil = geen doel of wordt niet gehaald.
     func potGoalMonth(_ potID: UUID, current: YearMonth) -> YearMonth? {
         guard let pot = self.pot(potID), let goal = pot.goalAmount, goal > 0 else { return nil }
         let balance = potBalance(potID, at: current)
         if balance >= goal { return current }
         // Kijk vooruit met de geplande verdeling per maand (maximaal 50 jaar).
-        var running = balance
-        var m = current
-        for _ in 0..<600 {
-            m = m.adding(1)
-            running += allocation(potID, in: m)
-            if running >= goal { return m }
+        let flows = potFlows(pot, throughMonth: current.adding(600))
+        for step in 1...600 {
+            let m = current.adding(step)
+            if CentsMath.value(flows.cents(before: m.endExclusive)) >= goal { return m }
         }
         return nil
     }
 
     // MARK: Geschiedenis
 
-    func potTimeline(_ potID: UUID, current: YearMonth) -> [PotTimelineItem] {
+    /// Alles wat het saldo van een pot veranderde of verandert t/m `current`, nieuwste eerst:
+    /// handmatige boekingen, rente (opgeslagen en verwacht), maandverdelingen op hun overschrijfdatum
+    /// en uitgaven die uit de pot betaald worden (negatief).
+    ///
+    /// Regels na het moment `today` zijn `isPlanned`: de som van de regels die dat niet zijn is het saldo van nu
+    /// (`potBalanceNow`), de som van alle regels het saldo aan het eind van `current` (`potBalance(_:at:)`).
+    func potTimeline(_ potID: UUID, current: YearMonth, asOf today: Date = Date()) -> [PotTimelineItem] {
         guard let pot = self.pot(potID) else { return [] }
-        var items: [PotTimelineItem] = potEntries.filter { $0.potID == potID }.map { e in
-            PotTimelineItem(id: e.id.uuidString, date: e.date, title: e.kind.title, note: e.note,
-                            amount: e.amount, isMonthlyAllocation: false)
+        var items: [PotTimelineItem] = []
+
+        for e in potEntries where e.potID == potID {
+            let kind: PotTimelineKind
+            switch e.kind {
+            case .interest: kind = .interest
+            case .expense: kind = .expense
+            default: kind = .manual
+            }
+            var id = e.id.uuidString
+            // Een opgeslagen uitbetaling houdt dezelfde id als de verwachte, zodat de lijst niet verspringt.
+            if e.kind == .interest {
+                let month = YearMonth(date: e.date)
+                if e.id == InterestRules.entryID(for: potID, month: month) { id = InterestRules.paymentID(for: potID, month: month) }
+            }
+            items.append(PotTimelineItem(id: id, date: e.date, title: e.kind.title, note: e.note,
+                                         amount: e.amount, isMonthlyAllocation: false, kind: kind))
         }
-        var m = pot.startMonth
-        while m <= current {
+
+        let flows = potFlows(pot, throughMonth: current)
+        for payment in flows.payments where payment.isProjected && payment.date < current.endExclusive {
+            items.append(PotTimelineItem(id: payment.id, date: payment.date, title: PotEntryKind.interest.title,
+                                         note: "Verwacht", amount: payment.amount, isMonthlyAllocation: false, kind: .interest))
+        }
+
+        let cal = YearMonth.calendar
+        let stored = StoredPlans(months)
+        var m = startMonth
+        var count = 0
+        while m <= current && count < 2_400 {
             let a = allocation(potID, in: m)
-            if a != 0 {
-                items.append(PotTimelineItem(id: "alloc-\(m.key)", date: m.firstDay,
+            if CentsMath.int(a) != 0 {
+                items.append(PotTimelineItem(id: "alloc-\(m.key)",
+                                             date: m.date(day: transferDay(for: potID, in: m), calendar: cal),
                                              title: "Maandverdeling \(Fmt.month(m))", note: "",
-                                             amount: a, isMonthlyAllocation: true))
+                                             amount: CentsMath.value(CentsMath.int(a)), isMonthlyAllocation: true, kind: .allocation))
+            }
+            for line in plan(for: m, using: stored).expenses where !line.potShares.isEmpty {
+                for payment in expenseSplit(of: line).pots where payment.potID == potID {
+                    items.append(PotTimelineItem(id: "expense-\(line.id.uuidString)-\(payment.shareID.uuidString)-\(m.key)",
+                                                 date: m.date(day: expenseDay(of: line), calendar: cal),
+                                                 title: line.name.isEmpty ? "Uitgave" : line.name,
+                                                 note: PotEntryKind.expense.title,
+                                                 amount: -CentsMath.value(payment.cents), isMonthlyAllocation: false, kind: .expense))
+                }
             }
             m = m.adding(1)
+            count += 1
         }
-        return items.sorted { $0.date > $1.date }
+        for i in items.indices { items[i].isPlanned = items[i].date > today }
+        return items.sorted { lhs, rhs in
+            if lhs.date != rhs.date { return lhs.date > rhs.date }
+            return lhs.id < rhs.id
+        }
     }
 
     // MARK: Wijzigen
@@ -115,6 +294,14 @@ extension FinanceData {
         potEntries.removeAll { $0.potID == id }
         for key in Array(months.keys) {
             months[key]?.allocations.removeValue(forKey: id.uuidString)
+            // Uitgaven die deels uit deze pot kwamen: de bank betaalt dat deel dan zelf.
+            if let plan = months[key], plan.expenses.contains(where: { $0.potShares.contains { $0.potID == id } }) {
+                months[key]?.expenses = plan.expenses.map { line in
+                    var copy = line
+                    copy.potShares.removeAll { $0.potID == id }
+                    return copy
+                }
+            }
         }
         homePotIDs = homePotIDs?.filter { $0 != id }
         for i in goals.indices {
@@ -132,8 +319,13 @@ extension FinanceData {
     }
 
     /// Zet het saldo op een nieuw bedrag via een correctieboeking.
-    mutating func setPotBalance(_ potID: UUID, to newBalance: Double, current: YearMonth, note: String = "", date: Date = Date()) {
-        let diff = (newBalance - potBalance(potID, at: current)).cents
+    /// Standaard wordt vergeleken met het saldo aan het eind van `current`. Toon je het saldo van nu
+    /// (`potBalanceNow`), geef dan `asOf` mee (het moment van nu, bijvoorbeeld `store.today`): het verschil wordt
+    /// dan gemeten op dat moment, dus precies tegen het getal dat de gebruiker zag.
+    mutating func setPotBalance(_ potID: UUID, to newBalance: Double, current: YearMonth, note: String = "",
+                                date: Date = Date(), asOf: Date? = nil) {
+        let reference = asOf.map { potBalance(potID, atMoment: $0) } ?? potBalance(potID, at: current)
+        let diff = CentsMath.value(CentsMath.int(newBalance) - CentsMath.int(reference))
         guard diff != 0 else { return }
         addPotEntry(potID: potID, amount: diff, kind: .adjustment, note: note, date: date)
     }

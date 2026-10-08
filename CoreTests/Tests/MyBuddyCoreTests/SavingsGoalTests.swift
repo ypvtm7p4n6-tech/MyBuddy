@@ -25,12 +25,14 @@ final class SavingsGoalTests: XCTestCase {
         XCTAssertEqual(fv, 10_000, accuracy: 0.5)
         XCTAssertGreaterThanOrEqual(fv, 10_000)
 
+        // De uitkomst naast het getoonde bedrag rekent met de hele euro's (350), niet met 349,57.
         let o = p.requiredOutcome
         XCTAssertEqual(o.months, 24)
-        XCTAssertEqual(o.monthly, 349.57, accuracy: 0.001)
-        XCTAssertEqual(o.balance, 10_000.11, accuracy: 0.011)
-        XCTAssertEqual(o.deposited, 9_389.68, accuracy: 0.011)
-        XCTAssertEqual(o.interest, 610.43, accuracy: 0.011)
+        XCTAssertEqual(o.monthly, 350, accuracy: 0.001)
+        XCTAssertEqual(o.balance, 10_011.03, accuracy: 0.011)
+        XCTAssertEqual(o.deposited, 9_400, accuracy: 0.011)
+        XCTAssertEqual(o.interest, 611.03, accuracy: 0.011)
+        XCTAssertGreaterThanOrEqual(o.balance, 10_000)
     }
 
     func testRequiredMonthlyAlwaysReachesTheGoalOnTime() {
@@ -302,7 +304,9 @@ final class SavingsGoalTests: XCTestCase {
         XCTAssertEqual(p.annualReturn, 0.02, accuracy: 1e-12)
         XCTAssertEqual(p.inflation, 0.025, accuracy: 1e-12)
         XCTAssertFalse(p.realTerms)
-        XCTAssertEqual(p.monthly, 204.41, accuracy: 0.001)
+        // 204,41 per maand is nodig; de calculator begint met het naar boven afgeronde bedrag.
+        XCTAssertEqual(p.requiredMonthly, 204.41, accuracy: 0.001)
+        XCTAssertEqual(p.monthly, 205, accuracy: 0.001)
         XCTAssertTrue(p.isOnTrack)
     }
 
@@ -345,9 +349,9 @@ final class SavingsGoalTests: XCTestCase {
         let p = makePlan(monthly: 0)
         let pot = p.makePot(name: "   ", colorIndex: 0, targetDate: nil, now: oct2026)
         XCTAssertEqual(pot.name, "Spaardoel")
-        XCTAssertEqual(pot.monthlyContribution, 349.57, accuracy: 0.001)
+        XCTAssertEqual(pot.monthlyContribution, 350, accuracy: 0.001)
         XCTAssertNil(pot.goalDate)
-        XCTAssertEqual(p.savedMonthly, 349.57, accuracy: 0.001)
+        XCTAssertEqual(p.savedMonthly, 350, accuracy: 0.001)
     }
 
     func testMakeGoalMatchesCalculator() {
@@ -388,6 +392,413 @@ final class SavingsGoalTests: XCTestCase {
     func testMakeGoalUsesRequiredMonthlyWhenDepositIsEmpty() {
         let p = makePlan(monthly: 0)
         let goal = p.makeGoal(name: "Reis", targetDate: nil)
-        XCTAssertEqual(goal.funding, GoalFunding.custom(start: 1_000, monthly: 349.57, annualReturn: 0.06))
+        XCTAssertEqual(goal.funding, GoalFunding.custom(start: 1_000, monthly: 350, annualReturn: 0.06))
+    }
+}
+
+// MARK: - Afronden naar boven
+
+/// Een benodigd maandbedrag wordt in hele euro's en naar boven afgerond getoond. Dat bedrag moet het doel altijd halen.
+/// Verwachte waarden zijn onafhankelijk berekend in Python.
+final class SavingsGoalRoundingTests: XCTestCase {
+    private func makePlan(_ goal: Double, _ start: Double, _ rate: Double, _ months: Int, monthly: Double = 0,
+                          inflation: Double = 0.02, real: Bool = false) -> SavingsGoalPlan {
+        SavingsGoalPlan(goal: goal, start: start, annualReturn: rate, horizonMonths: months, monthly: monthly,
+                        inflation: inflation, realTerms: real)
+    }
+
+    func testRequiredMonthlyWholeRoundsUp() {
+        XCTAssertEqual(makePlan(10_000, 1_000, 0.06, 24).requiredMonthlyWhole, 350)   // 349,57
+        XCTAssertEqual(makePlan(5_000, 0, 0.02, 24).requiredMonthlyWhole, 205)        // 204,41
+        XCTAssertEqual(makePlan(5_000, 0, 0.01, 24).requiredMonthlyWhole, 207)        // 206,36
+        XCTAssertEqual(makePlan(10_000, 0, 0.05, 24).requiredMonthlyWhole, 398)       // 397,48
+        XCTAssertEqual(makePlan(5_000, 0, 0.02, 18).requiredMonthlyWhole, 274)        // 273,90
+    }
+
+    func testRequiredMonthlyWholeKeepsAnExactWholeAmount() {
+        // 12.000 in 24 maanden zonder rente is precies 500: niet naar 501 afronden.
+        XCTAssertEqual(makePlan(12_000, 0, 0, 24).requiredMonthlyWhole, 500)
+        XCTAssertEqual(makePlan(12_000, 0, 0, 24).requiredMonthly, 500, accuracy: 0.001)
+    }
+
+    func testRequiredMonthlyWholeInKoopkracht() {
+        XCTAssertEqual(makePlan(10_000, 1_000, 0.06, 24, inflation: 0.02, real: true).requiredMonthlyWhole, 359)   // 358,13
+        XCTAssertEqual(makePlan(5_000, 0, 0.01, 24, inflation: 0.03, real: true).requiredMonthlyWhole, 213)        // 212,28
+    }
+
+    func testRequiredMonthlyWholeIsZeroWhenAlreadyReached() {
+        XCTAssertEqual(makePlan(500, 1_000, 0.03, 24).requiredMonthlyWhole, 0)
+        XCTAssertEqual(makePlan(0, 0, 0.03, 24).requiredMonthlyWhole, 0)
+    }
+
+    /// Afgerond op centen is het 195,00 en 272,00, maar de echte grens ligt er net boven. Dan moet er een euro bij.
+    func testRequiredMonthlyWholeNeverMissesByRounding() {
+        let a = makePlan(8_000, 500, 0.04, 36)
+        XCTAssertEqual(a.requiredMonthlyWhole, 196)
+        XCTAssertNil(Growth.monthsToReach(target: 8_000, start: 500, monthly: 195, annualReturn: 0.04, maxMonths: 36))
+        XCTAssertEqual(Growth.monthsToReach(target: 8_000, start: 500, monthly: 196, annualReturn: 0.04, maxMonths: 36), 36)
+
+        let b = makePlan(5_000, 0, 0.03, 18)
+        XCTAssertEqual(b.requiredMonthlyWhole, 273)
+        XCTAssertNil(Growth.monthsToReach(target: 5_000, start: 0, monthly: 272, annualReturn: 0.03, maxMonths: 18))
+        XCTAssertEqual(Growth.monthsToReach(target: 5_000, start: 0, monthly: 273, annualReturn: 0.03, maxMonths: 18), 18)
+    }
+
+    /// Over een raster van invoer: het bedrag is een heel getal, haalt het doel op tijd, en een euro minder haalt het niet.
+    func testRequiredMonthlyWholeIsTheSmallestWholeAmountThatReachesTheGoal() {
+        for goal in [1_000.0, 2_500, 5_000, 12_345, 80_000] {
+            for start in [0.0, 250, 1_000] {
+                for rate in [0.0, 0.01, 0.03, 0.06] {
+                    for months in [1, 6, 18, 24, 60] {
+                        let plan = makePlan(goal, start, rate, months)
+                        let whole = plan.requiredMonthlyWhole
+                        let label = "doel \(goal) start \(start) rente \(rate) maanden \(months)"
+                        XCTAssertEqual(whole, whole.rounded(), label)
+                        XCTAssertGreaterThanOrEqual(whole, plan.requiredMonthly - 0.0001, label)
+                        XCTAssertLessThan(whole, plan.requiredMonthly + 1.011, label)
+                        if plan.isReached {
+                            XCTAssertEqual(whole, 0, label)
+                            continue
+                        }
+                        XCTAssertNotNil(Growth.monthsToReach(target: goal, start: start, monthly: whole,
+                                                             annualReturn: rate, maxMonths: months), label)
+                        if whole >= 1 {
+                            XCTAssertNil(Growth.monthsToReach(target: goal, start: start, monthly: whole - 1,
+                                                              annualReturn: rate, maxMonths: months), label)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testRequiredOutcomeAndSavedMonthlyUseTheWholeAmount() {
+        let p = makePlan(10_000, 1_000, 0.06, 24)
+        XCTAssertEqual(p.requiredMonthly, 349.57, accuracy: 0.001)
+        XCTAssertEqual(p.requiredOutcome.monthly, 350, accuracy: 0.001)
+        XCTAssertEqual(p.savedMonthly, 350, accuracy: 0.001)
+        XCTAssertEqual(p.requiredOutcome.balance, 10_011.03, accuracy: 0.011)
+        // Met een eigen inleg blijft die gelden.
+        XCTAssertEqual(makePlan(10_000, 1_000, 0.06, 24, monthly: 275.5).savedMonthly, 275.5, accuracy: 0.001)
+    }
+
+    func testTakingOverTheRequiredAmountIsOnTime() {
+        var p = makePlan(10_000, 1_000, 0.06, 24, monthly: 100)
+        XCTAssertFalse(p.isOnTrack)
+        p.monthly = p.requiredMonthlyWhole
+        XCTAssertTrue(p.isOnTrack)
+        XCTAssertEqual(p.monthsToGoal, 24)
+        XCTAssertEqual(p.shortfallMonthlyWhole, 0, accuracy: 0.0001)
+    }
+
+    func testShortfallInWholeEuros() {
+        // Nodig 349,57.
+        let cases: [(own: Double, shortfall: Double)] = [(200, 150), (200.6, 149), (349.56, 1), (349.57, 0), (350, 0), (1, 349)]
+        for item in cases {
+            let p = makePlan(10_000, 1_000, 0.06, 24, monthly: item.own)
+            XCTAssertEqual(p.shortfallMonthlyWhole, item.shortfall, accuracy: 0.0001, "inleg \(item.own)")
+            // Het tekort erbij leggen is genoeg om op tijd te zijn.
+            XCTAssertNotNil(Growth.monthsToReach(target: 10_000, start: 1_000, monthly: item.own + item.shortfall,
+                                                 annualReturn: 0.06, maxMonths: 24), "inleg \(item.own)")
+        }
+        // Het exacte tekort blijft op centen.
+        XCTAssertEqual(makePlan(10_000, 1_000, 0.06, 24, monthly: 200).shortfallMonthly, 149.57, accuracy: 0.001)
+    }
+
+    func testShortfallInWholeEurosIgnoresFloatingPointNoise() {
+        // 128,33 in één maand zonder rente is precies 128,33 nodig; met 33,33 eigen inleg mis je 95,00.
+        // In drijvende komma is 128,33 min 33,33 gelijk aan 95,00000000000001: dat mag geen 96 worden.
+        let p = makePlan(128.33, 0, 0, 1, monthly: 33.33)
+        XCTAssertEqual(p.requiredMonthly, 128.33, accuracy: 0.0001)
+        XCTAssertEqual(p.shortfallMonthly, 95, accuracy: 0.0001)
+        XCTAssertEqual(p.shortfallMonthlyWhole, 95, accuracy: 0.0001)
+        // Eén cent meer tekort is wel een euro meer.
+        XCTAssertEqual(makePlan(128.33, 0, 0, 1, monthly: 33.32).shortfallMonthlyWhole, 96, accuracy: 0.0001)
+    }
+
+    func testRequiredMonthlyWholeForATinyShortfall() {
+        // Nog 10 cent te gaan: op centen is dat 0,00 per maand, maar 0 euro haalt het doel niet.
+        let p = makePlan(1_000, 999.9, 0, 24)
+        XCTAssertEqual(p.requiredMonthlyWhole, 1)
+        XCTAssertNil(Growth.monthsToReach(target: 1_000, start: 999.9, monthly: 0, annualReturn: 0, maxMonths: 24))
+        XCTAssertNotNil(Growth.monthsToReach(target: 1_000, start: 999.9, monthly: 1, annualReturn: 0, maxMonths: 24))
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 1_000, start: 999.9, annualReturn: 0, months: 24), 1)
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 1_000, start: 999.99, annualReturn: 0, months: 1_200), 1)
+        // Met rente groeit het startbedrag zelf al voorbij het doel: dan is niets nodig.
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 1_000, start: 999.99, annualReturn: 0.03, months: 1_200), 0)
+        // Precies op het doel blijft 0.
+        XCTAssertEqual(makePlan(1_000, 1_000, 0, 24).requiredMonthlyWhole, 0)
+        // De calculator volgt dit zolang "Mijn inleg" leeg is.
+        var draft = SavingsGoalDraft()
+        draft.goal = 1_000
+        draft.start = 999.9
+        draft.periodUnit = .months
+        draft.periodValue = 24
+        let plan = draft.plan(savingsRate: 0, inflation: 0.02, now: oct2026)
+        XCTAssertEqual(plan.monthly, 1)
+        XCTAssertTrue(plan.isOnTrack)
+    }
+
+    // MARK: GoalMath
+
+    func testGoalMathEdgeCases() {
+        // Zonder maanden is het hele tekort in één keer nodig.
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 1_234.5, start: 0, annualReturn: 0.05, months: 0), 1_235)
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 1_000, start: 400.25, annualReturn: 0.05, months: -3), 600)
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 500, start: 900, annualReturn: 0.05, months: 0), 0)
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 500, start: 900, annualReturn: 0.05, months: 12), 0)
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: Double.nan, start: 0, annualReturn: 0.05, months: 12), 0)
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 1_000, start: 0, annualReturn: Double.infinity, months: 12), 0)
+        XCTAssertEqual(GoalMath.wholeMonthlyToReach(target: 8_000, start: 500, annualReturn: 0.04, months: 36), 196)
+        // Een heel lange termijn gaat ook goed.
+        let long = GoalMath.wholeMonthlyToReach(target: 500_000, start: 10_000, annualReturn: 0.05, months: 1_200)
+        XCTAssertEqual(long, long.rounded())
+        XCTAssertNotNil(Growth.monthsToReach(target: 500_000, start: 10_000, monthly: long, annualReturn: 0.05))
+    }
+
+    // MARK: Samenvatting
+
+    func testSummaryLine() {
+        let p = makePlan(5_000, 0, 0.02, 18)
+        XCTAssertEqual(p.summaryLine, "Spaar \(Fmt.euro(5_000)) in 1 jaar en 6 maanden: \(Fmt.euro(274)) per maand")
+        XCTAssertFalse(p.summaryLine.contains(","), "geen centen in de samenvatting")
+
+        let reached = makePlan(500, 1_000, 0.02, 18)
+        XCTAssertTrue(reached.summaryLine.contains("bereikt"))
+    }
+
+    func testHubSubtitle() {
+        XCTAssertEqual(GoalMath.hubSubtitle(goalCount: 0, hasSavingsGoal: false), "Levensdoelen en spaardoel")
+        XCTAssertEqual(GoalMath.hubSubtitle(goalCount: 0, hasSavingsGoal: true), "Spaardoel")
+        XCTAssertEqual(GoalMath.hubSubtitle(goalCount: 1, hasSavingsGoal: false), "1 doel")
+        XCTAssertEqual(GoalMath.hubSubtitle(goalCount: 1, hasSavingsGoal: true), "1 doel en een spaardoel")
+        XCTAssertEqual(GoalMath.hubSubtitle(goalCount: 3, hasSavingsGoal: false), "3 doelen")
+        XCTAssertEqual(GoalMath.hubSubtitle(goalCount: 3, hasSavingsGoal: true), "3 doelen en een spaardoel")
+    }
+}
+
+// MARK: - Bewaarde invoer van de calculator
+
+final class SavingsGoalDraftTests: XCTestCase {
+    func testDefaultDraftIsTheExample() {
+        let draft = SavingsGoalDraft()
+        let plan = draft.plan(savingsRate: 0.02, inflation: 0.025, now: oct2026)
+        XCTAssertEqual(plan, SavingsGoalPlan.example(savingsRate: 0.02, inflation: 0.025))
+        XCTAssertEqual(plan.goal, 5_000, accuracy: 0.001)
+        XCTAssertEqual(plan.horizonMonths, 24)
+        XCTAssertEqual(plan.monthly, 205, accuracy: 0.001)   // nog niet zelf ingevuld: de benodigde inleg
+        XCTAssertFalse(draft.edited)
+        XCTAssertNil(draft.monthly)
+    }
+
+    func testOwnMonthlyWinsOverTheRequiredAmount() {
+        var draft = SavingsGoalDraft()
+        draft.monthly = 150
+        XCTAssertEqual(draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026).monthly, 150, accuracy: 0.001)
+        // Een bewust ingevulde 0 blijft 0 (niet terug naar de benodigde inleg).
+        draft.monthly = 0
+        XCTAssertEqual(draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026).monthly, 0, accuracy: 0.001)
+    }
+
+    func testRequiredAmountFollowsTheInputWhileMonthlyIsEmpty() {
+        var draft = SavingsGoalDraft()
+        draft.goal = 8_000
+        draft.start = 500
+        // 305,78 nodig bij 2% in 24 maanden.
+        let plan = draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026)
+        XCTAssertEqual(plan.requiredMonthly, 305.78, accuracy: 0.001)
+        XCTAssertEqual(plan.monthly, 306, accuracy: 0.001)
+        XCTAssertTrue(plan.isOnTrack)
+        // Een ander percentage past de benodigde inleg aan.
+        draft.preset = .equities
+        draft.periodValue = 30
+        draft.periodUnit = .months
+        let faster = draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026)
+        XCTAssertEqual(faster.annualReturn, 0.06, accuracy: 1e-12)
+        XCTAssertEqual(faster.horizonMonths, 30)
+        XCTAssertEqual(faster.monthly, 231, accuracy: 0.001)   // 230,36 nodig
+    }
+
+    func testTermFromDateOrPeriod() {
+        var draft = SavingsGoalDraft()
+        draft.useDate = true
+        draft.targetDate = day(YearMonth(year: 2028, month: 10), 15)
+        XCTAssertEqual(draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026).horizonMonths, 24)
+        draft.targetDate = day(YearMonth(year: 2027, month: 1), 1)
+        XCTAssertEqual(draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026).horizonMonths, 3)
+        // Datum gekozen maar nog geen datum ingevuld: dan geldt de periode.
+        draft.targetDate = nil
+        XCTAssertEqual(draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026).horizonMonths, 24)
+        draft.useDate = false
+        draft.periodUnit = .years
+        draft.periodValue = 1.5
+        XCTAssertEqual(draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026).horizonMonths, 18)
+    }
+
+    func testRatePresetsAndRealTerms() {
+        var draft = SavingsGoalDraft()
+        draft.preset = .custom
+        draft.customRate = 0.045
+        XCTAssertEqual(draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026).annualReturn, 0.045, accuracy: 1e-12)
+        draft.preset = .savings
+        XCTAssertEqual(draft.plan(savingsRate: 0.015, inflation: 0.02, now: oct2026).annualReturn, 0.015, accuracy: 1e-12)
+        draft.realTerms = true
+        let real = draft.plan(savingsRate: 0.06, inflation: 0.02, now: oct2026)
+        XCTAssertTrue(real.realTerms)
+        XCTAssertEqual(real.effectiveReturn, 0.0392157, accuracy: 0.000001)
+    }
+
+    func testJSONRoundTrip() throws {
+        var draft = SavingsGoalDraft()
+        draft.goal = 12_500
+        draft.start = 750
+        draft.monthly = 320.5
+        draft.preset = .custom
+        draft.customRate = 0.035
+        draft.useDate = true
+        draft.periodValue = 30
+        draft.periodUnit = .months
+        draft.targetDate = day(YearMonth(year: 2028, month: 10), 15)
+        draft.realTerms = true
+        draft.edited = true
+
+        let back = try XCTUnwrap(SavingsGoalDraft.decode(draft.json))
+        XCTAssertEqual(back.goal, 12_500, accuracy: 0.0001)
+        XCTAssertEqual(back.start, 750, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(back.monthly), 320.5, accuracy: 0.0001)
+        XCTAssertEqual(back.preset, .custom)
+        XCTAssertEqual(back.customRate, 0.035, accuracy: 1e-12)
+        XCTAssertTrue(back.useDate)
+        XCTAssertEqual(back.periodValue, 30, accuracy: 0.0001)
+        XCTAssertEqual(back.periodUnit, .months)
+        XCTAssertEqual(try XCTUnwrap(back.targetDate).timeIntervalSince(try XCTUnwrap(draft.targetDate)), 0, accuracy: 0.001)
+        XCTAssertTrue(back.realTerms)
+        XCTAssertTrue(back.edited)
+    }
+
+    func testEmptyMonthlyIsNotStored() throws {
+        let draft = SavingsGoalDraft()
+        XCTAssertFalse(draft.json.contains("\"monthly\""))
+        XCTAssertNil(try XCTUnwrap(SavingsGoalDraft.decode(draft.json)).monthly)
+    }
+
+    func testOldOrBrokenStoredDataFallsBackToDefaults() throws {
+        XCTAssertNil(SavingsGoalDraft.decode(""))
+        XCTAssertNil(SavingsGoalDraft.decode("geen json"))
+        XCTAssertNil(SavingsGoalDraft.decode("[1, 2]"))
+
+        let empty = try XCTUnwrap(SavingsGoalDraft.decode("{}"))
+        XCTAssertEqual(empty, SavingsGoalDraft())
+
+        let partial = try XCTUnwrap(SavingsGoalDraft.decode("{\"goal\": 8000, \"preset\": \"bestaatniet\", \"periodUnit\": 5, \"edited\": true}"))
+        XCTAssertEqual(partial.goal, 8_000, accuracy: 0.0001)
+        XCTAssertEqual(partial.preset, .savings)
+        XCTAssertEqual(partial.periodUnit, .years)
+        XCTAssertEqual(partial.periodValue, 2, accuracy: 0.0001)
+        XCTAssertTrue(partial.edited)
+    }
+}
+
+// MARK: - Levensdoelen: haalbaarheid en afronden
+
+final class GoalOutlookTests: XCTestCase {
+    private func goal(target: Double, start: Double, monthly: Double, rate: Double = 0, due: YearMonth? = nil) -> LifeGoal {
+        var g = LifeGoal(name: "Doel", kind: .custom)
+        g.targetAmount = target
+        g.inflationAdjusted = false
+        g.funding = .custom(start: start, monthly: monthly, annualReturn: rate)
+        g.targetDate = due?.firstDay
+        return g
+    }
+
+    func testReached() {
+        let d = makeBaseData()
+        let a = d.analyze(goal(target: 100, start: 500, monthly: 0), current: oct2026)
+        XCTAssertEqual(a.outlook, .reached)
+        XCTAssertEqual(a.outlook.months, 0)
+        XCTAssertTrue(a.outlook.isPositive)
+    }
+
+    func testReachableWithoutDeadline() {
+        let d = makeBaseData()
+        // 4.000 te gaan met 200 per maand zonder rente: 20 maanden.
+        let a = d.analyze(goal(target: 5_000, start: 1_000, monthly: 200), current: oct2026)
+        XCTAssertEqual(a.outlook, .reachable(months: 20))
+        XCTAssertEqual(a.outlook.months, 20)
+        XCTAssertFalse(a.outlook.isPositive)
+        XCTAssertNil(a.requiredMonthlyForDeadlineWhole)
+    }
+
+    func testOnTrackAndBehindWithDeadline() {
+        let d = makeBaseData()
+        let onTrack = d.analyze(goal(target: 1_000, start: 0, monthly: 100, due: YearMonth(year: 2027, month: 10)),
+                                current: oct2026)
+        XCTAssertEqual(onTrack.outlook, .onTrack(months: 10))
+        XCTAssertTrue(onTrack.outlook.isPositive)
+
+        let behind = d.analyze(goal(target: 5_000, start: 1_000, monthly: 200, due: YearMonth(year: 2027, month: 6)),
+                               current: oct2026)
+        XCTAssertEqual(behind.outlook, .behind(months: 20))
+        XCTAssertEqual(behind.outlook.months, 20)
+        XCTAssertFalse(behind.outlook.isPositive)
+    }
+
+    func testPassedDeadlineCountsAsBehind() {
+        let d = makeBaseData()
+        let a = d.analyze(goal(target: 1_000, start: 0, monthly: 100, due: YearMonth(year: 2026, month: 5)),
+                          current: oct2026)
+        XCTAssertEqual(a.outlook, .behind(months: 10))
+        XCTAssertNil(a.requiredMonthlyForDeadlineWhole)
+    }
+
+    func testUnreachable() {
+        let d = makeBaseData()
+        let a = d.analyze(goal(target: 1_000, start: 0, monthly: 0), current: oct2026)
+        XCTAssertEqual(a.outlook, .unreachable)
+        XCTAssertNil(a.outlook.months)
+        let withDeadline = d.analyze(goal(target: 1_000, start: 0, monthly: 0, due: YearMonth(year: 2027, month: 6)),
+                                     current: oct2026)
+        XCTAssertEqual(withDeadline.outlook, .unreachable)
+    }
+
+    func testRequiredMonthlyForDeadlineIsRoundedUp() {
+        let d = makeBaseData()
+        // Doel 5.000, nu 1.000, 3% per jaar, nog 8 maanden: 493,23 per maand is nodig.
+        let g = goal(target: 5_000, start: 1_000, monthly: 200, rate: 0.03, due: YearMonth(year: 2027, month: 6))
+        let a = d.analyze(g, current: oct2026)
+        XCTAssertEqual(a.monthsUntilDeadline, 8)
+        XCTAssertEqual(a.requiredMonthlyForDeadline ?? 0, 493.23, accuracy: 0.01)
+        XCTAssertEqual(a.requiredMonthlyForDeadlineWhole ?? 0, 494, accuracy: 0.0001)
+        // 494 haalt de streefdatum, 493 net niet.
+        XCTAssertNotNil(Growth.monthsToReach(target: 5_000, start: 1_000, monthly: 494, annualReturn: 0.03, maxMonths: 8))
+        XCTAssertNil(Growth.monthsToReach(target: 5_000, start: 1_000, monthly: 493, annualReturn: 0.03, maxMonths: 8))
+    }
+
+    func testGoalWithoutTargetIsNotSet() {
+        let d = makeBaseData()
+        let empty = d.analyze(goal(target: 0, start: 0, monthly: 0), current: oct2026)
+        XCTAssertEqual(empty.outlook, .notSet)
+        XCTAssertNil(empty.outlook.months)
+        XCTAssertFalse(empty.outlook.isPositive)
+        XCTAssertEqual(empty.progress, 0, accuracy: 0.0001)
+        // Ook met een startbedrag en een streefdatum is een doel zonder bedrag niet "bereikt" of "op schema".
+        let withMoney = d.analyze(goal(target: 0, start: 500, monthly: 100, due: YearMonth(year: 2027, month: 10)),
+                                  current: oct2026)
+        XCTAssertEqual(withMoney.outlook, .notSet)
+        XCTAssertEqual(withMoney.progress, 0, accuracy: 0.0001)
+        // Een pensioen zonder uitgaven heeft ook geen doelbedrag.
+        var retirement = LifeGoal(name: "Pensioen", kind: .retirement)
+        retirement.monthlySpending = 0
+        XCTAssertEqual(d.analyze(retirement, current: oct2026).outlook, .notSet)
+        // Zodra er een bedrag is, geldt het gewone oordeel weer.
+        XCTAssertEqual(d.analyze(goal(target: 100, start: 500, monthly: 0), current: oct2026).outlook, .reached)
+    }
+
+    func testRequiredMonthlyForDeadlineKeepsExactWholeAmount() {
+        let d = makeBaseData()
+        // Zonder rente: 4.000 in 8 maanden is precies 500.
+        let a = d.analyze(goal(target: 5_000, start: 1_000, monthly: 200, due: YearMonth(year: 2027, month: 6)),
+                          current: oct2026)
+        XCTAssertEqual(a.requiredMonthlyForDeadlineWhole ?? 0, 500, accuracy: 0.0001)
     }
 }

@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Keuzes voor de invoer
 
 /// Voorgestelde rendementen voor de spaardoel-calculator.
-enum SavingsRatePreset: String, CaseIterable, Identifiable {
+enum SavingsRatePreset: String, CaseIterable, Identifiable, Codable {
     case savings, bonds, equities, custom
     var id: String { rawValue }
 
@@ -32,7 +32,7 @@ enum SavingsRatePreset: String, CaseIterable, Identifiable {
 }
 
 /// Eenheid waarin je de termijn invult.
-enum SavingsGoalPeriodUnit: String, CaseIterable, Identifiable {
+enum SavingsGoalPeriodUnit: String, CaseIterable, Identifiable, Codable {
     case months, years
     var id: String { rawValue }
 
@@ -116,7 +116,7 @@ struct SavingsGoalPlan: Equatable {
     static func example(savingsRate: Double, inflation: Double) -> SavingsGoalPlan {
         var plan = SavingsGoalPlan(goal: 5_000, start: 0, annualReturn: savingsRate, horizonMonths: 24, monthly: 0,
                                    inflation: inflation, realTerms: false)
-        plan.monthly = plan.requiredMonthly
+        plan.monthly = plan.requiredMonthlyWhole
         return plan
     }
 
@@ -167,11 +167,26 @@ struct SavingsGoalPlan: Equatable {
         return amount
     }
 
+    /// Benodigde inleg zoals de app hem toont: in hele euro's en naar boven afgerond, zodat het afgeronde bedrag
+    /// het doel nooit net mist. Alles wat naast dit bedrag staat (de uitkomst, de lijn in de grafiek, de inleg van een
+    /// nieuwe spaarpot) rekent met dit bedrag.
+    var requiredMonthlyWhole: Double {
+        GoalMath.wholeMonthlyToReach(target: cleanGoal, start: cleanStart, annualReturn: effectiveReturn, months: months)
+    }
+
     /// Je hebt het bedrag al.
     var isReached: Bool { cleanStart >= cleanGoal }
 
     /// Hoeveel je per maand tekortkomt om op tijd te zijn (0 als je genoeg inlegt).
     var shortfallMonthly: Double { max(0, (requiredMonthly - cleanMonthly).cents) }
+
+    /// Het tekort per maand in hele euro's, naar boven afgerond (minimaal 1 zolang je tekortkomt).
+    /// Leg je dit bedrag extra in, dan haal je je termijn zeker.
+    var shortfallMonthlyWhole: Double {
+        // Eerst op centen, anders geeft rekenruis (95,00000000000001) een euro te veel.
+        let gap = (requiredMonthly - cleanMonthly).cents
+        return gap > 0 ? gap.rounded(.up) : 0
+    }
 
     // MARK: Antwoord 2: wanneer klaar?
 
@@ -228,14 +243,14 @@ struct SavingsGoalPlan: Equatable {
         outcome(monthly: cleanMonthly, months: monthsToGoal ?? months)
     }
 
-    /// Met de benodigde inleg, tot het einde van de termijn.
+    /// Met de benodigde inleg (in hele euro's), tot het einde van de termijn.
     var requiredOutcome: SavingsGoalOutcome {
-        outcome(monthly: requiredMonthly, months: months)
+        outcome(monthly: requiredMonthlyWhole, months: months)
     }
 
     /// Inleg die in een nieuwe spaarpot of een nieuw doel komt: je eigen inleg, of de benodigde inleg als je niets invulde.
     var savedMonthly: Double {
-        cleanMonthly > 0 ? cleanMonthly : requiredMonthly
+        cleanMonthly > 0 ? cleanMonthly : requiredMonthlyWhole
     }
 
     /// Tabel per jaar tot en met `total` maanden. Is `total` geen heel aantal jaren, dan staat er een laatste rij voor het restant.
@@ -287,6 +302,14 @@ struct SavingsGoalPlan: Equatable {
     /// Beginsaldo voor de spaarpot.
     var openingBalance: Double { cleanStart }
 
+    // MARK: Samenvatting
+
+    /// Korte zin voor het doelenblok, bijvoorbeeld "Spaar € 5.000 in 1 jaar en 6 maanden: € 278 per maand".
+    var summaryLine: String {
+        if isReached { return "Spaardoel van \(Fmt.euro(cleanGoal)) is al bereikt" }
+        return "Spaar \(Fmt.euro(cleanGoal)) in \(Fmt.duration(months: months)): \(Fmt.euro(requiredMonthlyWhole)) per maand"
+    }
+
     /// Een eigen doel met eigen waarden (start, inleg en rendement).
     func makeGoal(name: String, targetDate: Date?) -> LifeGoal {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
@@ -296,5 +319,80 @@ struct SavingsGoalPlan: Equatable {
         g.inflationAdjusted = realTerms
         g.funding = .custom(start: cleanStart, monthly: savedMonthly, annualReturn: cleanRate)
         return g
+    }
+}
+
+// MARK: - Bewaarde invoer
+
+/// De invoer van de spaardoel-calculator. De app onthoudt hem op dit apparaat, zodat je cijfers blijven staan
+/// en het doelenblok ze kan samenvatten. Oude of onvolledige bewaarde gegevens vallen terug op de beginwaarden.
+struct SavingsGoalDraft: Codable, Equatable {
+    /// Sleutel waaronder de invoer wordt bewaard.
+    static let storageKey = "savingsGoalDraft"
+
+    /// Gewenst bedrag.
+    var goal: Double = 5_000
+    /// Al gespaard.
+    var start: Double = 0
+    /// Eigen inleg per maand. nil = zelf nog niet ingevuld: dan geldt de benodigde inleg.
+    var monthly: Double?
+    var preset: SavingsRatePreset = .savings
+    var customRate: Double = 0.05
+    /// Termijn als datum (true) of als periode (false).
+    var useDate: Bool = false
+    var periodValue: Double = 2
+    var periodUnit: SavingsGoalPeriodUnit = .years
+    /// Gekozen streefdatum; nil = nog niet gekozen.
+    var targetDate: Date?
+    var realTerms: Bool = false
+    /// Pas true als je zelf iets veranderde. Alleen dan bewaart de app de invoer en toont het doelenblok hem.
+    var edited: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case goal, start, monthly, preset, customRate, useDate, periodValue, periodUnit, targetDate, realTerms, edited
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        goal = (try? c.decodeIfPresent(Double.self, forKey: .goal)) ?? 5_000
+        start = (try? c.decodeIfPresent(Double.self, forKey: .start)) ?? 0
+        monthly = try? c.decodeIfPresent(Double.self, forKey: .monthly)
+        preset = (try? c.decodeIfPresent(SavingsRatePreset.self, forKey: .preset)) ?? .savings
+        customRate = (try? c.decodeIfPresent(Double.self, forKey: .customRate)) ?? 0.05
+        useDate = (try? c.decodeIfPresent(Bool.self, forKey: .useDate)) ?? false
+        periodValue = (try? c.decodeIfPresent(Double.self, forKey: .periodValue)) ?? 2
+        periodUnit = (try? c.decodeIfPresent(SavingsGoalPeriodUnit.self, forKey: .periodUnit)) ?? .years
+        targetDate = try? c.decodeIfPresent(Date.self, forKey: .targetDate)
+        realTerms = (try? c.decodeIfPresent(Bool.self, forKey: .realTerms)) ?? false
+        edited = (try? c.decodeIfPresent(Bool.self, forKey: .edited)) ?? false
+    }
+
+    /// Het plan bij deze invoer. `savingsRate` en `inflation` komen uit de instellingen, `now` is de huidige maand.
+    func plan(savingsRate: Double, inflation: Double, now: YearMonth) -> SavingsGoalPlan {
+        let rate = preset.rate(savingsRate: savingsRate, customRate: customRate)
+        let months: Int
+        if useDate, let date = targetDate {
+            months = SavingsGoalPlan.monthsUntil(date, from: now)
+        } else {
+            months = periodUnit.monthCount(periodValue)
+        }
+        var plan = SavingsGoalPlan(goal: goal, start: start, annualReturn: rate, horizonMonths: months,
+                                   monthly: 0, inflation: inflation, realTerms: realTerms)
+        plan.monthly = monthly ?? plan.requiredMonthlyWhole
+        return plan
+    }
+
+    /// Als tekst om te bewaren (JSON).
+    var json: String {
+        guard let data = try? JSONEncoder().encode(self) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Leest bewaarde tekst terug. nil bij een lege of kapotte tekst.
+    static func decode(_ text: String) -> SavingsGoalDraft? {
+        guard !text.isEmpty, let data = text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(SavingsGoalDraft.self, from: data)
     }
 }

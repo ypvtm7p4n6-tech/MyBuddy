@@ -1,25 +1,13 @@
 import SwiftUI
 import Charts
 
-// MARK: - Blok op de Beleggingen-pagina
+// MARK: - De pagina
 
-/// Blok met een rekenvoorbeeld; tikken opent de calculator.
-struct SavingsGoalBlock: View {
-    @Environment(AppStore.self) private var store
-
+/// De spaardoel-calculator op een eigen bestemming (`Destination.savingsGoal`).
+/// Het is dezelfde pagina als "Doelen", alleen staat het onderdeel "Spaardoel" (de calculator) meteen open.
+struct SavingsGoalPage: View {
     var body: some View {
-        let s = store.data.settings
-        let plan = SavingsGoalPlan.example(savingsRate: s.savingsRate, inflation: s.inflation)
-        LinkedBlock(title: "Spaardoel", symbol: "target",
-                    subtitle: "Hoeveel per maand, of wanneer klaar?", destination: .savingsGoal) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Spaar \(Fmt.euroWhole(plan.cleanGoal)) in \(Fmt.duration(months: plan.months)): \(Fmt.euroWhole(plan.requiredMonthly)) per maand")
-                    .font(.subheadline.weight(.semibold))
-                Text("Voorbeeld. Vul je eigen bedrag, termijn en rendement in.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
+        GoalsPage(initialSection: .calculator)
     }
 }
 
@@ -33,70 +21,115 @@ private enum SavingsGoalScenario: String, CaseIterable, Identifiable {
 }
 
 /// Snelle spaardoel-calculator: hoeveel per maand, en wanneer ben je klaar.
-/// Staat los van de grote levensdoelen. Alle cijfers worden in `body` berekend, dus alles beweegt direct mee.
-struct SavingsGoalPage: View {
+/// Hij staat onder "Spaardoel berekenen" op de pagina Doelen. Alle cijfers worden in `body` berekend uit de invoer,
+/// dus tekst, balken en grafieken bewegen direct mee. De invoer wordt op dit apparaat onthouden
+/// (`SavingsGoalDraft`), zodat je cijfers blijven staan en het doelenblok ze kan samenvatten.
+struct SavingsGoalCalculator: View {
     @Environment(AppStore.self) private var store
+    @AppStorage(SavingsGoalDraft.storageKey) private var storedDraft = ""
 
-    @State private var goal = 5_000.0
-    @State private var start = 0.0
-    @State private var preset: SavingsRatePreset = .savings
-    @State private var customRate = 0.05
-    @State private var useDate = false
-    @State private var periodValue = 2.0
-    @State private var periodUnit: SavingsGoalPeriodUnit = .years
-    @State private var targetDate = Date()
-    @State private var monthly = 0.0
-    @State private var realTerms = false
+    @State private var draft: SavingsGoalDraft
     @State private var scenario: SavingsGoalScenario = .mine
     @State private var showAllRows = false
     @State private var name = "Spaardoel"
     @State private var createdPotID: UUID?
     @State private var createdGoalID: UUID?
-    @State private var loaded = false
+
+    init() {
+        let saved = UserDefaults.standard.string(forKey: SavingsGoalDraft.storageKey) ?? ""
+        _draft = State(initialValue: SavingsGoalDraft.decode(saved) ?? SavingsGoalDraft())
+    }
 
     // MARK: Invoer omzetten naar een plan
 
-    private var currentRate: Double {
-        preset.rate(savingsRate: store.data.settings.savingsRate, customRate: customRate)
-    }
-
-    private var horizonMonths: Int {
-        if useDate { return SavingsGoalPlan.monthsUntil(targetDate, from: store.now) }
-        return periodUnit.monthCount(periodValue)
-    }
-
     private func currentPlan() -> SavingsGoalPlan {
-        SavingsGoalPlan(goal: goal, start: start, annualReturn: currentRate, horizonMonths: horizonMonths,
-                        monthly: monthly, inflation: store.data.settings.inflation, realTerms: realTerms)
+        let settings = store.data.settings
+        return draft.plan(savingsRate: settings.savingsRate, inflation: settings.inflation, now: store.now)
+    }
+
+    /// Verandert de invoer en onthoudt dat je zelf iets deed.
+    private func edit(_ change: (inout SavingsGoalDraft) -> Void) {
+        var copy = draft
+        change(&copy)
+        copy.edited = true
+        draft = copy
+    }
+
+    /// Koppelt een invulveld aan een onderdeel van de invoer.
+    private func binding<Value>(_ keyPath: WritableKeyPath<SavingsGoalDraft, Value>) -> Binding<Value> {
+        Binding(get: { draft[keyPath: keyPath] },
+                set: { newValue in edit { $0[keyPath: keyPath] = newValue } })
+    }
+
+    /// Eigen inleg. Zolang je niets invult toont het veld de benodigde inleg.
+    private var monthlyBinding: Binding<Double> {
+        Binding(get: { currentPlan().monthly },
+                set: { newValue in edit { $0.monthly = newValue } })
+    }
+
+    /// Wisselen tussen een periode en een datum houdt de termijn gelijk.
+    private var termModeBinding: Binding<Bool> {
+        Binding(get: { draft.useDate },
+                set: { newValue in
+                    let months = currentPlan().months
+                    let first = store.now.adding(months).firstDay
+                    edit { d in
+                        d.useDate = newValue
+                        if newValue {
+                            d.targetDate = first
+                        } else {
+                            d.periodValue = d.periodUnit == .years ? (Double(months) / 12 * 100).rounded() / 100 : Double(months)
+                        }
+                    }
+                })
+    }
+
+    /// Bij een andere eenheid blijft de termijn gelijk: 2 jaar wordt 24 maanden.
+    private var unitBinding: Binding<SavingsGoalPeriodUnit> {
+        Binding(get: { draft.periodUnit },
+                set: { newUnit in
+                    edit { d in
+                        let months = Double(d.periodUnit.monthCount(d.periodValue))
+                        d.periodValue = newUnit == .years ? (months / 12 * 100).rounded() / 100 : months
+                        d.periodUnit = newUnit
+                    }
+                })
+    }
+
+    private var earliestDate: Date { store.now.adding(1).firstDay }
+
+    private var dateBinding: Binding<Date> {
+        Binding(get: { max(draft.targetDate ?? store.now.adding(24).firstDay, earliestDate) },
+                set: { newDate in edit { $0.targetDate = newDate } })
     }
 
     // MARK: Pagina
 
     var body: some View {
         let plan = currentPlan()
-        PageScaffold(title: "Spaardoel") {
-            VStack(spacing: Theme.pageSpacing) {
-                resultBlock(plan)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: Theme.pageSpacing, alignment: .top)],
-                          spacing: Theme.pageSpacing) {
-                    goalBlock(plan)
-                    rateBlock(plan)
-                    if plan.cleanGoal > 0 {
-                        if !plan.isReached {
-                            whatIfBlock(plan)
-                            chartBlock(plan)
-                            splitBlock(plan)
-                            tableBlock(plan)
-                        }
-                        saveBlock(plan)
+        VStack(spacing: Theme.pageSpacing) {
+            resultBlock(plan)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: Theme.pageSpacing, alignment: .top)],
+                      spacing: Theme.pageSpacing) {
+                goalBlock(plan)
+                rateBlock(plan)
+                if plan.cleanGoal > 0 {
+                    if !plan.isReached {
+                        whatIfBlock(plan)
+                        chartBlock(plan)
+                        splitBlock(plan)
+                        tableBlock(plan)
                     }
+                    saveBlock(plan)
                 }
             }
         }
-        .scrollDismissesKeyboard(.interactively)
-        .onAppear { loadDefaults() }
-        .onChange(of: periodUnit) { oldUnit, newUnit in
-            convertPeriod(from: oldUnit, to: newUnit)
+        // Verandert er een getal, dan rollen de bedragen, groeien de balken en schuift de grafiek zacht mee.
+        .animation(Theme.motion, value: plan)
+        // Ook wisselen tussen periode en datum (zelfde plan, andere velden) beweegt zacht mee.
+        .animation(Theme.motion, value: draft)
+        .onChange(of: draft) { _, newValue in
+            storedDraft = newValue.edited ? newValue.json : ""
         }
     }
 
@@ -116,27 +149,27 @@ struct SavingsGoalPage: View {
                 }
                 progressRow(plan)
                 statusLine(plan)
-                if !plan.isReached && abs(plan.cleanMonthly - plan.requiredMonthly) > 0.004 {
+                if !plan.isReached && abs(plan.cleanMonthly - plan.requiredMonthlyWhole) > 0.004 {
                     ChipButton(title: "Neem benodigde inleg over", symbol: "arrow.down.circle") {
-                        monthly = plan.requiredMonthly
+                        edit { $0.monthly = nil }
                     }
                 }
-                Text("Rente wordt per maand bijgeschreven en je inleg komt aan het eind van de maand. Rendement is een aanname, geen garantie.")
+                Text("Rente wordt per maand bijgeschreven en je inleg komt aan het eind van de maand. Het bedrag per maand is naar boven afgerond, zodat je het doel zeker haalt. Rendement is een aanname, geen garantie.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    /// Antwoord 1: hoeveel per maand om op tijd te zijn.
+    /// Antwoord 1: hoeveel per maand om op tijd te zijn (naar boven afgerond op hele euro's).
     private func neededTile(_ plan: SavingsGoalPlan) -> SavingsGoalResultTile {
         if plan.isReached {
             return SavingsGoalResultTile(title: "Hoeveel per maand?", value: "Niets nodig",
                                          caption: "Je hebt het doelbedrag al.", color: Theme.positive)
         }
         let month = Fmt.month(plan.deadlineMonth(from: store.now))
-        return SavingsGoalResultTile(title: "Hoeveel per maand?", value: Fmt.euro(plan.requiredMonthly),
-                                     caption: "om \(Fmt.euroWhole(plan.cleanGoal)) te hebben in \(month)")
+        return SavingsGoalResultTile(title: "Hoeveel per maand?", value: Fmt.euro(plan.requiredMonthlyWhole),
+                                     caption: "om \(Fmt.euro(plan.cleanGoal)) te hebben in \(month)")
     }
 
     /// Antwoord 2: wanneer ben je klaar met je eigen inleg.
@@ -163,9 +196,9 @@ struct SavingsGoalPage: View {
         VStack(alignment: .leading, spacing: 6) {
             ProgressBar(progress: plan.progress, tint: Theme.accent, height: 8)
             HStack {
-                Text("Al gespaard \(Fmt.euroWhole(plan.cleanStart))")
+                Text("Al gespaard \(Fmt.euro(plan.cleanStart))")
                 Spacer(minLength: 8)
-                Text("Doel \(Fmt.euroWhole(plan.cleanGoal))")
+                Text("Doel \(Fmt.euro(plan.cleanGoal))")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -188,7 +221,7 @@ struct SavingsGoalPage: View {
                       systemImage: "clock.badge.exclamationmark")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.warning)
-                Text("Je mist \(Fmt.euro(plan.shortfallMonthly)) per maand.")
+                Text("Je mist \(Fmt.euro(plan.shortfallMonthlyWhole)) per maand.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -197,7 +230,7 @@ struct SavingsGoalPage: View {
                 Label("Met deze inleg haal je het niet binnen 100 jaar.", systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.negative)
-                Text("Voor je termijn heb je \(Fmt.euro(plan.requiredMonthly)) per maand nodig.")
+                Text("Voor je termijn heb je \(Fmt.euro(plan.requiredMonthlyWhole)) per maand nodig.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -209,20 +242,19 @@ struct SavingsGoalPage: View {
     @ViewBuilder
     private func goalBlock(_ plan: SavingsGoalPlan) -> some View {
         GlassBlock(title: "Je spaardoel", symbol: "flag.checkered") {
-            NumberRow(title: "Doelbedrag", value: $goal)
-            NumberRow(title: "Al gespaard", value: $start)
-            Picker("Termijn", selection: $useDate) {
+            NumberRow(title: "Doelbedrag", value: binding(\.goal))
+            NumberRow(title: "Al gespaard", value: binding(\.start))
+            Picker("Termijn", selection: termModeBinding) {
                 Text("Over een periode").tag(false)
                 Text("Op een datum").tag(true)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            if useDate {
-                DatePicker("Streefdatum", selection: $targetDate, in: store.now.adding(1).firstDay...,
-                           displayedComponents: .date)
+            if draft.useDate {
+                DatePicker("Streefdatum", selection: dateBinding, in: earliestDate..., displayedComponents: .date)
             } else {
-                NumberRow(title: "Over", value: $periodValue, unit: .plain(periodUnit.title), maxDigits: 2)
-                Picker("Eenheid", selection: $periodUnit) {
+                NumberRow(title: "Over", value: binding(\.periodValue), unit: .plain(draft.periodUnit.title), maxDigits: 2)
+                Picker("Eenheid", selection: unitBinding) {
                     ForEach(SavingsGoalPeriodUnit.allCases) { unit in Text(unit.title).tag(unit) }
                 }
                 .pickerStyle(.segmented)
@@ -231,7 +263,15 @@ struct SavingsGoalPage: View {
             Text("Termijn: \(Fmt.duration(months: plan.months)), tot en met \(Fmt.month(plan.deadlineMonth(from: store.now))).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            NumberRow(title: "Mijn inleg per maand", value: $monthly)
+            NumberRow(title: "Mijn inleg per maand", value: monthlyBinding)
+            if draft.edited {
+                ChipButton(title: "Begin opnieuw", symbol: "arrow.counterclockwise") {
+                    createdPotID = nil
+                    createdGoalID = nil
+                    name = "Spaardoel"
+                    draft = SavingsGoalDraft()
+                }
+            }
         }
     }
 
@@ -239,25 +279,25 @@ struct SavingsGoalPage: View {
     private func rateBlock(_ plan: SavingsGoalPlan) -> some View {
         let settings = store.data.settings
         GlassBlock(title: "Rendement", symbol: "percent",
-                   subtitle: "\(Fmt.percent(currentRate, digits: 2)) per jaar") {
+                   subtitle: "\(Fmt.percent(plan.cleanRate, digits: 2)) per jaar") {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10, alignment: .top)], spacing: 10) {
                 ForEach(SavingsRatePreset.allCases) { option in
                     SavingsGoalPresetTile(
                         title: option.title,
-                        detail: Fmt.percent(option.rate(savingsRate: settings.savingsRate, customRate: customRate), digits: 2),
-                        selected: preset == option
-                    ) { preset = option }
+                        detail: Fmt.percent(option.rate(savingsRate: settings.savingsRate, customRate: draft.customRate), digits: 2),
+                        selected: draft.preset == option
+                    ) { edit { $0.preset = option } }
                 }
             }
-            if preset == .custom {
-                NumberRow(title: "Rendement per jaar", value: $customRate, unit: .percent, maxDigits: 2)
-            } else if preset == .savings {
+            if draft.preset == .custom {
+                NumberRow(title: "Rendement per jaar", value: binding(\.customRate), unit: .percent, maxDigits: 2)
+            } else if draft.preset == .savings {
                 Text("De spaarrente komt uit Instellingen. Daar kun je hem aanpassen.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Toggle("In koopkracht van vandaag", isOn: $realTerms)
-            if realTerms {
+            Toggle("In koopkracht van vandaag", isOn: binding(\.realTerms))
+            if draft.realTerms {
                 Text("Alle bedragen zijn in euro's van vandaag. Er is gerekend met \(Fmt.percent(settings.inflation)) inflatie per jaar, dus met \(Fmt.percent(plan.effectiveReturn, digits: 2)) reëel rendement.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -272,8 +312,8 @@ struct SavingsGoalPage: View {
         GlassBlock(title: "Wat als ik meer inleg?", symbol: "plus.circle", subtitle: "Per maand extra") {
             HStack(spacing: 10) {
                 ForEach(plan.whatIfs) { item in
-                    SavingsGoalWhatIfButton(title: "+" + Fmt.euroWhole(item.extra), caption: whatIfCaption(item)) {
-                        monthly = plan.cleanMonthly + item.extra
+                    SavingsGoalWhatIfButton(title: "+" + Fmt.euro(item.extra), caption: whatIfCaption(item)) {
+                        edit { $0.monthly = plan.cleanMonthly + item.extra }
                     }
                 }
             }
@@ -303,8 +343,8 @@ struct SavingsGoalPage: View {
     @ViewBuilder
     private func chartBlock(_ plan: SavingsGoalPlan) -> some View {
         let mine = plan.series(monthly: plan.cleanMonthly, months: plan.chosenOutcome.months)
-        let showNeeded = abs(plan.cleanMonthly - plan.requiredMonthly) > 0.5
-        let needed: [Double] = showNeeded ? plan.series(monthly: plan.requiredMonthly, months: plan.months) : []
+        let showNeeded = abs(plan.cleanMonthly - plan.requiredMonthlyWhole) > 0.5
+        let needed: [Double] = showNeeded ? plan.series(monthly: plan.requiredMonthlyWhole, months: plan.months) : []
         GlassBlock(title: "Verloop", symbol: "chart.xyaxis.line", subtitle: "Saldo tegenover je doel") {
             SavingsGoalChart(mine: mine, needed: needed, goal: plan.cleanGoal, start: store.now)
         }
@@ -324,9 +364,9 @@ struct SavingsGoalPage: View {
             BigAmount(value: o.balance, font: .system(.title, design: .rounded, weight: .bold))
             ProgressBar(progress: o.balance > 0 ? o.deposited / o.balance : 0, tint: Theme.flowSaved, height: 10)
             HStack(spacing: 8) {
-                StatTile(title: "Totaal", value: Fmt.euroWhole(o.balance))
-                StatTile(title: "Ingelegd", value: Fmt.euroWhole(o.deposited), color: Theme.flowSaved)
-                StatTile(title: "Rente", value: Fmt.euroWhole(o.interest),
+                StatTile(title: "Totaal", value: Fmt.euro(o.balance))
+                StatTile(title: "Ingelegd", value: Fmt.euro(o.deposited), color: Theme.flowSaved)
+                StatTile(title: "Rente", value: Fmt.euro(o.interest),
                          color: o.interest >= 0 ? Theme.positive : Theme.negative)
             }
             Text(splitExplanation(o, realTerms: plan.realTerms))
@@ -342,9 +382,9 @@ struct SavingsGoalPage: View {
     private func splitExplanation(_ o: SavingsGoalOutcome, realTerms: Bool) -> String {
         var text: String
         if o.interest >= 0 {
-            text = "Zelf leg je \(Fmt.euroWhole(o.deposited)) in, het rendement levert \(Fmt.euroWhole(o.interest)) op."
+            text = "Zelf leg je \(Fmt.euro(o.deposited)) in, het rendement levert \(Fmt.euro(o.interest)) op."
         } else {
-            text = "Het rendement ligt onder de inflatie: je verliest \(Fmt.euroWhole(-o.interest)) aan koopkracht."
+            text = "Het rendement ligt onder de inflatie: je verliest \(Fmt.euro(-o.interest)) aan koopkracht."
         }
         if realTerms { text += " Bedragen in euro's van vandaag." }
         return text
@@ -363,7 +403,7 @@ struct SavingsGoalPage: View {
             if rows.count > limit {
                 ChipButton(title: showAllRows ? "Toon minder" : "Toon alle \(rows.count) rijen",
                            symbol: showAllRows ? "chevron.up" : "chevron.down") {
-                    showAllRows.toggle()
+                    withAnimation(Theme.motion) { showAllRows.toggle() }
                 }
             }
         }
@@ -381,7 +421,7 @@ struct SavingsGoalPage: View {
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: 220)
             }
-            Text("Inleg: \(Fmt.euro(plan.savedMonthly)) per maand (je eigen inleg, of de benodigde inleg als je die leeg laat). Een spaarpot start met \(Fmt.euroWhole(plan.cleanStart)). Een doel komt bij Doelen te staan.")
+            Text("Inleg: \(Fmt.euro(plan.savedMonthly)) per maand (je eigen inleg, of de benodigde inleg als je die leeg laat). Een spaarpot start met \(Fmt.euro(plan.cleanStart)). Een doel komt bij Mijn doelen te staan.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
@@ -409,45 +449,26 @@ struct SavingsGoalPage: View {
 
     /// Streefdatum voor een spaarpot of doel: de gekozen datum, of het eind van de termijn.
     private func deadlineDate(_ plan: SavingsGoalPlan) -> Date {
-        useDate ? targetDate : plan.deadlineMonth(from: store.now).firstDay
+        if draft.useDate, let date = draft.targetDate { return date }
+        return plan.deadlineMonth(from: store.now).firstDay
     }
 
     private func createPot(_ plan: SavingsGoalPlan) {
         let color = store.data.pots.count % Theme.palette.count
         let pot = plan.makePot(name: name, colorIndex: color, targetDate: deadlineDate(plan), now: store.now)
         let opening = plan.openingBalance
-        store.mutate { $0.addPot(pot, openingBalance: opening) }
-        createdPotID = pot.id
+        withAnimation(Theme.motion) {
+            store.mutate { $0.addPot(pot, openingBalance: opening) }
+            createdPotID = pot.id
+        }
     }
 
     private func createGoal(_ plan: SavingsGoalPlan) {
         let newGoal = plan.makeGoal(name: name, targetDate: deadlineDate(plan))
-        store.mutate { $0.addGoal(newGoal) }
-        createdGoalID = newGoal.id
-    }
-
-    // MARK: Beginwaarden
-
-    /// Vult de calculator eenmalig met een voorbeeld op basis van de instellingen.
-    private func loadDefaults() {
-        guard !loaded else { return }
-        loaded = true
-        let settings = store.data.settings
-        let example = SavingsGoalPlan.example(savingsRate: settings.savingsRate, inflation: settings.inflation)
-        goal = example.goal
-        start = example.start
-        preset = .savings
-        useDate = false
-        periodUnit = .years
-        periodValue = Double(example.horizonMonths) / 12
-        targetDate = store.now.adding(example.horizonMonths).firstDay
-        monthly = example.monthly
-    }
-
-    /// Bij een andere eenheid blijft de termijn gelijk: 2 jaar wordt 24 maanden.
-    private func convertPeriod(from oldUnit: SavingsGoalPeriodUnit, to newUnit: SavingsGoalPeriodUnit) {
-        let months = Double(oldUnit.monthCount(periodValue))
-        periodValue = newUnit == .years ? (months / 12 * 100).rounded() / 100 : months
+        withAnimation(Theme.motion) {
+            store.mutate { $0.addGoal(newGoal) }
+            createdGoalID = newGoal.id
+        }
     }
 }
 
@@ -470,11 +491,13 @@ private struct SavingsGoalResultTile: View {
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .contentTransition(.numericText())
             Text(caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(3, reservesSpace: true)
         }
+        .animation(Theme.motion, value: value)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .tile()
@@ -514,6 +537,7 @@ private struct SavingsGoalPresetTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .animation(Theme.quickMotion, value: selected)
     }
 }
 
@@ -556,8 +580,8 @@ private struct SavingsGoalTable: View {
             line(label: "Jaar", balance: "Saldo", deposited: "Ingelegd", interest: "Rente", header: true, reached: false)
             ForEach(rows) { row in
                 Divider().opacity(0.4)
-                line(label: label(for: row), balance: Fmt.euroWhole(row.balance),
-                     deposited: Fmt.euroWhole(row.deposited), interest: Fmt.euroWhole(row.interest),
+                line(label: label(for: row), balance: Fmt.euro(row.balance),
+                     deposited: Fmt.euro(row.deposited), interest: Fmt.euro(row.interest),
                      header: false, reached: row.balance >= goal)
             }
         }
@@ -640,5 +664,8 @@ private struct SavingsGoalChart: View {
         .chartYScale(domain: .automatic(includesZero: true))
         .chartAxes(shown: true)
         .frame(height: 210)
+        .animation(Theme.motion, value: mine)
+        .animation(Theme.motion, value: needed)
+        .animation(Theme.motion, value: goal)
     }
 }

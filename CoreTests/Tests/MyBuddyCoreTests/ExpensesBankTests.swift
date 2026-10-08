@@ -116,20 +116,25 @@ final class BankEntryTests: XCTestCase {
         return d
     }
 
+    // Het saldo van 5 augustus (1000) krijgt nu ook het salaris en de toeslag van de 25e augustus (+3100):
+    // gebeurtenissen na het meetpunt in dezelfde maand tellen mee. De uitgaven van de 1e vielen er al voor.
     func testDepositsAndWithdrawalsChangeTheBalance() {
         var d = makeData()
         d.addBankEntry(amount: 500, note: "Verjaardag", date: day(sep2026, 10))
         d.addBankEntry(amount: -200, note: "Contant", date: day(oct2026, 3))
-        XCTAssertEqual(d.bankBalance(at: aug2026) ?? 0, 1000, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalance(at: sep2026) ?? 0, 3600, accuracy: 0.001) // 1000 + 2100 + 500
-        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 5500, accuracy: 0.001) // + 2100 - 200
+        XCTAssertEqual(d.bankBalance(at: aug2026) ?? 0, 4100, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(at: sep2026) ?? 0, 6700, accuracy: 0.001) // 4100 + 2100 + 500
+        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 8600, accuracy: 0.001) // + 2100 - 200
         XCTAssertEqual(d.bankEntries.map(\.kind), [.deposit, .withdrawal])
+        // Op de dag zelf: de storting van 10 september zit vanaf die dag in het saldo.
+        XCTAssertEqual(d.bankBalance(on: day(sep2026, 9)) ?? 0, 3100, accuracy: 0.001) // 4100 - 1000 (huur 1 sep)
+        XCTAssertEqual(d.bankBalance(on: day(sep2026, 10)) ?? 0, 3600, accuracy: 0.001)
     }
 
     func testEntriesBeforeTheSnapshotAreAlreadyInTheBalance() {
         var d = makeData()
         d.addBankEntry(amount: 999, date: day(aug2026, 1))
-        XCTAssertEqual(d.bankBalance(at: aug2026) ?? 0, 1000, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(at: aug2026) ?? 0, 4100, accuracy: 0.001)
     }
 
     func testZeroEntryIsIgnoredAndEntriesCanBeDeleted() {
@@ -148,8 +153,11 @@ final class BankEntryTests: XCTestCase {
         d.addBankEntry(amount: 300, date: day(sep2026, 10))
         XCTAssertTrue(d.hasBankBalance)
         XCTAssertNil(d.bankBalance(at: aug2026))
-        XCTAssertEqual(d.bankBalance(at: sep2026) ?? 0, 300, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 2400, accuracy: 0.001) // + overschot oktober 2100
+        XCTAssertNil(d.bankBalance(on: day(sep2026, 9)))
+        XCTAssertEqual(d.bankBalance(on: day(sep2026, 10)) ?? 0, 300, accuracy: 0.001)
+        // Na de storting van de 10e komt het salaris en de toeslag van de 25e (+3100); de huur van de 1e viel ervoor.
+        XCTAssertEqual(d.bankBalance(at: sep2026) ?? 0, 3400, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 5500, accuracy: 0.001) // + overschot oktober 2100
     }
 
     func testTransferBankToPotAndBack() {
@@ -158,14 +166,17 @@ final class BankEntryTests: XCTestCase {
         d.materialize(upTo: oct2026)
         d.addBankSnapshot(balance: 1000, date: day(oct2026, 1))
 
+        // Het saldo van de dag zelf; het salaris van de 25e komt daar pas later bij.
         d.transferBankToPot(potID: pot.id, amount: 100, date: day(oct2026, 5))
-        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 900, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(on: day(oct2026, 5)) ?? 0, 900, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 3800, accuracy: 0.001) // 900 + 3100 - 200 (inleg pot)
         XCTAssertEqual(d.potBalance(pot.id, at: oct2026), 1200, accuracy: 0.001)
         XCTAssertEqual(d.bankEntries.last?.kind, .toPot)
         XCTAssertEqual(d.bankEntries.last?.potID, pot.id)
 
         d.transferPotToBank(potID: pot.id, amount: 50, date: day(oct2026, 6))
-        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 950, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(on: day(oct2026, 6)) ?? 0, 950, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(at: oct2026) ?? 0, 3850, accuracy: 0.001)
         XCTAssertEqual(d.potBalance(pot.id, at: oct2026), 1150, accuracy: 0.001)
         XCTAssertEqual(d.bankEntries.last?.kind, .fromPot)
     }
@@ -189,7 +200,9 @@ final class PotTotalsTests: XCTestCase {
         d.materialize(upTo: oct2026)
         XCTAssertEqual(d.totalGoal(), 2000, accuracy: 0.001)
         XCTAssertEqual(d.savedTowardGoals(current: oct2026), 1100, accuracy: 0.001)
-        XCTAssertEqual(d.totalSaved(current: oct2026), 1400, accuracy: 0.001)
+        // `today` buiten oktober: het totaal aan het eind van oktober.
+        XCTAssertEqual(d.totalSaved(current: oct2026, today: day(YearMonth(year: 2027, month: 3), 1)), 1400, accuracy: 0.001)
+        XCTAssertEqual(d.totalSaved(asOf: day(oct2026, 31)), 1400, accuracy: 0.001)
 
         d.addPot(Pot(name: "Fiets", goalAmount: 500, monthlyContribution: 0, startMonth: aug2026))
         XCTAssertEqual(d.totalGoal(), 2500, accuracy: 0.001)

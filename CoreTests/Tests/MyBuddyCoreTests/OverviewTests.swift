@@ -10,10 +10,12 @@ final class OverviewTests: XCTestCase {
         d.addHolding(Holding(name: "ETF", kind: .etf, ticker: nil, units: nil, expectedReturn: 0, annualCost: 0, startMonth: aug2026),
                      initialValue: 2000, now: day(oct2026, 2))
         let w = d.netWorth(at: oct2026, current: oct2026)
-        XCTAssertEqual(w.bank, 1000, accuracy: 0.001)
+        // Het saldo van 1 oktober (12:00) krijgt nu ook de gebeurtenissen daarna in oktober: salaris en toeslag
+        // van de 25e (+3100) en de inleg van de pot (-200). De huur van de 1e valt op hetzelfde moment als het meetpunt.
+        XCTAssertEqual(w.bank, 3900, accuracy: 0.001)
         XCTAssertEqual(w.pots, 1100, accuracy: 0.001)
         XCTAssertEqual(w.investments, 2000, accuracy: 0.001)
-        XCTAssertEqual(w.total, 4100, accuracy: 0.001)
+        XCTAssertEqual(w.total, 7000, accuracy: 0.001)
         XCTAssertFalse(w.isProjected)
     }
 

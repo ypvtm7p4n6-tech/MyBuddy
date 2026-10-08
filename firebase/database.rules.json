@@ -1,0 +1,33 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        "finance": {
+          ".validate": "newData.hasChildren(['data', 'modifiedAt', 'schema'])",
+          "data": {
+            ".validate": "newData.isString() && newData.val().length < 8000000"
+          },
+          "modifiedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "device": {
+            ".validate": "newData.isString() && newData.val().length <= 200"
+          },
+          "schema": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    }
+  }
+}

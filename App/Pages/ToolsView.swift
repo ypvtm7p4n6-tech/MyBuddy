@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Tab 3: beleggingen. Vier blokken, elk met een eigen pagina.
+/// Tab 3: gereedschap. Versnellers, toekomstschatting en de aankoopcheck, elk met een eigen pagina.
+/// De volgorde van de blokken kies je zelf (lang indrukken op een blok).
 struct ToolsView: View {
     @Environment(Router.self) private var router
 
@@ -8,47 +9,22 @@ struct ToolsView: View {
         @Bindable var router = router
         NavigationStack(path: $router.toolsPath) {
             PageScaffold(title: "Tools", showsSettings: true) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: Theme.pageSpacing, alignment: .top)],
-                          spacing: Theme.pageSpacing) {
-                    PortfolioBlock()
-                    ProjectionBlock()
-                    SavingsGoalBlock()
-                    GoalsBlock()
-                    AcceleratorsBlock()
+                LazyVGrid(columns: Theme.blockColumns, spacing: Theme.pageSpacing) {
+                    OrderedBlocks(page: .tools) { id in toolsBlock(id) }
                 }
             }
             .navigationDestination(for: Destination.self) { DestinationView(destination: $0) }
         }
     }
-}
 
-// MARK: - Portefeuille
-
-struct PortfolioBlock: View {
-    @Environment(AppStore.self) private var store
-
-    var body: some View {
-        let d = store.data
-        let now = store.now
-        let value = d.portfolioValue(current: now)
-        let invested = d.portfolioInvested(current: now)
-        let gain = d.portfolioGain(current: now)
-        let series = d.portfolioSeries(from: now.adding(-6), count: 13, current: now).map { TimePoint($0) }
-        LinkedBlock(title: "Portefeuille", symbol: "chart.line.uptrend.xyaxis",
-                    subtitle: d.holdings.isEmpty ? nil : "\(d.holdings.count) \(d.holdings.count == 1 ? "belegging" : "beleggingen")",
-                    destination: .portfolio) {
-            if d.holdings.isEmpty {
-                Text("Voeg je beleggingen toe. Met een ticker haalt de app de koers live op.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack(alignment: .firstTextBaseline) {
-                    BigAmount(value: value, font: .system(.title, design: .rounded, weight: .bold))
-                    Spacer()
-                    if invested > 0 { GainLabel(gain: gain, fraction: gain / invested) }
-                }
-                TimeLineChart(points: series, showsAxes: false, height: 90)
-            }
+    /// Het blok bij een blok-id (zie `BlockPage.tools`).
+    @ViewBuilder
+    private func toolsBlock(_ id: String) -> some View {
+        switch id {
+        case "accelerators": AcceleratorsBlock()
+        case "projection": ProjectionBlock()
+        case "purchase": PurchaseBlock()
+        default: EmptyView()
         }
     }
 }
@@ -76,52 +52,12 @@ struct ProjectionBlock: View {
                     ForEach([5, 10, 20], id: \.self) { years in
                         let r = Growth.projection(start: start, monthly: monthly, annualReturn: rate,
                                                   months: Double(years * 12), inflation: inflation)
-                        StatTile(title: "Over \(years) jaar", value: Fmt.euroWhole(r.total))
+                        StatTile(title: "Over \(years) jaar", value: Fmt.euro(r.total))
                     }
                 }
-                Text("Met \(Fmt.euroWhole(monthly)) per maand en \(Fmt.percent(rate)) rendement na kosten.")
+                Text("Met \(Fmt.euro(monthly)) per maand en \(Fmt.percent(rate)) rendement na kosten.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-// MARK: - Doelen
-
-struct GoalsBlock: View {
-    @Environment(AppStore.self) private var store
-
-    var body: some View {
-        let d = store.data
-        let goals = Array(d.goals.prefix(2))
-        LinkedBlock(title: "Doelen", symbol: "flag.checkered",
-                    subtitle: d.goals.isEmpty ? nil : "\(d.goals.count) \(d.goals.count == 1 ? "doel" : "doelen")",
-                    destination: .goals) {
-            if goals.isEmpty {
-                Text("Stel een doel in: met pensioen, een vakantie of parttime werken. De app rekent uit wat je nodig hebt.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(goals) { goal in
-                        let a = d.analyze(goal, current: store.now)
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Label(goal.name, systemImage: goal.kind.symbol)
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(a.monthsToGoal.map { Fmt.duration(months: $0) } ?? "niet haalbaar")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(a.monthsToGoal == nil ? Theme.negative : Theme.accent)
-                            }
-                            ProgressBar(progress: a.progress, tint: Theme.accent)
-                        }
-                        .padding(12)
-                        .tile()
-                    }
-                }
             }
         }
     }
@@ -160,6 +96,7 @@ struct AcceleratorsBlock: View {
                             Text(AcceleratorBadge.text(for: acc))
                                 .font(.caption.weight(.bold))
                                 .foregroundStyle(Theme.positive)
+                                .multilineTextAlignment(.trailing)
                         }
                     }
                 }

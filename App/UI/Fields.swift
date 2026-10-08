@@ -78,7 +78,9 @@ struct OptionalNumberRow: View {
     var body: some View {
         Toggle(title, isOn: Binding(
             get: { value != nil },
-            set: { value = $0 ? (value ?? defaultValue) : nil }
+            set: { newValue in
+                withAnimation(Theme.motion) { value = newValue ? (value ?? defaultValue) : nil }
+            }
         ))
         if value != nil {
             NumberRow(title: "Bedrag", value: Binding(get: { value ?? 0 }, set: { value = $0 }), unit: unit)
@@ -95,7 +97,9 @@ struct OptionalDateRow: View {
     var body: some View {
         Toggle(title, isOn: Binding(
             get: { date != nil },
-            set: { date = $0 ? (date ?? defaultDate) : nil }
+            set: { newValue in
+                withAnimation(Theme.motion) { date = newValue ? (date ?? defaultDate) : nil }
+            }
         ))
         if date != nil {
             DatePicker("Datum", selection: Binding(get: { date ?? defaultDate }, set: { date = $0 }),

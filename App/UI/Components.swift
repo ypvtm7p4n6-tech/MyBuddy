@@ -8,6 +8,7 @@ struct PageScaffold<Content: View>: View {
     var showsSettings = false
     @ViewBuilder var content: Content
     @Environment(Router.self) private var router
+    @Environment(AppStore.self) private var store
 
     var body: some View {
         ScrollView {
@@ -17,6 +18,11 @@ struct PageScaffold<Content: View>: View {
                 .padding(.bottom, 28)
                 .frame(maxWidth: Theme.pageMaxWidth)
                 .frame(maxWidth: .infinity)
+                // Verandert er iets in je gegevens of in de gekozen periode, dan rollen bedragen,
+                // groeien balken en schuiven blokken zacht naar hun nieuwe plek.
+                .animation(Theme.motion, value: store.data)
+                .animation(Theme.motion, value: router.focusMonth)
+                .animation(Theme.motion, value: router.periodMode)
                 #if DEBUG
                 .offset(y: -DebugLaunch.scrollOffset)
                 #endif
@@ -89,21 +95,36 @@ struct GlassBlock<Content: View>: View {
 }
 
 /// Een glazen blok waarvan de hele kaart naar een eigen pagina leidt.
+/// Met `showsCurrentMonth` zet een tik eerst de Savings-pagina's op de huidige maand (periode "Maand"),
+/// zodat het getal in het blok en op de pagina daarna altijd hetzelfde is. Gebruik dat op Home.
 struct LinkedBlock<Content: View>: View {
     let title: String
     var symbol: String? = nil
     var subtitle: String? = nil
     let destination: Destination
     var tint: Color? = nil
+    var showsCurrentMonth: Bool = false
     @ViewBuilder var content: Content
+    @Environment(AppStore.self) private var store
+    @Environment(Router.self) private var router
 
     var body: some View {
-        NavigationLink(value: destination) {
-            GlassBlock(title: title, symbol: symbol, subtitle: subtitle, showsChevron: true, interactive: true, tint: tint) {
-                content
-            }
+        if showsCurrentMonth {
+            Button {
+                router.showCurrentMonth(store.now)
+                router.open(destination)
+            } label: { card }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink(value: destination) { card }
+                .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+    }
+
+    private var card: some View {
+        GlassBlock(title: title, symbol: symbol, subtitle: subtitle, showsChevron: true, interactive: true, tint: tint) {
+            content
+        }
     }
 }
 
@@ -136,6 +157,7 @@ struct BigAmount: View {
             .minimumScaleFactor(0.6)
             .lineLimit(1)
             .contentTransition(.numericText())
+            .animation(Theme.motion, value: value)
     }
 }
 
@@ -147,16 +169,22 @@ struct StatTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Text(value)
                 .font(.system(.body, design: .rounded, weight: .semibold))
                 .foregroundStyle(color)
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
+                .contentTransition(.numericText())
             if let caption {
                 Text(caption).font(.caption2).foregroundStyle(.secondary)
             }
         }
+        .animation(Theme.motion, value: value)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .tile()
@@ -176,6 +204,7 @@ struct ProgressRing: View {
                 .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
+        .animation(Theme.motion, value: progress)
     }
 }
 
@@ -195,6 +224,7 @@ struct ProgressBar: View {
             }
         }
         .frame(height: height)
+        .animation(Theme.motion, value: progress)
     }
 }
 
@@ -235,8 +265,9 @@ struct EmptyHint: View {
                     .multilineTextAlignment(.center)
             }
             if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .glassButton()
+                // Zelfde knop als overal (even hoog), niet de systeemknop.
+                ChipButton(title: actionTitle, action: action)
+                    .frame(maxWidth: 280)
                     .padding(.top, 4)
             }
         }
@@ -265,6 +296,7 @@ struct ChipLabel: View {
         .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
         .contentShape(Capsule())
         .glassSurface(Capsule(), interactive: true)
+        .animation(Theme.quickMotion, value: title)
     }
 }
 
@@ -354,7 +386,10 @@ struct PeriodControl: View {
                     .accessibilityLabel("Vorige periode")
                 Spacer()
                 VStack(spacing: 1) {
-                    Text(Fmt.period(router.periodMode, containing: router.focusMonth)).font(.headline)
+                    Text(Fmt.period(router.periodMode, containing: router.focusMonth))
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     if let note = statusNote { Text(note).font(.caption).foregroundStyle(Theme.warning) }
                 }
                 Spacer()
@@ -372,6 +407,18 @@ struct PeriodControl: View {
         if first > store.now { return "Verwacht" }
         if last > store.now { return "Deels verwacht" }
         return nil
+    }
+}
+
+// MARK: - Negatief restant
+
+/// Waarom "Nog te verdelen" onder nul zit, zodat de melding klopt. Het restant is inkomen min uitgaven van de bank
+/// min wat je verdeelde. Zijn de uitgaven alleen al hoger dan het inkomen (bijvoorbeeld omdat je salaris nog
+/// ontbreekt), dan heb je niets te veel verdeeld.
+enum RemainingShortfall {
+    /// Waar komt het tekort vandaan: true = de uitgaven zijn hoger dan het inkomen, false = je verdeelde te veel.
+    static func isSpending(income: Double, bankExpenses: Double) -> Bool {
+        CentsMath.int(income) - CentsMath.int(bankExpenses) < 0
     }
 }
 
@@ -446,6 +493,7 @@ struct SegmentBar: View {
                     Capsule()
                         .fill(segment.color)
                         .frame(width: max(4, (geo.size.width - CGFloat(max(0, positive.count - 1)) * 2) * segment.value / total))
+                        .transition(.opacity)
                 }
                 if positive.isEmpty {
                     Capsule().fill(Color.primary.opacity(0.12))
@@ -454,5 +502,6 @@ struct SegmentBar: View {
         }
         .frame(height: height)
         .clipShape(Capsule())
+        .animation(Theme.motion, value: positive.map(\.value))
     }
 }

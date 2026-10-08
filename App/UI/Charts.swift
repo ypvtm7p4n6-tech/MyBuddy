@@ -89,6 +89,7 @@ struct TimeLineChart: View {
         .chartYScale(domain: .automatic(includesZero: false))
         .chartAxes(shown: showsAxes)
         .frame(height: height)
+        .animation(Theme.motion, value: points)
     }
 }
 
@@ -113,8 +114,11 @@ struct FlowChart: View {
 
     private var items: [Item] {
         months.flatMap { s -> [Item] in
-            [
-                Item(id: s.id + "-u", date: s.month.firstDay, kind: "Uitgaven", amount: s.expenses, projected: s.isProjected),
+            // Alleen het deel van de uitgaven dat van je inkomen gaat. Wat uit een spaarpot wordt betaald
+            // staat al in de pot en zou de balk hoger maken dan je inkomen.
+            let fromIncome = max(0, s.expenses - s.fromPots)
+            return [
+                Item(id: s.id + "-u", date: s.month.firstDay, kind: "Uitgaven", amount: fromIncome, projected: s.isProjected),
                 Item(id: s.id + "-g", date: s.month.firstDay, kind: "Gespaard", amount: s.saved, projected: s.isProjected),
                 Item(id: s.id + "-b", date: s.month.firstDay, kind: "Belegd", amount: s.invested, projected: s.isProjected),
                 Item(id: s.id + "-o", date: s.month.firstDay, kind: "Over", amount: max(0, s.remaining), projected: s.isProjected)
@@ -133,6 +137,7 @@ struct FlowChart: View {
         .chartAxes(shown: showsAxes)
         .chartLegend(showsAxes ? .automatic : .hidden)
         .frame(height: height)
+        .animation(Theme.motion, value: months)
     }
 }
 
@@ -154,5 +159,6 @@ struct AllocationDonut: View {
                                    range: slices.indices.map { Theme.color($0) })
         .chartLegend(position: .trailing, alignment: .center)
         .frame(height: height)
+        .animation(Theme.motion, value: slices)
     }
 }

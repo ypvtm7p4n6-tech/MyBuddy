@@ -43,12 +43,25 @@ struct ExpenseOverview: Equatable {
     var variable: Double
     var toPots: Double
     var toInvestments: Double
+    /// Het deel van de uitgaven dat uit spaarpotten betaald wordt. Dat kost het maandbudget niets.
+    var fromPots: Double = 0
 
-    var expenses: Double { (fixed + variable).cents }
-    /// Wat er na de uitgaven nog is.
-    var leftAfterExpenses: Double { (income - expenses).cents }
+    private func cents(_ value: Double) -> Int { CentsMath.int(value) }
+
+    /// Totaal van alle uitgaven, ook wat uit spaarpotten komt.
+    var expenses: Double { CentsMath.value(cents(fixed) + cents(variable)) }
+    /// Uitgaven die van de bankrekening gaan.
+    var expensesFromBank: Double { CentsMath.value(cents(fixed) + cents(variable) - cents(fromPots)) }
+    /// Wat er na de uitgaven nog is (alleen wat van de bank gaat telt mee).
+    var leftAfterExpenses: Double {
+        CentsMath.value(cents(income) - (cents(fixed) + cents(variable) - cents(fromPots)))
+    }
     /// Wat er na uitgaven en overschrijvingen naar spaarpotten en beleggingen overblijft.
-    var leftAfterTransfers: Double { (income - expenses - toPots - toInvestments).cents }
+    /// Gelijk aan `FinanceData.remaining(in:)`.
+    var leftAfterTransfers: Double {
+        CentsMath.value(cents(income) - (cents(fixed) + cents(variable) - cents(fromPots))
+                        - cents(toPots) - cents(toInvestments))
+    }
     /// Aandeel van het inkomen dat naar vaste lasten gaat (0...1+); 0 zonder inkomen.
     var fixedShare: Double { income > 0 ? fixed / income : 0 }
     var variableShare: Double { income > 0 ? variable / income : 0 }
@@ -61,11 +74,16 @@ extension FinanceData {
 
     func expenseOverview(in month: YearMonth) -> ExpenseOverview {
         let lines = month >= startMonth ? plan(for: month).expenses : []
-        return ExpenseOverview(income: income(in: month),
-                               fixed: lines.total(of: .fixed),
-                               variable: lines.total(of: .variable),
-                               toPots: savedTotal(in: month),
-                               toInvestments: investedTotal(in: month))
+        func total(_ kind: ExpenseKind) -> Double {
+            CentsMath.value(CentsMath.sum(lines.filter { $0.kind == kind }.map { CentsMath.int($0.amount) }))
+        }
+        let figures = monthFigures(month)
+        return ExpenseOverview(income: CentsMath.value(figures.income),
+                               fixed: total(.fixed),
+                               variable: total(.variable),
+                               toPots: CentsMath.value(figures.saved),
+                               toInvestments: CentsMath.value(figures.invested),
+                               fromPots: CentsMath.value(figures.fromPots))
     }
 
     /// Welke standaardposten ontbreken nog in deze maand (op naam, hoofdletterongevoelig).

@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Tab 1: drie blokken (Overzicht, Spaarpotten, Beleggingen) onder "Nog te verdelen".
+/// De volgorde van de blokken kan de gebruiker zelf kiezen (lang indrukken op een blok).
 struct HomeView: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
@@ -18,13 +19,22 @@ struct HomeView: View {
                     }
                     RemainingHeader()
                     EqualSizeGrid {
-                        OverviewBlock()
-                        PotsBlock()
-                        InvestBlock()
+                        OrderedBlocks(page: .home) { id in homeBlock(id) }
                     }
                 }
             }
             .navigationDestination(for: Destination.self) { DestinationView(destination: $0) }
+        }
+    }
+
+    /// Het blok bij een blok-id (zie `BlockPage.home`).
+    @ViewBuilder
+    private func homeBlock(_ id: String) -> some View {
+        switch id {
+        case "overview": OverviewBlock()
+        case "pots": PotsBlock()
+        case "invest": InvestBlock()
+        default: EmptyView()
         }
     }
 }
@@ -57,7 +67,8 @@ struct WelcomeBlock: View {
                 .foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 ChipButton(title: "Salaris instellen", symbol: "eurosign.circle") {
-                    router.homePath.append(.income)
+                    router.showCurrentMonth(store.now)
+                    router.open(.income)
                 }
                 ChipButton(title: "Voorbeelddata", symbol: "wand.and.stars") {
                     store.loadSampleData()
@@ -77,10 +88,11 @@ struct RemainingHeader: View {
         let d = store.data
         let m = store.now
         let left = d.remaining(in: m)
+        let fromPots = d.expensesFromPots(in: m)
         // Dit blok gaat over de huidige maand, dus de verdeelpagina opent ook op de huidige maand.
         Button {
-            router.focusMonth = m
-            router.homePath.append(.distribute)
+            router.showCurrentMonth(m)
+            router.open(.distribute)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -94,7 +106,11 @@ struct RemainingHeader: View {
                 }
                 BigAmount(value: left, color: left < 0 ? Theme.negative : Color.primary)
                 if left < 0 {
-                    Text("Je hebt meer verdeeld dan je inkomen deze maand.")
+                    // De tekst volgt de oorzaak: te hoge uitgaven (bijvoorbeeld nog geen salaris) of te veel verdeeld.
+                    let spending = RemainingShortfall.isSpending(income: d.income(in: m),
+                                                                 bankExpenses: d.expensesFromBank(in: m))
+                    Text(spending ? "Je uitgaven zijn hoger dan je inkomen deze maand."
+                                  : "Je hebt meer verdeeld dan er over was deze maand.")
                         .font(.footnote)
                         .foregroundStyle(Theme.negative)
                 } else {
@@ -102,6 +118,12 @@ struct RemainingHeader: View {
                         MiniFigure(title: "Inkomen", value: d.income(in: m))
                         MiniFigure(title: "Uitgaven", value: d.expensesTotal(in: m))
                         MiniFigure(title: "Verdeeld", value: d.savedTotal(in: m) + d.investedTotal(in: m))
+                    }
+                    // Uitgaven uit een spaarpot kosten dit maandbudget niets: zonder uitleg tellen de drie tegels niet op.
+                    if fromPots > 0 {
+                        Text("Waarvan \(Fmt.euro(fromPots)) uit een spaarpot. Dat telt niet mee in dit bedrag.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -120,10 +142,11 @@ struct MiniFigure: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.caption2).foregroundStyle(.secondary)
-            Text(Fmt.euroWhole(value))
+            Text(Fmt.euro(value))
                 .font(.system(.footnote, design: .rounded, weight: .semibold))
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
+                .contentTransition(.numericText())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -154,13 +177,19 @@ struct OverviewBlock: View {
         let now = store.now
         let months = d.summaries(from: now.adding(-4), count: 6, current: now)
         let worth = d.netWorth(at: now, current: now)
-        LinkedBlock(title: "Overzicht", symbol: "chart.bar.xaxis", subtitle: "Waar gaat je geld heen?", destination: .overview) {
+        // Dezelfde som als "Nog te verdelen" bovenaan Home.
+        let left = d.remaining(in: now)
+        // Een tik opent het overzicht altijd op deze maand, niet op de maand waar je op Savings het laatst naar keek.
+        LinkedBlock(title: "Overzicht", symbol: "chart.bar.xaxis", subtitle: "Waar gaat je geld heen?",
+                    destination: .overview, showsCurrentMonth: true) {
             FlowChart(months: months, height: 130, showsAxes: false)
             FlowLegend()
             HStack(spacing: 8) {
-                StatTile(title: "Totaal vermogen", value: Fmt.euroWhole(worth.total))
-                StatTile(title: "Over deze maand", value: Fmt.euroWhole(d.remaining(in: now)),
-                         color: d.remaining(in: now) < 0 ? Theme.negative : Color.primary)
+                // Hetzelfde getal en label als op de Overzicht-pagina ("Eind <maand>"): bank, potten en beleggingen
+                // aan het eind van de maand, dus inclusief salaris en inleg die nog komen.
+                StatTile(title: "Vermogen eind maand", value: Fmt.euro(worth.total))
+                StatTile(title: "Over deze maand", value: Fmt.euro(left),
+                         color: left < 0 ? Theme.negative : Color.primary)
             }
         }
     }
@@ -177,7 +206,7 @@ struct PotsBlock: View {
         let d = store.data
         let pots = d.homePots()
         GlassBlock(title: "Spaarpotten", symbol: "tray.full.fill",
-                   subtitle: d.pots.isEmpty ? nil : "Totaal \(Fmt.euroWhole(d.totalSaved(current: store.now)))",
+                   subtitle: d.pots.isEmpty ? nil : "Totaal \(Fmt.euro(d.totalSaved(current: store.now, today: store.today)))",
                    headerLink: .pots) {
             if d.pots.isEmpty {
                 EmptyHint(symbol: "tray", title: "Nog geen spaarpotten",
@@ -206,13 +235,17 @@ struct PotsTotals: View {
     var body: some View {
         let d = store.data
         let now = store.now
-        let saved = d.totalSaved(current: now)
+        let today = store.today
+        let saved = d.totalSaved(current: now, today: today)
         let goal = d.totalGoal()
-        let towardGoals = d.savedTowardGoals(current: now)
+        // Met hetzelfde saldo van vandaag als op de tegels, zodat voortgang en bedragen bij elkaar passen.
+        let towardGoals = d.pots
+            .filter { ($0.goalAmount ?? 0) > 0 }
+            .reduce(0) { $0 + d.potBalanceNow($1.id, current: now, today: today) }
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                StatTile(title: "Totaal gespaard", value: Fmt.euroWhole(saved))
-                StatTile(title: "Totaal doel", value: goal > 0 ? Fmt.euroWhole(goal) : "–")
+                StatTile(title: "Totaal gespaard", value: Fmt.euro(saved))
+                StatTile(title: "Totaal doel", value: goal > 0 ? Fmt.euro(goal) : "–")
             }
             if goal > 0 {
                 ProgressBar(progress: towardGoals / goal, tint: Theme.accent, height: 8)
@@ -229,8 +262,8 @@ struct PotMiniTile: View {
     let pot: Pot
 
     var body: some View {
-        let balance = store.data.potBalance(pot.id, at: store.now)
-        let progress = store.data.potProgress(pot.id, current: store.now)
+        let balance = store.data.potBalanceNow(pot.id, current: store.now, today: store.today)
+        let progress = goalProgress(balance: balance)
         let color = Theme.color(pot.colorIndex)
         NavigationLink(value: Destination.pot(pot.id)) {
             VStack(spacing: 6) {
@@ -244,11 +277,13 @@ struct PotMiniTile: View {
                 Text(pot.name)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
-                Text(Fmt.euroWhole(balance))
+                    .minimumScaleFactor(0.8)
+                Text(Fmt.euro(balance))
                     .font(.system(.footnote, design: .rounded, weight: .bold))
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
-                Text(pot.goalAmount.map { "doel \(Fmt.euroWhole($0))" } ?? " ")
+                    .contentTransition(.numericText())
+                Text(pot.goalAmount.map { "doel \(Fmt.euro($0))" } ?? " ")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .minimumScaleFactor(0.7)
@@ -260,6 +295,14 @@ struct PotMiniTile: View {
             .tile(tint: color)
         }
         .buttonStyle(.plain)
+    }
+}
+
+extension PotMiniTile {
+    /// Hoever de pot is met het saldo van vandaag; nil zonder doel. Kan boven 1 uitkomen.
+    fileprivate func goalProgress(balance: Double) -> Double? {
+        guard let goal = pot.goalAmount, goal > 0 else { return nil }
+        return max(0, balance / goal)
     }
 }
 
@@ -339,9 +382,12 @@ struct GainLabel: View {
         let positive = gain >= 0
         HStack(spacing: 3) {
             Image(systemName: positive ? "arrow.up.right" : "arrow.down.right")
-            Text(Fmt.euroWhole(abs(gain)))
+            Text(Fmt.euro(abs(gain)))
+                .contentTransition(.numericText())
             if let fraction { Text("(\(Fmt.percent(abs(fraction), digits: 1)))") }
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
         .font(.footnote.weight(.semibold))
         .foregroundStyle(positive ? Theme.positive : Theme.negative)
     }
@@ -361,10 +407,12 @@ struct HoldingTile: View {
                     Text(holding.name)
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
-                    Text(Fmt.euroWhole(state?.value ?? 0))
+                        .minimumScaleFactor(0.8)
+                    Text(Fmt.euro(state?.value ?? 0))
                         .font(.system(.footnote, design: .rounded, weight: .bold))
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
+                        .contentTransition(.numericText())
                     Text(holding.kind.title)
                         .font(.caption2)
                         .foregroundStyle(.secondary)

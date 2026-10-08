@@ -21,9 +21,88 @@ struct GoalAnalysis: Equatable {
     var reachAge: Double?
     var monthsUntilDeadline: Int?
     var requiredMonthlyForDeadline: Double?
+    /// Zelfde bedrag, naar boven afgerond op hele euro's. Dit is wat je in de app ziet: met dit bedrag haal je de streefdatum zeker.
+    var requiredMonthlyForDeadlineWhole: Double?
     var onTrack: Bool?
 
     var isReached: Bool { monthsToGoal == 0 }
+
+    /// Hoe het ervoor staat, in één woord. Voor de samenvatting in het doelenblok en op de doelenpagina.
+    var outlook: GoalOutlook {
+        // Zonder doelbedrag valt er niets te halen: dat is geen "bereikt".
+        if inputs.target <= 0 { return .notSet }
+        guard let months = monthsToGoal else { return .unreachable }
+        if months == 0 { return .reached }
+        if let onTrack { return onTrack ? .onTrack(months: months) : .behind(months: months) }
+        return .reachable(months: months)
+    }
+}
+
+/// Haalbaarheid van een levensdoel.
+enum GoalOutlook: Equatable {
+    /// Er is nog geen doelbedrag (bijvoorbeeld een nieuw eigen doel of een pensioen zonder uitgaven).
+    case notSet
+    /// Het benodigde bedrag heb je al.
+    case reached
+    /// Er is een streefdatum en je ligt op schema.
+    case onTrack(months: Int)
+    /// Er is een streefdatum en je loopt achter, maar je haalt het wel (later).
+    case behind(months: Int)
+    /// Er is geen streefdatum; zo lang duurt het.
+    case reachable(months: Int)
+    /// Niet binnen 100 jaar.
+    case unreachable
+
+    /// Aantal maanden tot het doel, als dat te bepalen is.
+    var months: Int? {
+        switch self {
+        case .reached: return 0
+        case .onTrack(let m), .behind(let m), .reachable(let m): return m
+        case .notSet, .unreachable: return nil
+        }
+    }
+
+    /// Is dit goed nieuws (bereikt of op schema)?
+    var isPositive: Bool {
+        switch self {
+        case .reached, .onTrack: return true
+        case .notSet, .behind, .reachable, .unreachable: return false
+        }
+    }
+}
+
+/// Afronden voor weergave: een benodigd maandbedrag toon je in hele euro's en altijd naar boven,
+/// want een bedrag dat naar beneden is afgerond haalt het doel net niet.
+enum GoalMath {
+    /// Kleinste aantal hele euro's per maand waarmee je `target` binnen `months` maanden haalt
+    /// (inleg aan het eind van de maand, zoals in `Growth`). 0 als je het bedrag al hebt.
+    static func wholeMonthlyToReach(target: Double, start: Double, annualReturn: Double, months: Int) -> Double {
+        guard target.isFinite, start.isFinite, annualReturn.isFinite else { return 0 }
+        guard months > 0 else { return max(0, target - start).rounded(.up) }
+        let exact = Growth.requiredMonthly(target: target, start: start, annualReturn: annualReturn, months: months)
+        var amount = max(0, exact).rounded(.up)
+        // Het bedrag op centen kan net te weinig zijn geweest (ook een klein tekort kan op 0,00 afronden);
+        // controleer en tel zo nodig een euro bij. Heb je het bedrag al, dan blijft het 0.
+        for _ in 0..<3 {
+            let reached = Growth.monthsToReach(target: target, start: start, monthly: amount,
+                                               annualReturn: annualReturn, maxMonths: months)
+            if reached != nil { break }
+            amount += 1
+        }
+        return amount
+    }
+
+    /// Tekst onder de titel van het doelenblok: hoeveel doelen er zijn en of er een spaardoel is.
+    static func hubSubtitle(goalCount: Int, hasSavingsGoal: Bool) -> String {
+        switch (goalCount, hasSavingsGoal) {
+        case (0, false): return "Levensdoelen en spaardoel"
+        case (0, true): return "Spaardoel"
+        case (1, false): return "1 doel"
+        case (1, true): return "1 doel en een spaardoel"
+        case (let n, false): return "\(n) doelen"
+        case (let n, true): return "\(n) doelen en een spaardoel"
+        }
+    }
 }
 
 extension FinanceData {
@@ -94,7 +173,7 @@ extension FinanceData {
         let months = Growth.monthsToReach(target: inputs.target, start: inputs.start,
                                           monthly: inputs.monthly, annualReturn: inputs.effectiveReturn)
         var analysis = GoalAnalysis(inputs: inputs,
-                                    progress: inputs.target > 0 ? max(0, inputs.start / inputs.target) : 1,
+                                    progress: inputs.target > 0 ? max(0, inputs.start / inputs.target) : 0,
                                     monthsToGoal: months)
         if let n = months {
             analysis.reachMonth = current.adding(n)
@@ -106,6 +185,8 @@ extension FinanceData {
             if n > 0 {
                 analysis.requiredMonthlyForDeadline = Growth.requiredMonthly(target: inputs.target, start: inputs.start,
                                                                              annualReturn: inputs.effectiveReturn, months: n)
+                analysis.requiredMonthlyForDeadlineWhole = GoalMath.wholeMonthlyToReach(
+                    target: inputs.target, start: inputs.start, annualReturn: inputs.effectiveReturn, months: n)
             }
             if let reached = months { analysis.onTrack = reached <= max(0, n) }
             else { analysis.onTrack = false }

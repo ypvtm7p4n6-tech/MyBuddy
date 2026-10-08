@@ -7,31 +7,39 @@ extension FinanceData {
         let start = current.adding(-5)
         var d = FinanceData(startMonth: start)
 
-        d.salary = SalarySettings(mode: .hourly, fixedMonthly: 0, hourlyRate: 21.5, hoursPerWeek: 36)
-
-        // Terugkerende regels in de eerste maand; de rest wordt daaruit afgeleid.
-        var firstPlan = MonthPlan()
-        firstPlan.expenses = [
-            MoneyLine(name: "Huur", amount: 925, isRecurring: true),
-            MoneyLine(name: "Boodschappen", amount: 340, isRecurring: true, kind: .variable),
-            MoneyLine(name: "Zorgverzekering", amount: 140, isRecurring: true),
-            MoneyLine(name: "Energie en water", amount: 120, isRecurring: true),
-            MoneyLine(name: "Vervoer (brandstof of OV)", amount: 80, isRecurring: true, kind: .variable),
-            MoneyLine(name: "Abonnementen", amount: 45, isRecurring: true)
-        ]
-        firstPlan.extraIncome = [MoneyLine(name: "Zorgtoeslag", amount: 120, isRecurring: true)]
-        d.months[start.key] = firstPlan
+        // Salaris op de 25e.
+        d.salary = SalarySettings(mode: .hourly, fixedMonthly: 0, hourlyRate: 21.5, hoursPerWeek: 36, payDay: 25)
 
         let openDate = start.firstDay.addingTimeInterval(3_600)
-        let buffer = Pot(name: "Buffer", symbol: "shield.lefthalf.filled", colorIndex: 0,
+        // De buffer krijgt 2% rente per jaar, uitbetaald op 1 januari.
+        var buffer = Pot(name: "Buffer", symbol: "shield.lefthalf.filled", colorIndex: 0,
                          goalAmount: 6_000, goalDate: nil, monthlyContribution: 150, startMonth: start)
+        buffer.interestRate = 0.02
+        buffer.interestPayout = .yearly
+        buffer.interestPayoutDay = 1
+        buffer.interestPayoutMonth = 1
         let holiday = Pot(name: "Vakantie", symbol: "airplane", colorIndex: 3,
                           goalAmount: 2_400, goalDate: current.adding(8).firstDay, monthlyContribution: 120, startMonth: start)
-        let laptop = Pot(name: "Nieuwe laptop", symbol: "laptopcomputer", colorIndex: 4,
+        // De laptop-pot wordt op de 1e overgeschreven in plaats van op de salarisdag.
+        var laptop = Pot(name: "Nieuwe laptop", symbol: "laptopcomputer", colorIndex: 4,
                          goalAmount: 1_500, goalDate: nil, monthlyContribution: 75, startMonth: start)
+        laptop.transferDay = 1
         d.addPot(buffer, openingBalance: 2_800, now: openDate)
         d.addPot(holiday, openingBalance: 450, now: openDate)
         d.addPot(laptop, openingBalance: 300, now: openDate)
+
+        // Terugkerende regels in de eerste maand, elk op een eigen dag; de rest wordt daaruit afgeleid.
+        var firstPlan = MonthPlan()
+        firstPlan.expenses = [
+            MoneyLine(name: "Huur", amount: 925, isRecurring: true, day: 1),
+            MoneyLine(name: "Boodschappen", amount: 340, isRecurring: true, kind: .variable, day: 5),
+            MoneyLine(name: "Zorgverzekering", amount: 140, isRecurring: true, day: 1),
+            MoneyLine(name: "Energie en water", amount: 120, isRecurring: true, day: 18),
+            MoneyLine(name: "Vervoer (brandstof of OV)", amount: 80, isRecurring: true, kind: .variable, day: 3),
+            MoneyLine(name: "Abonnementen", amount: 45, isRecurring: true, day: 8)
+        ]
+        firstPlan.extraIncome = [MoneyLine(name: "Zorgtoeslag", amount: 120, isRecurring: true, day: 20)]
+        d.months[start.key] = firstPlan
 
         // Beleggingen met zes maanden meetpunten.
         func snapshots(base: Double, monthlyDeposit: Double, monthlyGrowth: Double, investedStart: Double) -> [ValueSnapshot] {
@@ -81,6 +89,14 @@ extension FinanceData {
         d.goals.append(partTime)
 
         d.materialize(upTo: current)
+
+        // Een uitgave van deze maand die deels uit een spaarpot komt: 100 van de 150 uit de buffer.
+        d.upsertLine(MoneyLine(name: "Tandarts", amount: 150, kind: .variable, day: 12,
+                               potShares: [PotShare(potID: buffer.id, amount: 100)]),
+                     kind: .expense, in: current)
+
+        // Rente die al aan de beurt was, staat gewoon in de geschiedenis van de pot.
+        d.applyDueInterest(upTo: now)
         return d
     }
 }

@@ -39,6 +39,19 @@ enum Theme {
     static let buttonHeight: CGFloat = 42
     static let pageSpacing: CGFloat = 16
     static let pageMaxWidth: CGFloat = 960
+    /// Smalste breedte van één blok. Op een iPhone past er één kolom, op iPad en Mac twee.
+    static let blockColumnMinimum: CGFloat = 300
+
+    /// Kolommen voor de blokken op Savings en Tools.
+    static var blockColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: blockColumnMinimum), spacing: pageSpacing, alignment: .top)]
+    }
+
+    // MARK: Beweging (overal dezelfde, kort en zacht)
+    /// Standaard voor veranderende bedragen, blokken en lijsten.
+    static let motion: Animation = .smooth(duration: 0.3)
+    /// Voor kleine, snelle reacties: tabwissel, indrukken van een knop.
+    static let quickMotion: Animation = .snappy(duration: 0.25)
 
     // MARK: Kleuren (donker olijfgroen)
     static let olive = Color(hex: 0x556B2F)           // darkolivegreen

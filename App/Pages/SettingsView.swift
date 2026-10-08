@@ -16,7 +16,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                AccountSection()
+                AccountAndSyncSections()
 
                 Section {
                     NumberRow(title: "Inflatie per jaar", value: setting(\.inflation), unit: .percent, maxDigits: 2)
@@ -83,7 +83,11 @@ struct SettingsView: View {
                 } header: {
                     Text("Gegevens")
                 } footer: {
-                    Text("Alles wordt alleen op dit apparaat bewaard. Accounts zijn lokaal: er is geen server en geen synchronisatie tussen apparaten.")
+                    if FirebaseConfig.isConfigured {
+                        Text("Je gegevens staan op dit apparaat en worden gesynchroniseerd met je Firebase-account. Zonder internet werk je gewoon op de gegevens van dit apparaat.")
+                    } else {
+                        Text("Alles wordt alleen op dit apparaat bewaard. Accounts zijn lokaal: er is geen server en geen synchronisatie tussen apparaten.")
+                    }
                 }
 
                 Section("Over") {
@@ -112,15 +116,27 @@ struct SettingsView: View {
             .confirmationDialog("Voorbeelddata laden?", isPresented: $confirmSample, titleVisibility: .visible) {
                 Button("Vervang mijn gegevens door voorbeelddata", role: .destructive) {
                     store.loadSampleData()
+                    if FirebaseConfig.isConfigured { store.markChangedForSync() }
                     Task { await store.refreshPrices(force: true) }
                 }
             } message: {
-                Text("Je huidige gegevens worden vervangen.")
+                if FirebaseConfig.isConfigured {
+                    Text("Je huidige gegevens worden vervangen, ook in de cloud en op je andere apparaten.")
+                } else {
+                    Text("Je huidige gegevens worden vervangen.")
+                }
             }
             .confirmationDialog("Alles wissen?", isPresented: $confirmErase, titleVisibility: .visible) {
-                Button("Wis alle gegevens", role: .destructive) { store.eraseEverything() }
+                Button("Wis alle gegevens", role: .destructive) {
+                    store.eraseEverything()
+                    if FirebaseConfig.isConfigured { store.markChangedForSync() }
+                }
             } message: {
-                Text("Dit kan niet ongedaan worden gemaakt.")
+                if FirebaseConfig.isConfigured {
+                    Text("Dit wist ook je gegevens in de cloud en op je andere apparaten. Het kan niet ongedaan worden gemaakt.")
+                } else {
+                    Text("Dit kan niet ongedaan worden gemaakt.")
+                }
             }
         }
         #if os(macOS)

@@ -55,6 +55,8 @@ final class Router {
     var savingsPath: [Destination] = []
     var toolsPath: [Destination] = []
     var showSettings = false
+    /// De pagina waarvan de blokvolgorde wordt aangepast (laat het blad "Volgorde aanpassen" zien).
+    var orderPage: BlockPage?
 
     /// De maand waar je naar kijkt op de Savings-pagina's.
     var focusMonth: YearMonth = YearMonth.current()
@@ -70,6 +72,16 @@ final class Router {
         tab = newTab
     }
 
+    /// Opent een pagina op de tab waar je nu bent. Staat die pagina al bovenaan, dan gebeurt er niets:
+    /// zo komt een snelle dubbele tik niet twee keer op de stapel (en hoef je niet twee keer terug).
+    func open(_ destination: Destination) {
+        switch tab {
+        case .home: if homePath.last != destination { homePath.append(destination) }
+        case .savings: if savingsPath.last != destination { savingsPath.append(destination) }
+        case .tools: if toolsPath.last != destination { toolsPath.append(destination) }
+        }
+    }
+
     /// Schuift de periode op: richting -1 = terug, +1 = vooruit.
     func shiftPeriod(_ direction: Int) {
         focusMonth = focusMonth.adding(direction * periodMode.stepMonths)
@@ -78,5 +90,12 @@ final class Router {
     /// Springt naar de huidige maand.
     func resetFocus(to current: YearMonth) {
         focusMonth = current
+    }
+
+    /// Zet de Savings-pagina's op de huidige maand en de periode "Maand". Een blok op Home gaat altijd over
+    /// deze maand; zonder dit kon de pagina nog op een andere maand of periode staan en een ander getal tonen.
+    func showCurrentMonth(_ current: YearMonth) {
+        focusMonth = current
+        periodMode = .month
     }
 }
