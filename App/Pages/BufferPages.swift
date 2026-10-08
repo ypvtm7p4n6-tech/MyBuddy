@@ -13,8 +13,21 @@ private func bufferMonthsText(_ value: Double) -> String {
 /// Samenvatting: doelbuffer, wat er al is, voortgang en hoeveel maanden het dekt.
 /// Gebruikt de keuzes die in de calculator zijn bewaard, zodat de cijfers kloppen met de pagina.
 struct BufferBlock: View {
+    @Environment(AuthStore.self) private var auth
+
+    var body: some View {
+        let accountID: String = auth.currentAccount?.id.uuidString ?? "demo"
+        BufferBlockContent(key: BufferSetup.storageKey + "." + accountID)
+    }
+}
+
+private struct BufferBlockContent: View {
     @Environment(AppStore.self) private var store
-    @AppStorage(BufferSetup.storageKey) private var storedSetup: String = ""
+    @AppStorage private var storedSetup: String
+
+    init(key: String) {
+        _storedSetup = AppStorage(wrappedValue: "", key)
+    }
 
     var body: some View {
         let d = store.data
@@ -53,8 +66,21 @@ struct BufferBlock: View {
 // MARK: - De calculator
 
 struct BufferPage: View {
+    @Environment(AuthStore.self) private var auth
+
+    var body: some View {
+        let accountID: String = auth.currentAccount?.id.uuidString ?? "demo"
+        BufferPageContent(key: BufferSetup.storageKey + "." + accountID)
+    }
+}
+
+private struct BufferPageContent: View {
     @Environment(AppStore.self) private var store
-    @AppStorage(BufferSetup.storageKey) private var storedSetup: String = ""
+    @AppStorage private var storedSetup: String
+
+    init(key: String) {
+        _storedSetup = AppStorage(wrappedValue: "", key)
+    }
 
     @State private var setup = BufferSetup()
     @State private var monthlySaving: Double = 0
@@ -146,14 +172,21 @@ struct BufferPage: View {
     private func expensesBlock(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
         let overview = d.expenseOverview(in: now)
         let known = overview.fixed + overview.variable > 0
+        let income: Double = d.income(in: now)
         let share = BufferCalc.clampedShare(setup.variableShare)
         let sharePercent = Fmt.percent(share, digits: 0)
         GlassBlock(title: "Noodzakelijke uitgaven", symbol: "cart.fill",
                    subtitle: known ? "Uit je uitgaven van \(Fmt.month(now))" : "Nog geen uitgaven ingevuld") {
             if known {
                 LazyVGrid(columns: tileColumns, spacing: 8) {
+                    StatTile(title: "Inkomen", value: Fmt.euroWhole(income))
                     StatTile(title: "Vaste uitgaven", value: Fmt.euroWhole(overview.fixed))
                     StatTile(title: "Variabele uitgaven", value: Fmt.euroWhole(overview.variable))
+                }
+                if income > 0 {
+                    Text("Je uitgaven zijn \(Fmt.percent((overview.fixed + overview.variable) / income, digits: 0)) van je inkomen.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {

@@ -221,7 +221,7 @@ struct SavingsGoalPage: View {
                 DatePicker("Streefdatum", selection: $targetDate, in: store.now.adding(1).firstDay...,
                            displayedComponents: .date)
             } else {
-                NumberRow(title: "Over", value: $periodValue, unit: .plain(periodUnit.title), maxDigits: 1)
+                NumberRow(title: "Over", value: $periodValue, unit: .plain(periodUnit.title), maxDigits: 2)
                 Picker("Eenheid", selection: $periodUnit) {
                     ForEach(SavingsGoalPeriodUnit.allCases) { unit in Text(unit.title).tag(unit) }
                 }
@@ -447,7 +447,7 @@ struct SavingsGoalPage: View {
     /// Bij een andere eenheid blijft de termijn gelijk: 2 jaar wordt 24 maanden.
     private func convertPeriod(from oldUnit: SavingsGoalPeriodUnit, to newUnit: SavingsGoalPeriodUnit) {
         let months = Double(oldUnit.monthCount(periodValue))
-        periodValue = newUnit == .years ? (months / 12 * 10).rounded() / 10 : months
+        periodValue = newUnit == .years ? (months / 12 * 100).rounded() / 100 : months
     }
 }
 

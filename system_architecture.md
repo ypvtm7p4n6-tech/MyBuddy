@@ -26,5 +26,5 @@ Vaste radii: kaart 30 → tegel 14 (= 30 − 16 inset) → chip 10. Glas via `gl
 
 ## Bekende open punten
 - Nog nooit gecompileerd in deze omgeving (geen Swift-toolchain). Eerste build kan kleine compilerfouten geven.
-- Geen iCloud-sync, geen export/import, geen meldingen.
+- Geen iCloud-sync en geen meldingen. Wel: JSON-back-up exporteren en importeren (Instellingen, via fileExporter/fileImporter) en CSV-export van uitgaven.
 - Yahoo Finance is onofficieel; houd `QuoteService` als enige koppelvlak.

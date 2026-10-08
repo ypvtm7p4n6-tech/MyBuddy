@@ -248,7 +248,8 @@ enum BufferCalc {
         let saving = max(0, inputs.monthlySaving).cents
         let within = min(maxFillMonths, max(minFillMonths, inputs.fillWithin))
         let toFill = Growth.monthsToReach(target: goal, start: have, monthly: saving, annualReturn: inputs.annualRate)
-        let needed = Growth.requiredMonthly(target: goal, start: have, annualReturn: inputs.annualRate, months: within)
+        let rawNeeded = Growth.requiredMonthly(target: goal, start: have, annualReturn: inputs.annualRate, months: within)
+        let needed: Double = rawNeeded > 0 ? ((rawNeeded * 100) - 1e-6).rounded(.up) / 100 : 0
         return BufferResult(months: months,
                             fixedPart: fixedPart,
                             variablePart: variablePart,

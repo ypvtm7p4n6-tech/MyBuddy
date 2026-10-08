@@ -26,6 +26,10 @@ Beleggingen met een **ticker** (bijv. `VWCE.DE`, `AAPL`, `BTC-EUR`) en een **aan
 
 Elke keer dat een koers binnenkomt, bewaart de app een meetpunt. Zo bouwt de groeigrafiek zich vanzelf op. Met "Historie aanvullen" haal je koersen van het afgelopen jaar binnen.
 
+## Back-up en export
+
+In Instellingen maak je een **JSON-back-up** van al je gegevens en importeer je die weer (ook om naar een ander apparaat te verhuizen). Uitgaven kun je daarnaast als **CSV** exporteren voor Numbers of Excel.
+
 ## Wat de app niet doet
 
 - Geen bankkoppeling: je saldo vul je zelf in. De app rekent daarna het overschot van elke maand erbij.

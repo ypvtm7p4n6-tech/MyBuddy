@@ -546,6 +546,10 @@ final class MarketServiceTests: XCTestCase {
         quotes.error = CancellationError()
         let cancelled = await capturedError { try await service.historicalReturn(symbol: "ABC", years: 5) }
         XCTAssertTrue(cancelled is CancellationError, "kreeg \(String(describing: cancelled))")
+
+        quotes.error = URLError(.cancelled)
+        let urlCancelled = await capturedError { try await service.historicalReturn(symbol: "ABC", years: 5) }
+        XCTAssertTrue(urlCancelled is CancellationError, "kreeg \(String(describing: urlCancelled))")
     }
 
     func testReturnWithTooLittleHistory() async {

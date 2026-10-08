@@ -5,6 +5,8 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmSample = false
     @State private var confirmErase = false
+    @State private var diagnostics: [String] = []
+    @State private var isTesting = false
 
     private func setting<T>(_ keyPath: WritableKeyPath<AppSettings, T>) -> Binding<T> {
         Binding(get: { store.data.settings[keyPath: keyPath] },
@@ -43,13 +45,29 @@ struct SettingsView: View {
                     if let last = store.lastPriceRefresh {
                         Text("Laatst bijgewerkt: \(Fmt.dateTime(last))").font(.footnote).foregroundStyle(.secondary)
                     }
+                    Button {
+                        isTesting = true
+                        Task {
+                            diagnostics = await QuoteDiagnostics.run()
+                            isTesting = false
+                        }
+                    } label: {
+                        HStack {
+                            Text("Koersverbinding testen")
+                            Spacer()
+                            if isTesting { ProgressView().controlSize(.small) }
+                        }
+                    }
+                    ForEach(diagnostics, id: \.self) { line in
+                        Text(line).font(.footnote).foregroundStyle(.secondary)
+                    }
                     if let message = store.priceMessage {
                         Text(message).font(.footnote).foregroundStyle(Theme.negative)
                     }
                 } header: {
                     Text("Koersen")
                 } footer: {
-                    Text("Koersen komen van Yahoo Finance. Dat is een gratis, onofficiële bron zonder garantie op beschikbaarheid of juistheid. Gebruik de cijfers als indicatie.")
+                    Text("Koersen komen van Yahoo Finance, met Stooq en CoinGecko als reserve. Dat zijn een gratis, onofficiële bron zonder garantie op beschikbaarheid of juistheid. Gebruik de cijfers als indicatie.")
                 }
 
                 BackupSection()
@@ -65,7 +83,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Gegevens")
                 } footer: {
-                    Text("Alles wordt alleen op dit apparaat bewaard. Er is geen account en geen server.")
+                    Text("Alles wordt alleen op dit apparaat bewaard. Accounts zijn lokaal: er is geen server en geen synchronisatie tussen apparaten.")
                 }
 
                 Section("Over") {

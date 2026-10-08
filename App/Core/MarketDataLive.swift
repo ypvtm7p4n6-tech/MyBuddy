@@ -16,7 +16,7 @@ struct LiveMarketDataService: MarketDataService {
     var client: any HTTPClient
     var quotes: any QuoteService
 
-    init(client: any HTTPClient = URLSessionHTTPClient(), quotes: any QuoteService = YahooQuoteService()) {
+    init(client: any HTTPClient = URLSessionHTTPClient(), quotes: any QuoteService = QuoteServices.standard()) {
         self.client = client
         self.quotes = quotes
     }
@@ -64,6 +64,8 @@ struct LiveMarketDataService: MarketDataService {
                                                    range: MarketDataParsers.yahooRange(forYears: wanted),
                                                    interval: "1mo")
         } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch let error as QuoteError {
             throw error
@@ -307,7 +309,7 @@ enum MarketDataParsers {
     private static func intValue(_ raw: Any?) -> Int? {
         guard let value = raw else { return nil }
         if let int = value as? Int { return int }
-        if let double = value as? Double, double.isFinite, double == double.rounded() { return Int(double) }
+        if let double = value as? Double, double.isFinite, abs(double) < 1e9, double == double.rounded() { return Int(double) }
         if let text = value as? String { return Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
         return nil
     }

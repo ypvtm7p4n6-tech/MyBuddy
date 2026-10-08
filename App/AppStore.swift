@@ -23,7 +23,7 @@ final class AppStore {
     @ObservationIgnored let market: any MarketDataService
 
     init(storage: FinanceStorage? = FinanceStorage.standard(),
-         quotes: any QuoteService = YahooQuoteService(),
+         quotes: any QuoteService = QuoteServices.standard(),
          market: any MarketDataService = LiveMarketDataService()) {
         self.storage = storage
         self.quotes = quotes
