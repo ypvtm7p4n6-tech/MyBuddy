@@ -35,6 +35,13 @@ struct SalarySettings: Codable, Equatable {
     }
 }
 
+/// Vaste lasten (huur, verzekeringen) of variabele uitgaven (boodschappen, uit eten).
+enum ExpenseKind: String, Codable, CaseIterable, Identifiable {
+    case fixed, variable
+    var id: String { rawValue }
+    var title: String { self == .fixed ? "Vast" : "Variabel" }
+}
+
 /// Een regel met een bedrag: extra inkomen of uitgave.
 struct MoneyLine: Identifiable, Codable, Equatable {
     var id = UUID()
@@ -42,10 +49,27 @@ struct MoneyLine: Identifiable, Codable, Equatable {
     var amount: Double
     /// Terugkerende regels worden automatisch naar volgende maanden gekopieerd.
     var isRecurring: Bool = false
+    /// Alleen van belang voor uitgaven.
+    var kind: ExpenseKind = .fixed
+
+    enum CodingKeys: String, CodingKey { case id, name, amount, isRecurring, kind }
+}
+
+// decodeIfPresent: oude opslagbestanden zonder `kind` blijven laden.
+extension MoneyLine {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+                  name: try c.decodeIfPresent(String.self, forKey: .name) ?? "",
+                  amount: try c.decodeIfPresent(Double.self, forKey: .amount) ?? 0,
+                  isRecurring: try c.decodeIfPresent(Bool.self, forKey: .isRecurring) ?? false,
+                  kind: try c.decodeIfPresent(ExpenseKind.self, forKey: .kind) ?? .fixed)
+    }
 }
 
 extension Array where Element == MoneyLine {
     var total: Double { reduce(0) { $0 + $1.amount }.cents }
+    func total(of kind: ExpenseKind) -> Double { filter { $0.kind == kind }.total }
 }
 
 struct MonthPlan: Codable, Equatable {
@@ -107,6 +131,32 @@ struct BankSnapshot: Identifiable, Codable, Equatable {
     var date: Date
     var balance: Double
     var note: String = ""
+}
+
+/// Wat voor beweging het is op de bankrekening in de app.
+enum BankEntryKind: String, Codable {
+    case deposit, withdrawal, toPot, fromPot
+
+    var title: String {
+        switch self {
+        case .deposit: return "Geld erbij"
+        case .withdrawal: return "Geld eraf"
+        case .toPot: return "Naar spaarpot"
+        case .fromPot: return "Van spaarpot"
+        }
+    }
+}
+
+/// Handmatige beweging op de bankrekening in de app (geen echte bank).
+struct BankEntry: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var date: Date
+    /// Positief = erbij, negatief = eraf.
+    var amount: Double
+    var kind: BankEntryKind
+    var note: String = ""
+    /// Bij overboekingen naar of van een spaarpot.
+    var potID: UUID?
 }
 
 // MARK: - Beleggingen
@@ -200,9 +250,15 @@ struct Holding: Identifiable, Codable, Equatable {
     var lastPriceDate: Date?
     var priceCurrency: String?
 
-    /// Heeft een ticker en een aantal, dus de waarde kan live bijgewerkt worden.
+    /// Heeft een ticker: de koers kan van internet gehaald worden.
+    var hasTicker: Bool {
+        guard let t = ticker else { return false }
+        return !t.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Heeft een ticker én een aantal, dus de waarde volgt de live koers.
     var isTracked: Bool {
-        guard let t = ticker, !t.trimmingCharacters(in: .whitespaces).isEmpty, let u = units, u > 0 else { return false }
+        guard hasTicker, let u = units, u > 0 else { return false }
         return true
     }
 
@@ -275,6 +331,27 @@ struct AppSettings: Codable, Equatable {
     /// Hoeveel maanden aan uitgaven je op de bankrekening wilt houden.
     var bankBufferMonths: Double = 2
     var autoRefreshPrices: Bool = true
+    /// Rente van een spaarrekening, als richtpercentage (bijv. 0,02).
+    var savingsRate: Double = 0.02
+    /// Wanneer de marktgegevens (inflatie, rente) voor het laatst van internet zijn gehaald.
+    var lastMarketUpdate: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case inflation, defaultWithdrawalRate, bankBufferMonths, autoRefreshPrices, savingsRate, lastMarketUpdate
+    }
+}
+
+extension AppSettings {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        inflation = try c.decodeIfPresent(Double.self, forKey: .inflation) ?? inflation
+        defaultWithdrawalRate = try c.decodeIfPresent(Double.self, forKey: .defaultWithdrawalRate) ?? defaultWithdrawalRate
+        bankBufferMonths = try c.decodeIfPresent(Double.self, forKey: .bankBufferMonths) ?? bankBufferMonths
+        autoRefreshPrices = try c.decodeIfPresent(Bool.self, forKey: .autoRefreshPrices) ?? autoRefreshPrices
+        savingsRate = try c.decodeIfPresent(Double.self, forKey: .savingsRate) ?? savingsRate
+        lastMarketUpdate = try c.decodeIfPresent(Date.self, forKey: .lastMarketUpdate)
+    }
 }
 
 struct FinanceData: Codable, Equatable {
@@ -286,6 +363,7 @@ struct FinanceData: Codable, Equatable {
     var potEntries: [PotEntry] = []
     var holdings: [Holding] = []
     var bankSnapshots: [BankSnapshot] = []
+    var bankEntries: [BankEntry] = []
     var goals: [LifeGoal] = []
     /// Welke spaarpotten op Home staan (nil = de eerste drie).
     var homePotIDs: [UUID]?
@@ -299,7 +377,7 @@ struct FinanceData: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case version, startMonth, salary, months, pots, potEntries, holdings
-        case bankSnapshots, goals, homePotIDs, homeHoldingIDs, settings
+        case bankSnapshots, bankEntries, goals, homePotIDs, homeHoldingIDs, settings
     }
 }
 
@@ -316,6 +394,7 @@ extension FinanceData {
         potEntries = try c.decodeIfPresent([PotEntry].self, forKey: .potEntries) ?? []
         holdings = try c.decodeIfPresent([Holding].self, forKey: .holdings) ?? []
         bankSnapshots = try c.decodeIfPresent([BankSnapshot].self, forKey: .bankSnapshots) ?? []
+        bankEntries = try c.decodeIfPresent([BankEntry].self, forKey: .bankEntries) ?? []
         goals = try c.decodeIfPresent([LifeGoal].self, forKey: .goals) ?? []
         homePotIDs = try c.decodeIfPresent([UUID].self, forKey: .homePotIDs)
         homeHoldingIDs = try c.decodeIfPresent([UUID].self, forKey: .homeHoldingIDs)

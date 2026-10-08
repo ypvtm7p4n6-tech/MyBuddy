@@ -13,13 +13,23 @@ extension FinanceData {
         bankSnapshots.sorted { $0.date < $1.date }
     }
 
-    var hasBankBalance: Bool { !bankSnapshots.isEmpty }
+    var hasBankBalance: Bool { !bankSnapshots.isEmpty || !bankEntries.isEmpty }
 
-    /// Saldo aan het eind van `month`: laatste ingevulde saldo plus het overschot van latere maanden.
-    /// nil als er voor die maand nog geen saldo bekend is.
+    /// Het meetpunt waar het saldo van uitgaat. Zonder ingevuld saldo maar met een eerste storting
+    /// begint de rekening op nul vlak vóór die storting.
+    private func bankBase(before limit: Date) -> BankSnapshot? {
+        if let snap = sortedBankSnapshots.last(where: { $0.date < limit }) { return snap }
+        if bankSnapshots.isEmpty, let first = bankEntries.map(\.date).min(), first < limit {
+            return BankSnapshot(date: first.addingTimeInterval(-1), balance: 0, note: "")
+        }
+        return nil
+    }
+
+    /// Saldo aan het eind van `month`: laatste ingevulde saldo, plus stortingen en opnames daarna,
+    /// plus het overschot van latere maanden. nil als er voor die maand nog geen saldo bekend is.
     func bankBalance(at month: YearMonth) -> Double? {
-        let snaps = sortedBankSnapshots
-        guard let snap = snaps.last(where: { $0.date < month.endExclusive }) else { return nil }
+        let limit = month.endExclusive
+        guard let snap = bankBase(before: limit) else { return nil }
         let snapMonth = YearMonth(date: snap.date)
         var balance = snap.balance
         var m = snapMonth.adding(1)
@@ -27,6 +37,7 @@ extension FinanceData {
             balance += remaining(in: m)
             m = m.adding(1)
         }
+        balance += bankEntries.filter { $0.date > snap.date && $0.date < limit }.reduce(0) { $0 + $1.amount }
         return balance.cents
     }
 
@@ -47,6 +58,39 @@ extension FinanceData {
 
     mutating func deleteBankSnapshot(_ id: UUID) {
         bankSnapshots.removeAll { $0.id == id }
+    }
+
+    // MARK: Stortingen, opnames en overboekingen
+
+    /// Zet geld op de bankrekening (positief) of haalt het eraf (negatief). Alleen in de app.
+    mutating func addBankEntry(amount: Double, note: String = "", date: Date = Date()) {
+        let value = amount.cents
+        guard value != 0 else { return }
+        bankEntries.append(BankEntry(date: date, amount: value, kind: value > 0 ? .deposit : .withdrawal, note: note))
+    }
+
+    mutating func deleteBankEntry(_ id: UUID) {
+        bankEntries.removeAll { $0.id == id }
+    }
+
+    /// Boekt geld van de bankrekening naar een spaarpot.
+    mutating func transferBankToPot(potID: UUID, amount: Double, note: String = "", date: Date = Date()) {
+        let value = amount.cents
+        guard value > 0, let target = pot(potID) else { return }
+        bankEntries.append(BankEntry(date: date, amount: -value, kind: .toPot,
+                                     note: note.isEmpty ? "Naar \(target.name)" : note, potID: potID))
+        potEntries.append(PotEntry(potID: potID, date: date, amount: value, kind: .deposit,
+                                   note: note.isEmpty ? "Van bankrekening" : note))
+    }
+
+    /// Boekt geld van een spaarpot terug naar de bankrekening.
+    mutating func transferPotToBank(potID: UUID, amount: Double, note: String = "", date: Date = Date()) {
+        let value = amount.cents
+        guard value > 0, let source = pot(potID) else { return }
+        bankEntries.append(BankEntry(date: date, amount: value, kind: .fromPot,
+                                     note: note.isEmpty ? "Van \(source.name)" : note, potID: potID))
+        potEntries.append(PotEntry(potID: potID, date: date, amount: -value, kind: .withdrawal,
+                                   note: note.isEmpty ? "Naar bankrekening" : note))
     }
 
     // MARK: Buffer

@@ -39,6 +39,8 @@ enum Destination: Hashable {
     case goals
     case goal(UUID)
     case accelerators
+    case buffer
+    case savingsGoal
 }
 
 @MainActor
@@ -53,6 +55,16 @@ final class Router {
     /// De maand waar je naar kijkt op de Savings-pagina's.
     var focusMonth: YearMonth = YearMonth.current()
     var periodMode: PeriodMode = .month
+
+    /// Tik op een knop in de tabbalk: ga naar die tab en terug naar de hoofdpagina daarvan.
+    func select(_ newTab: AppTab) {
+        switch newTab {
+        case .home: homePath = []
+        case .savings: savingsPath = []
+        case .investing: investPath = []
+        }
+        tab = newTab
+    }
 
     /// Schuift de periode op: richting -1 = terug, +1 = vooruit.
     func shiftPeriod(_ direction: Int) {

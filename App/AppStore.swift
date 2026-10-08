@@ -20,11 +20,14 @@ final class AppStore {
 
     @ObservationIgnored private let storage: FinanceStorage?
     @ObservationIgnored private let quotes: any QuoteService
+    @ObservationIgnored let market: any MarketDataService
 
     init(storage: FinanceStorage? = FinanceStorage.standard(),
-         quotes: any QuoteService = YahooQuoteService()) {
+         quotes: any QuoteService = YahooQuoteService(),
+         market: any MarketDataService = LiveMarketDataService()) {
         self.storage = storage
         self.quotes = quotes
+        self.market = market
         let today = YearMonth.current()
         var loaded: FinanceData
         var notice: String?
@@ -80,7 +83,7 @@ final class AppStore {
 
     // MARK: Koersen
 
-    var hasTrackedHoldings: Bool { data.holdings.contains { $0.isTracked } }
+    var hasTrackedHoldings: Bool { data.holdings.contains { $0.hasTicker } }
 
     /// Haalt de koersen van alle gevolgde beleggingen op.
     func refreshPrices(force: Bool = false) async {
@@ -89,11 +92,12 @@ final class AppStore {
             if !data.settings.autoRefreshPrices { return }
             if let last = lastPriceRefresh, Date().timeIntervalSince(last) < 600 { return }
         }
-        let tracked = data.holdings.filter { $0.isTracked }
+        let tracked = data.holdings.filter { $0.hasTicker }
         guard !tracked.isEmpty else { return }
 
         isRefreshingPrices = true
         var failed: [String] = []
+        var firstError: String?
         for holding in tracked {
             guard let ticker = holding.ticker?.trimmingCharacters(in: .whitespaces) else { continue }
             do {
@@ -102,11 +106,12 @@ final class AppStore {
                 mutate { $0.recordPrice(holdingID: id, price: quote.priceEUR, currency: quote.nativeCurrency, date: Date()) }
             } catch {
                 failed.append(holding.name)
+                if firstError == nil { firstError = error.localizedDescription }
             }
         }
         isRefreshingPrices = false
         lastPriceRefresh = Date()
-        priceMessage = failed.isEmpty ? nil : "Koers ophalen mislukt voor: " + failed.joined(separator: ", ") + ". Controleer je internet en de ticker."
+        priceMessage = failed.isEmpty ? nil : "Koers ophalen mislukt voor: " + failed.joined(separator: ", ") + ". " + (firstError ?? "Controleer je internet en de ticker.")
     }
 
     func searchSymbols(_ query: String) async throws -> [SymbolMatch] {
@@ -143,6 +148,15 @@ final class AppStore {
         var sample = FinanceData.sample()
         sample.materialize(upTo: now)
         data = sample
+        persist()
+        lastPriceRefresh = nil
+    }
+
+    /// Vervangt alle gegevens, bijvoorbeeld bij het importeren van een back-up.
+    func replaceData(_ newData: FinanceData) {
+        var restored = newData
+        restored.materialize(upTo: now)
+        data = restored
         persist()
         lastPriceRefresh = nil
     }

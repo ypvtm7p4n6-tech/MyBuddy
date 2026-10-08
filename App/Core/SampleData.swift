@@ -13,10 +13,10 @@ extension FinanceData {
         var firstPlan = MonthPlan()
         firstPlan.expenses = [
             MoneyLine(name: "Huur", amount: 925, isRecurring: true),
-            MoneyLine(name: "Boodschappen", amount: 340, isRecurring: true),
+            MoneyLine(name: "Boodschappen", amount: 340, isRecurring: true, kind: .variable),
             MoneyLine(name: "Zorgverzekering", amount: 140, isRecurring: true),
             MoneyLine(name: "Energie en water", amount: 120, isRecurring: true),
-            MoneyLine(name: "Vervoer", amount: 80, isRecurring: true),
+            MoneyLine(name: "Vervoer (brandstof of OV)", amount: 80, isRecurring: true, kind: .variable),
             MoneyLine(name: "Abonnementen", amount: 45, isRecurring: true)
         ]
         firstPlan.extraIncome = [MoneyLine(name: "Zorgtoeslag", amount: 120, isRecurring: true)]

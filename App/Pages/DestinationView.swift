@@ -8,7 +8,7 @@ struct DestinationView: View {
         switch destination {
         case .overview: OverviewPage()
         case .income: IncomePage()
-        case .expenses: ExpensesPage()
+        case .expenses: BankPage() // Uitgaven en bankrekening zijn één pagina
         case .distribute: DistributePage()
         case .pots: PotsPage()
         case .pot(let id): PotDetailPage(potID: id)
@@ -19,6 +19,8 @@ struct DestinationView: View {
         case .goals: GoalsPage()
         case .goal(let id): GoalDetailPage(goalID: id)
         case .accelerators: AcceleratorsPage()
+        case .buffer: BufferPage()
+        case .savingsGoal: SavingsGoalPage()
         }
     }
 }

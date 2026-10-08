@@ -16,7 +16,7 @@ struct RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            GlassTabBar(selection: $router.tab)
+            GlassTabBar(selection: router.tab) { router.select($0) }
         }
         .sheet(isPresented: $router.showSettings) { SettingsView() }
         .task { await store.refreshPrices() }
@@ -30,7 +30,9 @@ struct RootView: View {
 }
 
 struct GlassTabBar: View {
-    @Binding var selection: AppTab
+    let selection: AppTab
+    /// Wordt ook aangeroepen als je op de tab tikt waar je al op zit: dan ga je terug naar de hoofdpagina.
+    let onSelect: (AppTab) -> Void
     @Namespace private var indicator
 
     var body: some View {
@@ -38,7 +40,7 @@ struct GlassTabBar: View {
             ForEach(AppTab.allCases) { tab in
                 let isSelected = selection == tab
                 Button {
-                    withAnimation(.snappy(duration: 0.28)) { selection = tab }
+                    withAnimation(.snappy(duration: 0.28)) { onSelect(tab) }
                 } label: {
                     VStack(spacing: 3) {
                         Image(systemName: tab.symbol(selected: isSelected))

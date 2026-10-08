@@ -44,6 +44,8 @@ enum DebugLaunch {
         case "projection": return .projection
         case "goals": return .goals
         case "accelerators": return .accelerators
+        case "buffer": return .buffer
+        case "savingsgoal": return .savingsGoal
         case "pot0": return d.pots.first.map { .pot($0.id) }
         case "holding0": return d.holdings.first.map { .holding($0.id) }
         case "goal0": return d.goals.first.map { .goal($0.id) }
