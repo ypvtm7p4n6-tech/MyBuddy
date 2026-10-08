@@ -39,7 +39,7 @@ enum SavingsGoalPeriodUnit: String, CaseIterable, Identifiable {
     var title: String { self == .months ? "maanden" : "jaren" }
 
     /// Aantal hele maanden voor een ingevulde waarde (ongeldige of negatieve waarden worden 0).
-    func months(_ value: Double) -> Int {
+    func monthCount(_ value: Double) -> Int {
         guard value.isFinite else { return 0 }
         let raw = self == .years ? value * 12 : value
         let clamped = min(max(raw, 0), 100_000)
@@ -109,7 +109,7 @@ struct SavingsGoalPlan: Equatable {
     /// Rekenen in koopkracht van vandaag.
     var realTerms: Bool = false
 
-    /// Aantal maanden dat de what-if-knoppen standaard extra inleggen.
+    /// Bedragen per maand die de what-if-knoppen extra inleggen.
     static let whatIfSteps: [Double] = [25, 50, 100]
 
     /// Beginwaarden van de calculator.
@@ -121,7 +121,7 @@ struct SavingsGoalPlan: Equatable {
     }
 
     /// Aantal maanden van de maand `now` tot de maand van `date` (minimaal 0).
-    static func months(from now: YearMonth, to date: Date) -> Int {
+    static func monthsUntil(_ date: Date, from now: YearMonth) -> Int {
         max(0, now.months(to: YearMonth(date: date)))
     }
 
@@ -151,9 +151,20 @@ struct SavingsGoalPlan: Equatable {
 
     // MARK: Antwoord 1: hoeveel per maand?
 
-    /// Inleg per maand die nodig is om het doel binnen de termijn te halen.
+    /// Inleg per maand die nodig is om het doel binnen de termijn te halen (`Growth.requiredMonthly`).
+    /// Afronden op centen kan net te weinig zijn; dan komt er een cent bij, zodat je het doel echt op tijd haalt.
     var requiredMonthly: Double {
-        Growth.requiredMonthly(target: cleanGoal, start: cleanStart, annualReturn: effectiveReturn, months: months)
+        let target = cleanGoal
+        let begin = cleanStart
+        let rate = effectiveReturn
+        var amount = Growth.requiredMonthly(target: target, start: begin, annualReturn: rate, months: months)
+        for _ in 0..<3 {
+            let reached = Growth.monthsToReach(target: target, start: begin, monthly: amount,
+                                               annualReturn: rate, maxMonths: months)
+            if reached != nil { break }
+            amount = (amount + 0.01).cents
+        }
+        return amount
     }
 
     /// Je hebt het bedrag al.
