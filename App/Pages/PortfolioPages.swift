@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Portefeuille
+// MARK: - Beleggingen
 
 struct PortfolioPage: View {
     @Environment(AppStore.self) private var store
@@ -17,7 +17,7 @@ struct PortfolioPage: View {
         let series = d.portfolioSeries(from: now.adding(-monthsBack), count: monthsBack + 13, current: now).map { TimePoint($0) }
         let slices = d.valueByKind(current: now)
 
-        PageScaffold(title: "Portefeuille") {
+        PageScaffold(title: "Beleggingen") {
             VStack(spacing: Theme.pageSpacing) {
                 if let message = store.priceMessage {
                     NoticeBanner(text: message, symbol: "wifi.exclamationmark")

@@ -48,6 +48,8 @@ final class AppStore {
             }
         }
         loaded.materialize(upTo: today)
+        // Rente die inmiddels is uitbetaald, komt nu in de spaarpot (herhaald aanroepen boekt nooit dubbel).
+        _ = loaded.applyDueInterest(upTo: Date())
         self.data = loaded
         self.now = today
         self.startupNotice = notice
@@ -89,9 +91,18 @@ final class AppStore {
     /// Controleert of er een nieuwe maand is begonnen.
     func refreshClock() {
         let today = YearMonth.current()
-        guard today != now else { return }
+        guard today != now else {
+            bookDueInterest()
+            return
+        }
         now = today
         mutate { $0.materialize(upTo: today) }
+        bookDueInterest()
+    }
+
+    /// Schrijft rente bij die op of voor dit moment is uitbetaald.
+    func bookDueInterest() {
+        mutate { _ = $0.applyDueInterest(upTo: Date()) }
     }
 
     // MARK: Handige afgeleide waarden
