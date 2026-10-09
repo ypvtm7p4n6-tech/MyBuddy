@@ -177,9 +177,21 @@ enum DayMath {
         calendar.component(.day, from: date)
     }
 
-    /// Exclusieve bovengrens voor "alles t/m dit moment": de kleinste datum die net na `moment` ligt.
-    /// Een boeking op exact `moment` telt mee, een boeking een fractie later niet. Zo is "nu" precies het
-    /// omgekeerde van `DayEvent.isPlanned` (gepland = datum na `moment`).
+    /// Exclusieve bovengrens voor planboekingen die voor "nu" meetellen: het begin van de dag na `today`.
+    /// De rekenmotor werkt per KALENDERDAG: een geplande boeking op dag D (salaris, huur, inleg, rente) telt voor
+    /// "vandaag" mee zodra D <= vandaag, de hele dag, dus ook voor 12:00. Gepland is alleen wat op een latere dag valt.
+    static func planLimit(for today: Date, calendar: Calendar = YearMonth.calendar) -> Date {
+        nextDayStart(after: today, calendar: calendar)
+    }
+
+    /// Ligt `date` op een dag na de dag van `today`? Dit is de betekenis van `DayEvent.isPlanned`.
+    static func isPlanned(_ date: Date, asOf today: Date, calendar: Calendar = YearMonth.calendar) -> Bool {
+        date >= nextDayStart(after: today, calendar: calendar)
+    }
+
+    /// Exclusieve bovengrens voor handmatige boekingen (BankEntry, PotEntry) die "nu" meetellen: de kleinste
+    /// datum die net na `moment` ligt. Een handmatige boeking houdt haar eigen tijdstip: een boeking op exact
+    /// `moment` telt mee, een boeking een fractie later niet. (In de app zijn ze nooit later dan nu.)
     static func limit(including moment: Date) -> Date {
         Date(timeIntervalSinceReferenceDate: moment.timeIntervalSinceReferenceDate.nextUp)
     }

@@ -121,6 +121,35 @@ struct StoredPlans {
     }
 }
 
+/// Rekent de cijfers van veel maanden achter elkaar uit, zonder voor elke maand een plan met nieuwe regel-id's op te
+/// bouwen. Geeft dezelfde cijfers als `FinanceData.monthFigures(_:)` (een maand zonder opgeslagen plan krijgt de
+/// terugkerende regels van het laatst opgeslagen plan, de verdeling uit de standaardinleg).
+struct MonthFiguresBuilder {
+    private let data: FinanceData
+    private let stored: StoredPlans
+    private let potKeys: [String]
+    private let holdingKeys: [String]
+
+    fileprivate init(_ data: FinanceData) {
+        self.data = data
+        self.stored = StoredPlans(data.months)
+        self.potKeys = data.pots.map { $0.id.uuidString }
+        self.holdingKeys = data.holdings.map { $0.id.uuidString }
+    }
+
+    func figures(_ month: YearMonth) -> MonthFigures {
+        guard month >= data.startMonth else { return MonthFigures() }
+        let storedPlan = data.months[month.key]
+        var plan = storedPlan ?? MonthPlan()
+        if storedPlan == nil, let previous = stored.latest(before: month) {
+            // Alleen de terugkerende regels; de id's blijven zoals ze waren (voor de bedragen maken ze niet uit).
+            plan.extraIncome = previous.extraIncome.filter { $0.isRecurring }
+            plan.expenses = previous.expenses.filter { $0.isRecurring }
+        }
+        return data.monthFigures(of: plan, in: month, storedPlan: storedPlan, potKeys: potKeys, holdingKeys: holdingKeys)
+    }
+}
+
 /// Een deel van een uitgave dat uit één spaarpot komt, in hele centen.
 struct PotPayment: Equatable {
     var shareID: UUID
@@ -313,15 +342,38 @@ extension FinanceData {
     /// Alle cijfers van een maand in hele centen, uit één keer het plan opzoeken.
     func monthFigures(_ month: YearMonth) -> MonthFigures {
         guard month >= startMonth else { return MonthFigures() }
-        let p = plan(for: month)
+        return monthFigures(of: plan(for: month), in: month, storedPlan: months[month.key],
+                            potKeys: pots.map { $0.id.uuidString }, holdingKeys: holdings.map { $0.id.uuidString })
+    }
+
+    /// De cijfers van `month` uit een plan. `storedPlan` is het opgeslagen plan van de maand (of nil): alleen de
+    /// verdeling daaruit telt, zoals bij `allocation(_:in:)`. `potKeys` en `holdingKeys` zijn de id's van de potten en
+    /// beleggingen als tekst, in de volgorde van `pots` en `holdings`.
+    fileprivate func monthFigures(of p: MonthPlan, in month: YearMonth, storedPlan: MonthPlan?,
+                                  potKeys: [String], holdingKeys: [String]) -> MonthFigures {
         var f = MonthFigures()
         f.income = CentsMath.add(CentsMath.int(salaryAmount(in: month, plan: p)),
                                  CentsMath.sum(p.extraIncome.map { CentsMath.int($0.amount) }))
         f.expenses = CentsMath.sum(p.expenses.map { CentsMath.int($0.amount) })
         f.fromPots = CentsMath.sum(p.expenses.map { expenseSplit(of: $0).potsCents })
-        f.saved = CentsMath.sum(pots.map { CentsMath.int(allocation($0.id, in: month)) })
-        f.invested = CentsMath.sum(holdings.map { CentsMath.int(allocation($0.id, in: month)) })
+        var saved = 0
+        for (i, pot) in pots.enumerated() {
+            let a = storedPlan?.allocations[potKeys[i]] ?? (month >= pot.startMonth ? pot.monthlyContribution : 0)
+            saved = CentsMath.add(saved, CentsMath.int(a))
+        }
+        f.saved = saved
+        var invested = 0
+        for (i, holding) in holdings.enumerated() {
+            let a = storedPlan?.allocations[holdingKeys[i]] ?? (month >= holding.startMonth ? holding.monthlyContribution : 0)
+            invested = CentsMath.add(invested, CentsMath.int(a))
+        }
+        f.invested = invested
         return f
+    }
+
+    /// Voorbereiding om de cijfers van veel maanden achter elkaar snel uit te rekenen (zie `MonthFiguresBuilder`).
+    func monthFiguresBuilder() -> MonthFiguresBuilder {
+        MonthFiguresBuilder(self)
     }
 
     /// Verdeling voor één pot of belegging in een maand.

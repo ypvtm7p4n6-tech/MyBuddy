@@ -42,9 +42,13 @@ struct PairedRemoval: Equatable {
 /// Saldo aan het eind van een dag = basis + de gebeurtenissen na de basis en op of voor die dag. Wat "na de basis" is,
 /// hangt af van het soort gebeurtenis:
 /// - handmatige bankboekingen houden hun eigen tijdstip: alleen wat ná het meetmoment valt telt mee;
-/// - planboekingen (salaris, inkomsten, uitgaven, inleg: alles uit het plan, ze staan op 12:00 van hun dag) op
-///   dezelfde kalenderdag als het meetmoment gelden als al verwerkt. De basis is voor hen het EINDE van de dag van
-///   het meetmoment. Anders telt een saldo dat je om 08:30 op salarisdag invult het salaris om 12:00 nog eens mee.
+/// - planboekingen (salaris, inkomsten, uitgaven, inleg: alles uit het plan) gelden per KALENDERDAG. Die van dezelfde
+///   dag als het meetmoment zijn al verwerkt: de basis is voor hen het EINDE van de dag van het meetmoment. Anders
+///   telt een saldo dat je om 08:30 op salarisdag invult het salaris van die dag nog eens mee.
+///
+/// Een vraag heeft twee bovengrenzen: handmatige boekingen tellen tot en met hun eigen tijdstip (`entriesBefore`),
+/// planboekingen tot en met de hele dag (`planBefore`, het begin van de dag erna). Voor het saldo aan het eind van
+/// een dag zijn ze gelijk.
 struct BankTimeline {
     private let snapshots: [BankSnapshot]
     private let hasSnapshots: Bool
@@ -85,14 +89,43 @@ struct BankTimeline {
         var entryItems: [(date: Date, cents: Int)] = []
         if let first = BankTimeline.startMonth(for: data, firstLimit: firstLimit, lastLimit: lastLimit) {
             let last = YearMonth(date: DayMath.lastMoment(before: lastLimit))
-            var m = first
-            var count = 0
-            while m <= last && count < 2_400 {
-                for event in source(m) where event.bankAmount != 0 {
+            let calendar = YearMonth.calendar
+            var count = 1
+
+            // Maanden die helemaal vóór de eerste vraag liggen (en na de basis) hoeven niet op dagniveau: alle
+            // planboekingen van zo'n maand tellen in elke vraag mee, dus één bedrag per maand (inkomen min uitgaven van
+            // de bank min inleg, gelijk aan `remaining(in:)`) is genoeg. Dat scheelt het opbouwen van alle
+            // gebeurtenissen van jaren geschiedenis. Handmatige boekingen blijven met hun eigen tijdstip meetellen.
+            // Er kan in zulke maanden geen meetpunt liggen: de basis is het laatste meetpunt vóór de eerste vraag.
+            let firstSummarized = first.adding(1)
+            var next = firstSummarized
+            if next <= last && next.endExclusive <= firstLimit {
+                let figures = data.monthFiguresBuilder()
+                while next <= last && count < 2_400 && next.endExclusive <= firstLimit {
+                    let cents = figures.figures(next).remaining
+                    if cents != 0 { planItems.append((date: next.date(day: 1, calendar: calendar), cents: cents)) }
+                    next = next.adding(1)
+                    count += 1
+                }
+                let from = firstSummarized.firstDay
+                let until = next.firstDay
+                for entry in data.bankEntries where entry.date >= from && entry.date < until {
+                    let cents = CentsMath.int(entry.amount)
+                    if cents != 0 { entryItems.append((date: entry.date, cents: cents)) }
+                }
+            }
+
+            // De maand met de basis en alle maanden vanaf de eerste vraag: per gebeurtenis.
+            func addEvents(of month: YearMonth) {
+                for event in source(month) where event.bankAmount != 0 {
                     let item = (date: event.date, cents: CentsMath.int(event.bankAmount))
                     if event.kind == .bankEntry { entryItems.append(item) } else { planItems.append(item) }
                 }
-                m = m.adding(1)
+            }
+            addEvents(of: first)
+            while next <= last && count < 2_400 {
+                addEvents(of: next)
+                next = next.adding(1)
                 count += 1
             }
         }
@@ -117,10 +150,23 @@ struct BankTimeline {
 
     /// Saldo vóór het moment `limit` (begin van de dag na de gevraagde dag). nil zolang er geen saldo bekend is.
     func balance(before limit: Date) -> Double? {
-        guard let base = base(before: limit) else { return nil }
-        let entries = entryFlow.sum(after: base.date, before: limit)
-        let plan = planFlow.sum(after: base.planDate, before: limit)
-        return CentsMath.value(CentsMath.add(base.cents, CentsMath.add(entries, plan)))
+        balance(entriesBefore: limit, planBefore: limit)
+    }
+
+    /// Saldo met aparte bovengrenzen: handmatige boekingen vóór `entriesBefore` (het meetpunt dat telt is het laatste
+    /// vóór dat moment), planboekingen vóór `planBefore`. Voor "nu" is `entriesBefore` net na het huidige moment en
+    /// `planBefore` het begin van de volgende dag. nil zolang er geen saldo bekend is.
+    func balance(entriesBefore: Date, planBefore: Date) -> Double? {
+        guard let cents = balanceCents(entriesBefore: entriesBefore, planBefore: planBefore) else { return nil }
+        return CentsMath.value(cents)
+    }
+
+    /// Zoals `balance(entriesBefore:planBefore:)`, in hele centen.
+    func balanceCents(entriesBefore: Date, planBefore: Date) -> Int? {
+        guard let base = base(before: entriesBefore) else { return nil }
+        let entries = entryFlow.sum(after: base.date, before: entriesBefore)
+        let plan = planFlow.sum(after: base.planDate, before: planBefore)
+        return CentsMath.add(base.cents, CentsMath.add(entries, plan))
     }
 }
 
@@ -137,19 +183,24 @@ extension FinanceData {
         bankBalance(on: month.date(day: month.dayCount))
     }
 
-    /// Saldo op precies dit moment: het laatste meetpunt tot en met `moment` plus de gebeurtenissen daarna die op of
-    /// vóór `moment` vallen. Handmatige boekingen houden hun eigen tijdstip. Planboekingen (salaris, inkomsten,
-    /// uitgaven, inleg) op dezelfde kalenderdag als het meetpunt zitten al in het ingevulde saldo en tellen dus
-    /// niet nog eens mee, ook niet als ze (12:00) later op die dag vallen. nil zolang er geen saldo bekend is.
+    /// Saldo van het moment `moment` ("nu"): het laatste meetpunt tot en met `moment` plus de gebeurtenissen daarna.
+    /// Alles gebeurt per KALENDERDAG: planboekingen (salaris, inkomsten, uitgaven, inleg) tellen mee zodra hun dag
+    /// op of voor de dag van `moment` ligt, de hele dag dus, ook voor 12:00. Handmatige boekingen houden hun eigen
+    /// tijdstip (tot en met `moment`). Planboekingen op dezelfde kalenderdag als het meetpunt zitten al in het
+    /// ingevulde saldo en tellen dus niet nog eens mee. nil zolang er geen saldo bekend is.
     func bankBalance(atMoment moment: Date) -> Double? {
-        let limit = DayMath.limit(including: moment)
-        let timeline = BankTimeline(self, firstLimit: limit, lastLimit: limit, events: { self.bankFlowEvents(in: $0) })
-        return timeline.balance(before: limit)
+        let entriesLimit = DayMath.limit(including: moment)
+        let planLimit = DayMath.planLimit(for: moment)
+        let timeline = BankTimeline(self, firstLimit: entriesLimit, lastLimit: planLimit,
+                                    events: { self.bankFlowEvents(in: $0) })
+        return timeline.balance(entriesBefore: entriesLimit, planBefore: planLimit)
     }
 
     /// Saldo van nu: op het moment `today` als dat in `current` valt, anders het saldo aan het eind van `current`.
-    /// 0 als er nog geen saldo bekend is. Een saldo dat je net invulde blijft dus staan tot de eerstvolgende
-    /// geplande gebeurtenis van een latere dag aan de beurt is.
+    /// 0 als er nog geen saldo bekend is. Per kalenderdag: het salaris van vandaag telt de hele dag mee (ook voor
+    /// 12:00), en een saldo dat je vandaag invulde bevat de planboekingen van vandaag al. Het saldo staat dus gelijk
+    /// aan `dayTotals(on: today).bankBalance` (het saldo aan het eind van vandaag) zolang er geen handmatige boeking
+    /// later op de dag staat dan `today`.
     func bankBalanceNow(current: YearMonth, today: Date = Date()) -> Double {
         if YearMonth(date: today) == current { return bankBalance(atMoment: today) ?? 0 }
         return bankBalance(at: current) ?? 0

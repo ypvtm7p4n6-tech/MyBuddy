@@ -22,7 +22,7 @@ struct PotTimelineItem: Identifiable, Equatable {
     /// true = maandelijkse verdeling, false = handmatige boeking.
     var isMonthlyAllocation: Bool
     var kind: PotTimelineKind = .manual
-    /// Ligt na het moment `asOf` van `potTimeline`: nog niet gebeurd, dus nog niet in het saldo van nu.
+    /// Ligt op een dag na de dag van `asOf` van `potTimeline`: nog niet gebeurd, dus nog niet in het saldo van nu.
     var isPlanned: Bool = false
 }
 
@@ -84,16 +84,30 @@ extension FinanceData {
 
     // MARK: Saldo
 
-    /// Alle boekingen van een pot tot en met `last` als lijst op datum: handmatige boekingen, de maandverdelingen
-    /// op hun overschrijfdatum en de potdelen van uitgaven op hun uitgavedatum (negatief).
+    /// Alle boekingen van een pot tot en met `last`, in twee lijsten op datum: de handmatige boekingen (eigen
+    /// tijdstip) en wat uit het plan komt: de maandverdelingen op hun overschrijfdatum en de potdelen van uitgaven op
+    /// hun uitgavedatum (negatief). Planboekingen tellen per kalenderdag, zie `PotFlows`.
     /// `managed` zijn de id's van opgeslagen rente-uitbetalingen; die tellen apart mee (zie `potFlows`).
-    func potLedger(for pot: Pot, throughMonth last: YearMonth, excluding managed: Set<UUID> = []) -> CentsLedger {
-        var items: [(date: Date, cents: Int)] = []
-        for e in potEntries where e.potID == pot.id && !managed.contains(e.id) {
-            items.append((e.date, CentsMath.int(e.amount)))
+    func potLedger(for pot: Pot, throughMonth last: YearMonth, excluding managed: Set<UUID> = []) -> PotLedgers {
+        potLedgers(for: [pot], throughMonth: last, excluding: [pot.id: managed])[pot.id]
+            ?? PotLedgers(entries: CentsLedger(), plan: CentsLedger())
+    }
+
+    /// Zoals `potLedger(for:throughMonth:excluding:)`, voor meer potten in één keer: de maanden en uitgaven worden één
+    /// keer doorlopen in plaats van één keer per pot. `managed` per pot (op pot-id) zijn de uitbetalingen die apart meetellen.
+    func potLedgers(for targets: [Pot], throughMonth last: YearMonth,
+                    excluding managed: [UUID: Set<UUID>] = [:]) -> [UUID: PotLedgers] {
+        var entryItems: [UUID: [(date: Date, cents: Int)]] = [:]
+        var planItems: [UUID: [(date: Date, cents: Int)]] = [:]
+        var wanted = Set<UUID>()
+        for pot in targets { wanted.insert(pot.id) }
+        for e in potEntries where wanted.contains(e.potID) {
+            if managed[e.potID]?.contains(e.id) == true { continue }
+            entryItems[e.potID, default: []].append((e.date, CentsMath.int(e.amount)))
         }
+
         // Zelfde regels als `allocation(_:in:)` en `transferDay(for:in:)`, maar zonder elke maand alles opnieuw op te zoeken.
-        let potKey = pot.id.uuidString
+        let potKeys = targets.map { $0.id.uuidString }
         let anyShares = months.values.contains { plan in plan.expenses.contains { !$0.potShares.isEmpty } }
         let stored = StoredPlans(anyShares ? months : [:])
         let cal = YearMonth.calendar
@@ -101,25 +115,34 @@ extension FinanceData {
         var count = 0
         while m <= last && count < 2_400 {
             let storedPlan = months[m.key]
-            let planned = storedPlan?.allocations[potKey] ?? (m >= pot.startMonth ? pot.monthlyContribution : 0)
-            let cents = CentsMath.int(planned)
-            if cents != 0 {
-                let day = min(YearMonth.clampedDay(storedPlan?.transferDay ?? pot.transferDay ?? salary.payDay), m.dayCount)
-                items.append((m.date(day: day, calendar: cal), cents))
+            for (i, pot) in targets.enumerated() {
+                let planned = storedPlan?.allocations[potKeys[i]] ?? (m >= pot.startMonth ? pot.monthlyContribution : 0)
+                let cents = CentsMath.int(planned)
+                if cents != 0 {
+                    let day = min(YearMonth.clampedDay(storedPlan?.transferDay ?? pot.transferDay ?? salary.payDay), m.dayCount)
+                    planItems[pot.id, default: []].append((m.date(day: day, calendar: cal), cents))
+                }
             }
             if anyShares {
                 // Een nog niet vastgelegde maand krijgt de terugkerende uitgaven van het laatst opgeslagen plan.
                 let lines = storedPlan?.expenses ?? (stored.latest(before: m)?.expenses.filter { $0.isRecurring } ?? [])
                 for line in lines where !line.potShares.isEmpty {
-                    for payment in expenseSplit(of: line).pots where payment.potID == pot.id {
-                        items.append((m.date(day: expenseDay(of: line), calendar: cal), -payment.cents))
+                    var date: Date?
+                    for payment in expenseSplit(of: line).pots where wanted.contains(payment.potID) {
+                        if date == nil { date = m.date(day: expenseDay(of: line), calendar: cal) }
+                        planItems[payment.potID, default: []].append((date ?? m.firstDay, -payment.cents))
                     }
                 }
             }
             m = m.adding(1)
             count += 1
         }
-        return CentsLedger(items: items)
+        var result: [UUID: PotLedgers] = [:]
+        for pot in targets {
+            result[pot.id] = PotLedgers(entries: CentsLedger(items: entryItems[pot.id] ?? []),
+                                        plan: CentsLedger(items: planItems[pot.id] ?? []))
+        }
+        return result
     }
 
     /// Saldo aan het EIND van `date`. Inleg telt vanaf de overschrijfdatum, uitgaven uit de pot vanaf de
@@ -132,12 +155,15 @@ extension FinanceData {
         return CentsMath.value(flows.cents(before: DayMath.nextDayStart(after: date)))
     }
 
-    /// Saldo op precies dit moment: alles met een datum op of vóór `moment`. Gebeurtenissen later op dezelfde dag
-    /// (12:00 voor plangebeurtenissen) tellen nog niet mee, net zoals `DayEvent.isPlanned` ze "gepland" noemt.
+    /// Saldo van het moment `moment` ("nu"). Alles gebeurt per KALENDERDAG: inleg, uitgaven uit de pot en rente tellen
+    /// mee zodra hun dag op of voor de dag van `moment` ligt, de hele dag dus, ook voor 12:00 (precies het omgekeerde
+    /// van `DayEvent.isPlanned`: gepland is wat op een latere dag valt). Handmatige boekingen houden hun eigen
+    /// tijdstip (tot en met `moment`).
     func potBalance(_ potID: UUID, atMoment moment: Date) -> Double {
         guard let pot = self.pot(potID) else { return 0 }
         let flows = potFlows(pot, throughMonth: YearMonth(date: moment))
-        return CentsMath.value(flows.cents(before: DayMath.limit(including: moment)))
+        return CentsMath.value(flows.cents(entriesBefore: DayMath.limit(including: moment),
+                                           planBefore: DayMath.planLimit(for: moment)))
     }
 
     /// Saldo aan het EIND van `month`. Toekomstige maanden tellen de geplande verdeling en verwachte rente mee,
@@ -147,8 +173,8 @@ extension FinanceData {
         potBalance(potID, asOf: month.date(day: month.dayCount))
     }
 
-    /// Saldo van nu: op het moment `today` als dat in `current` valt (wat nog moet komen telt niet mee),
-    /// anders het saldo aan het eind van `current`.
+    /// Saldo van nu: op de dag van `today` als die in `current` valt (wat op een latere dag komt, zoals de inleg van
+    /// de 25e, telt niet mee; wat vandaag valt de hele dag wel), anders het saldo aan het eind van `current`.
     func potBalanceNow(_ potID: UUID, current: YearMonth, today: Date = Date()) -> Double {
         if YearMonth(date: today) == current { return potBalance(potID, atMoment: today) }
         return potBalance(potID, at: current)
@@ -210,8 +236,9 @@ extension FinanceData {
     /// handmatige boekingen, rente (opgeslagen en verwacht), maandverdelingen op hun overschrijfdatum
     /// en uitgaven die uit de pot betaald worden (negatief).
     ///
-    /// Regels na het moment `today` zijn `isPlanned`: de som van de regels die dat niet zijn is het saldo van nu
-    /// (`potBalanceNow`), de som van alle regels het saldo aan het eind van `current` (`potBalance(_:at:)`).
+    /// Regels op een dag na de dag van `today` zijn `isPlanned` (per kalenderdag, zoals `DayEvent.isPlanned`): de som
+    /// van de regels die dat niet zijn is het saldo van nu (`potBalanceNow`), de som van alle regels het saldo aan
+    /// het eind van `current` (`potBalance(_:at:)`).
     func potTimeline(_ potID: UUID, current: YearMonth, asOf today: Date = Date()) -> [PotTimelineItem] {
         guard let pot = self.pot(potID) else { return [] }
         var items: [PotTimelineItem] = []
@@ -263,7 +290,8 @@ extension FinanceData {
             m = m.adding(1)
             count += 1
         }
-        for i in items.indices { items[i].isPlanned = items[i].date > today }
+        let planLimit = DayMath.planLimit(for: today, calendar: cal)
+        for i in items.indices { items[i].isPlanned = items[i].date >= planLimit }
         return items.sorted { lhs, rhs in
             if lhs.date != rhs.date { return lhs.date > rhs.date }
             return lhs.id < rhs.id

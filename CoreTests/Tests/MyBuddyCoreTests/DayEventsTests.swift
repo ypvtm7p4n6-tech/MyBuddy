@@ -28,13 +28,18 @@ final class DayEventsTests: XCTestCase {
         XCTAssertEqual(Set(events.map(\.id)).count, events.count)
     }
 
-    func testIsPlannedIsDecidedByTheAsOfMoment() {
+    // Aangepast voor de dagsemantiek: `isPlanned` betekent "de dag ligt na vandaag", niet meer "het tijdstip ligt na nu".
+    // Een geplande boeking op dag D telt dus de hele dag D als gebeurd, ook voor 12:00; pas op D-1 is ze gepland.
+    func testIsPlannedIsDecidedByTheAsOfDay() {
         let d = makeBaseData()
-        // Precies op het moment van de gebeurtenis (12:00) is die niet meer gepland.
-        let atNoon = d.dayEvents(in: sep2026, asOf: engTime(sep2026, 25, hour: 12))
-        XCTAssertEqual(atNoon.map(\.isPlanned), [false, false, false])
-        let justBefore = d.dayEvents(in: sep2026, asOf: engTime(sep2026, 25, hour: 11.9))
-        XCTAssertEqual(justBefore.map(\.isPlanned), [false, true, true])
+        // Op de dag zelf is niets gepland, op elk tijdstip van die dag (ook vlak na middernacht en voor 12:00).
+        for hour in [0.1, 8.0, 11.9, 12.0, 12.1, 23.9] {
+            let thatDay = d.dayEvents(in: sep2026, asOf: engTime(sep2026, 25, hour: hour))
+            XCTAssertEqual(thatDay.map(\.isPlanned), [false, false, false], "uur \(hour)")
+        }
+        // De dag ervoor (ook om 23:59) zijn het salaris en de toeslag van de 25e nog gepland; de huur van de 1e niet.
+        let dayBefore = d.dayEvents(in: sep2026, asOf: engTime(sep2026, 24, hour: 23.99))
+        XCTAssertEqual(dayBefore.map(\.isPlanned), [false, true, true])
         let allPast = d.dayEvents(in: sep2026, asOf: day(oct2026, 1))
         XCTAssertTrue(allPast.allSatisfy { !$0.isPlanned })
         let allFuture = d.dayEvents(in: sep2026, asOf: day(aug2026, 1))

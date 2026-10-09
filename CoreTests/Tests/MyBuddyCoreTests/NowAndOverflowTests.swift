@@ -1,14 +1,15 @@
 import XCTest
 @testable import MyBuddyCore
 
-/// "Nu" tegenover "eind van de maand", het saldo op een moment (niet tot het eind van de dag) en rekenen met
-/// absurd grote bedragen. Alle momenten zijn vast; niets hangt van de klok af.
+/// "Nu" tegenover "eind van de maand", het saldo van een moment (per kalenderdag: geplande boekingen van vandaag
+/// tellen de hele dag mee, handmatige boekingen tot en met hun eigen tijdstip) en rekenen met absurd grote bedragen.
+/// Alle momenten zijn vast; niets hangt van de klok af.
 final class NowAndOverflowTests: XCTestCase {
     // MARK: Hulpjes
 
     /// Salaris 3000 op de 8e, huur 1000 op de 8e, een pot met 100 inleg op de 8e en een meetpunt van 1000 om 08:00.
-    /// Planboekingen staan op 12:00. Die van de 8e zelf zitten al in het saldo van het meetpunt: de bank blijft op
-    /// 1000. De pot kent geen meetpunt en telt zijn inleg vanaf 12:00.
+    /// Planboekingen gelden per kalenderdag. Die van de 8e zelf zitten al in het saldo van het meetpunt: de bank
+    /// blijft op 1000. De pot kent geen meetpunt en telt zijn inleg de hele dag van de 8e.
     private func morningData() -> (data: FinanceData, pot: Pot) {
         var d = FinanceData(startMonth: oct2026)
         d.salary = SalarySettings(mode: .fixed, fixedMonthly: 3000, hourlyRate: 0, hoursPerWeek: 0, payDay: 8)
@@ -20,29 +21,32 @@ final class NowAndOverflowTests: XCTestCase {
         return (d, pot)
     }
 
-    // MARK: Saldo van nu telt alleen wat al gebeurd is
+    // MARK: Saldo van nu telt wat vandaag of eerder gebeurt
 
-    func testBalanceNowIgnoresEventsLaterToday() {
+    // Aangepast voor de dagsemantiek (was: `testBalanceNowIgnoresEventsLaterToday`). Vroeger telden de geplande regels
+    // van 12:00 pas vanaf 12:00 mee; nu telt een geplande boeking op dag D mee zodra D <= vandaag, de hele dag.
+    func testBalanceNowCountsTodaysPlannedEventsTheWholeDay() {
         let (d, pot) = morningData()
         let morning = engTime(oct2026, 8, hour: 8.5)
-        // Wat de gebruiker net invulde blijft staan: de drie geplande regels van 12:00 zijn nog niet aan de beurt.
+        // De inleg van de 8e telt al om 08:30. De bank blijft op wat de gebruiker invulde (de planboekingen van de 8e
+        // zaten al in het saldo van 08:00).
         XCTAssertEqual(d.bankBalanceNow(current: oct2026, today: morning), 1000, accuracy: 0.001)
-        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: morning), 0, accuracy: 0.001)
-        XCTAssertEqual(d.totalSaved(current: oct2026, today: morning), 0, accuracy: 0.001)
-        XCTAssertTrue(d.dayEvents(in: oct2026, asOf: morning).filter { $0.day == 8 }.allSatisfy(\.isPlanned))
+        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: morning), 100, accuracy: 0.001)
+        XCTAssertEqual(d.totalSaved(current: oct2026, today: morning), 100, accuracy: 0.001)
+        XCTAssertTrue(d.dayEvents(in: oct2026, asOf: morning).filter { $0.day == 8 }.allSatisfy { !$0.isPlanned })
 
-        // Een seconde voor 12:00 is het nog hetzelfde.
-        let almost = engTime(oct2026, 8, hour: 12).addingTimeInterval(-1)
-        XCTAssertEqual(d.bankBalanceNow(current: oct2026, today: almost), 1000, accuracy: 0.001)
-        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: almost), 0, accuracy: 0.001)
+        // Een seconde voor 12:00, 12:00 zelf en 's avonds is het hetzelfde.
+        for t in [engTime(oct2026, 8, hour: 12).addingTimeInterval(-1), engTime(oct2026, 8, hour: 12), engTime(oct2026, 8, hour: 23)] {
+            XCTAssertEqual(d.bankBalanceNow(current: oct2026, today: t), 1000, accuracy: 0.001)
+            XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: t), 100, accuracy: 0.001)
+            XCTAssertTrue(d.dayEvents(in: oct2026, asOf: t).filter { $0.day == 8 }.allSatisfy { !$0.isPlanned })
+        }
 
-        // Op 12:00 zelf zijn ze aan de beurt. De pot krijgt zijn 100. De bank blijft op 1000: salaris, huur en inleg
-        // van de 8e zaten al in het saldo dat om 08:00 is ingevuld en tellen niet nog eens mee.
-        let noon = engTime(oct2026, 8, hour: 12)
-        XCTAssertEqual(d.bankBalanceNow(current: oct2026, today: noon), 1000, accuracy: 0.001)
-        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: noon), 100, accuracy: 0.001)
-        XCTAssertTrue(d.dayEvents(in: oct2026, asOf: noon).filter { $0.day == 8 }.allSatisfy { !$0.isPlanned })
-        XCTAssertEqual(d.bankBalanceNow(current: oct2026, today: engTime(oct2026, 8, hour: 23)), 1000, accuracy: 0.001)
+        // De dag ervoor (ook om 23:59) is er nog niets van de 8e: de pot staat op 0 en de geplande regels zijn gepland.
+        let evening = engTime(oct2026, 7, hour: 23.99)
+        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: evening), 0, accuracy: 0.001)
+        XCTAssertEqual(d.totalSaved(current: oct2026, today: evening), 0, accuracy: 0.001)
+        XCTAssertTrue(d.dayEvents(in: oct2026, asOf: evening).filter { $0.day == 8 }.allSatisfy(\.isPlanned))
     }
 
     func testEndOfDayVariantsStillCountTheWholeDay() {
@@ -52,14 +56,19 @@ final class NowAndOverflowTests: XCTestCase {
         // De bank blijft op het ingevulde saldo (de planboekingen van die dag zitten er al in), de pot krijgt zijn inleg.
         XCTAssertEqual(d.bankBalance(on: morning) ?? -1, 1000, accuracy: 0.001)
         XCTAssertEqual(d.potBalance(pot.id, asOf: morning), 100, accuracy: 0.001)
-        // En het saldo op het moment zelf kan ook rechtstreeks.
+        // Aangepast voor de dagsemantiek: het saldo van het moment is nu per kalenderdag, dus ook de pot staat om 08:30
+        // al op 100 (vroeger 0 tot 12:00) en gelijk aan het saldo aan het eind van de dag.
         XCTAssertEqual(d.bankBalance(atMoment: morning) ?? -1, 1000, accuracy: 0.001)
-        XCTAssertEqual(d.potBalance(pot.id, atMoment: morning), 0, accuracy: 0.001)
+        XCTAssertEqual(d.potBalance(pot.id, atMoment: morning), 100, accuracy: 0.001)
+        XCTAssertEqual(d.potBalance(pot.id, atMoment: morning), d.potBalance(pot.id, asOf: morning), accuracy: 0.001)
         // De dag erna telt wat daarna gepland staat weer mee: een abonnement van 40 op de 9e.
         var next = d
         next.upsertLine(MoneyLine(name: "Abonnement", amount: 40, day: 9), kind: .expense, in: oct2026)
         XCTAssertEqual(next.bankBalance(on: day(oct2026, 8)) ?? -1, 1000, accuracy: 0.001)
         XCTAssertEqual(next.bankBalance(on: day(oct2026, 9)) ?? -1, 960, accuracy: 0.001)
+        // Op de 8e om 08:30 telt het abonnement van de 9e nog niet, op de 9e om 00:05 wel.
+        XCTAssertEqual(next.bankBalance(atMoment: morning) ?? -1, 1000, accuracy: 0.001)
+        XCTAssertEqual(next.bankBalance(atMoment: engTime(oct2026, 9, hour: 0.1)) ?? -1, 960, accuracy: 0.001)
     }
 
     func testBalanceNowOutsideTheCurrentMonthIsTheEndOfThatMonth() {
@@ -100,8 +109,10 @@ final class NowAndOverflowTests: XCTestCase {
         XCTAssertEqual(DayMath.lastMoment(before: limit), t)
     }
 
-    /// Het saldo van nu is het meetpunt plus precies de gebeurtenissen die `dayEvents` niet "gepland" noemt,
-    /// zonder de planboekingen van de dag van het meetpunt zelf (die zitten al in het saldo).
+    /// Het saldo van nu is het meetpunt plus precies de gebeurtenissen die `dayEvents` niet "gepland" noemt
+    /// (per kalenderdag), zonder de planboekingen van de dag van het meetpunt zelf (die zitten al in het saldo).
+    /// Aangepast voor de dagsemantiek: planboekingen tellen de hele dag, een handmatige boeking telt tot en met haar
+    /// eigen tijdstip (de storting van 09:30 telt dus niet om 09:24 mee, in de app is een boeking nooit later dan nu).
     func testBalanceNowMatchesNonPlannedDayEvents() {
         var d = FinanceData(startMonth: oct2026)
         d.salary = SalarySettings(mode: .fixed, fixedMonthly: 2800, hourlyRate: 0, hoursPerWeek: 0, payDay: 8)
@@ -134,6 +145,7 @@ final class NowAndOverflowTests: XCTestCase {
             let events = d.dayEvents(in: oct2026, asOf: t).filter {
                 !$0.isPlanned && $0.date > snapshotDate
                     && !($0.kind != .bankEntry && calendar.isDate($0.date, inSameDayAs: snapshotDate))
+                    && ($0.kind != .bankEntry || $0.date <= t)
             }
             let expectedBank = 100_000 + events.reduce(0) { $0 + engCents($1.bankAmount) }
             XCTAssertEqual(engCents(d.bankBalanceNow(current: oct2026, today: t)), expectedBank, "bank op \(t)")
@@ -254,12 +266,14 @@ final class NowAndOverflowTests: XCTestCase {
     func testSetBalanceAsOfNowMeasuresAgainstWhatTheUserSees() {
         var (d, pot) = morningData()
         let morning = engTime(oct2026, 8, hour: 8.5)
-        // De gebruiker ziet 0 (de inleg van 12:00 moet nog komen) en vult 50 in.
+        // Aangepast voor de dagsemantiek: de gebruiker ziet 100 (de inleg van de 8e telt de hele dag, dus ook om 08:30)
+        // en vult 50 in. De correctie is dus -50 (vroeger +50 tegen een saldo van 0).
+        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: morning), 100, accuracy: 0.001)
         d.setPotBalance(pot.id, to: 50, current: oct2026, note: "Geteld", date: morning, asOf: morning)
         XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: morning), 50, accuracy: 0.001)
-        XCTAssertEqual(d.potEntries.last?.amount ?? 0, 50, accuracy: 0.001)
-        // De geplande inleg komt er om 12:00 gewoon bij.
-        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: engTime(oct2026, 8, hour: 12)), 150, accuracy: 0.001)
+        XCTAssertEqual(d.potEntries.last?.amount ?? 0, -50, accuracy: 0.001)
+        // Om 12:00 komt er niets meer bij: de inleg zat al in het getal van 08:30.
+        XCTAssertEqual(d.potBalanceNow(pot.id, current: oct2026, today: engTime(oct2026, 8, hour: 12)), 50, accuracy: 0.001)
         // Nog eens hetzelfde invullen verandert niets.
         let count = d.potEntries.count
         d.setPotBalance(pot.id, to: 50, current: oct2026, date: morning, asOf: morning)

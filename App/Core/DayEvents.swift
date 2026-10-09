@@ -21,7 +21,8 @@ struct DayEvent: Identifiable, Equatable {
     var potID: UUID?
     var holdingID: UUID?
     var lineID: UUID?
-    /// Ligt na het moment `asOf` van `dayEvents`.
+    /// De dag van deze gebeurtenis ligt na de dag van `asOf` van `dayEvents` (per kalenderdag, niet per tijdstip:
+    /// alles op de dag van vandaag geldt als al gebeurd, ook als het voor 12:00 is).
     var isPlanned: Bool
 }
 
@@ -36,7 +37,8 @@ struct BankDayPoint: Identifiable, Equatable {
 extension FinanceData {
     // MARK: Gebeurtenissen
 
-    /// Alle gebeurtenissen van een maand, gesorteerd op datum. `isPlanned` is waar voor alles na `today`.
+    /// Alle gebeurtenissen van een maand, gesorteerd op datum. `isPlanned` is waar voor alles op een dag na de dag van
+    /// `today` (per kalenderdag: de hele dag van vandaag telt als gebeurd).
     /// Maanden vóór de startmaand hebben geen geplande gebeurtenissen.
     func dayEvents(in month: YearMonth, asOf today: Date = Date()) -> [DayEvent] {
         dayEventsByMonth(from: month, to: month, asOf: today)[month] ?? []
@@ -132,6 +134,13 @@ extension FinanceData {
     /// Gebeurtenissen van alle maanden `first ... last`, per maand gesorteerd. Rente wordt per pot één keer
     /// berekend: opgeslagen uitbetalingen en verwachte uitbetalingen, nooit dubbel.
     func dayEventsByMonth(from first: YearMonth, to last: YearMonth, asOf today: Date) -> [YearMonth: [DayEvent]] {
+        dayEventsByMonth(from: first, to: last, asOf: today, flows: nil)
+    }
+
+    /// Zoals `dayEventsByMonth(from:to:asOf:)`. Met `flows` (per pot, t/m `last` berekend met `potFlows`) hoeft de
+    /// rente niet nog eens te worden uitgerekend; de dagboekhouding gebruikt dezelfde flows voor de potsaldi.
+    func dayEventsByMonth(from first: YearMonth, to last: YearMonth, asOf today: Date,
+                          flows given: [UUID: PotFlows]?) -> [YearMonth: [DayEvent]] {
         var result: [YearMonth: [DayEvent]] = [:]
         guard first <= last else { return result }
         let cal = YearMonth.calendar
@@ -151,9 +160,11 @@ extension FinanceData {
         }
 
         for pot in pots {
-            let managed = Set(interestPayoutMonths(for: pot, through: last).map { InterestRules.entryID(for: pot.id, month: $0) })
-            if InterestRules.isActive(pot) {
-                for payment in potFlows(pot, throughMonth: last).payments {
+            // Alleen een pot met rente heeft uitbetalingen; de rest hoeft zijn saldoverloop hier niet op te bouwen.
+            let flows: PotFlows? = InterestRules.isActive(pot) ? (given?[pot.id] ?? potFlows(pot, throughMonth: last)) : nil
+            let managed = flows?.managedIDs ?? []
+            if let flows {
+                for payment in flows.payments {
                     place(DayEvent(id: payment.id, date: payment.date, day: DayMath.dayNumber(of: payment.date, calendar: cal),
                                    title: "Rente \(pot.name)", kind: .interest, bankAmount: 0, potAmount: payment.amount,
                                    potID: pot.id, holdingID: nil, lineID: nil, isPlanned: false))
@@ -167,9 +178,11 @@ extension FinanceData {
             }
         }
 
+        // Per kalenderdag: gepland is alles vanaf het begin van de dag na `today`.
+        let planLimit = DayMath.planLimit(for: today, calendar: cal)
         for (month, events) in result {
             var list = events
-            for i in list.indices { list[i].isPlanned = list[i].date > today }
+            for i in list.indices { list[i].isPlanned = list[i].date >= planLimit }
             list.sort(by: FinanceData.eventOrder)
             result[month] = list
         }

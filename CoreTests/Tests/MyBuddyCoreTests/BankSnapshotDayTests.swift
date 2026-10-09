@@ -1,9 +1,10 @@
 import XCTest
 @testable import MyBuddyCore
 
-/// Een saldo invullen op een dag met geplande boekingen. Planboekingen (salaris, inkomsten, uitgaven, inleg: ze staan
-/// op 12:00) op dezelfde kalenderdag als het meetpunt gelden als al verwerkt. Handmatige bankboekingen houden hun
-/// eigen tijdstip. De spaarpotten veranderen niet. Alle momenten zijn vast; niets hangt van de klok af.
+/// Een saldo invullen op een dag met geplande boekingen. Planboekingen (salaris, inkomsten, uitgaven, inleg) gelden
+/// per KALENDERDAG: die van dezelfde dag als het meetpunt zijn al verwerkt, en voor "nu" telt een geplande boeking
+/// de hele dag mee (ook voor 12:00). Handmatige bankboekingen houden hun eigen tijdstip. De spaarpotten kennen geen
+/// meetpunt: hun inleg van die dag telt de hele dag. Alle momenten zijn vast; niets hangt van de klok af.
 /// (November en december: op 25 oktober verzet de klok in Europa, en dan is "12:00 plus 12,1 uur" geen 12:01 meer.)
 final class BankSnapshotDayTests: XCTestCase {
     /// Salaris 3000 op de 25e (de standaard salarisdag), geen uitgaven.
@@ -37,9 +38,11 @@ final class BankSnapshotDayTests: XCTestCase {
     func testTheFollowingBookingsCountAgainFromTheNextDay() {
         var d = salaryData()
         d.addBankSnapshot(balance: 3_500, date: engTime(engNov2026, 25, hour: 8.5))
-        // Het volgende salaris, op 25 december om 12:00, telt wel mee.
+        // Het volgende salaris, op 25 december, telt wel mee.
         XCTAssertEqual(d.bankBalance(on: day(engDec2026, 24)) ?? .nan, 3_500, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalance(atMoment: engTime(engDec2026, 25, hour: 11.9)) ?? .nan, 3_500, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(atMoment: engTime(engDec2026, 24, hour: 23.9)) ?? .nan, 3_500, accuracy: 0.001)
+        // Nieuw gedrag (per kalenderdag): vanaf het begin van 25 december telt het salaris van die dag, ook voor 12:00.
+        XCTAssertEqual(d.bankBalance(atMoment: engTime(engDec2026, 25, hour: 11.9)) ?? .nan, 6_500, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(atMoment: engTime(engDec2026, 25, hour: 12.1)) ?? .nan, 6_500, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(on: day(engDec2026, 25)) ?? .nan, 6_500, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(at: engDec2026) ?? .nan, 6_500, accuracy: 0.001)
@@ -62,8 +65,9 @@ final class BankSnapshotDayTests: XCTestCase {
         XCTAssertEqual(d.eventsOnDay(day(engNov2026, 25)).filter { $0.bankAmount != 0 }.count, 4)
         XCTAssertEqual(d.bankBalance(on: day(engNov2026, 25)) ?? .nan, 3_500, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 12.5)) ?? .nan, 3_500, accuracy: 0.001)
-        // De pot kent geen meetpunt: zijn inleg telt vanaf 12:00 (de potkant verandert niet).
-        XCTAssertEqual(d.potBalance(pot.id, atMoment: engTime(engNov2026, 25, hour: 8.5)), 0, accuracy: 0.001)
+        // De pot kent geen meetpunt: zijn inleg telt de hele dag (per kalenderdag, dus ook om 08:30; de potkant verandert niet).
+        XCTAssertEqual(d.potBalance(pot.id, atMoment: engTime(engNov2026, 24, hour: 23.9)), 0, accuracy: 0.001)
+        XCTAssertEqual(d.potBalance(pot.id, atMoment: engTime(engNov2026, 25, hour: 8.5)), 300, accuracy: 0.001)
         XCTAssertEqual(d.potBalance(pot.id, atMoment: engTime(engNov2026, 25, hour: 12.5)), 300, accuracy: 0.001)
         XCTAssertEqual(d.potBalance(pot.id, asOf: day(engNov2026, 25)), 300, accuracy: 0.001)
         // De volgende maand komen het salaris en de inleg weer (huur en teruggave zijn eenmalig): 3500 + 3000 - 300.
@@ -119,7 +123,9 @@ final class BankSnapshotDayTests: XCTestCase {
         var d = salaryData()
         d.addBankSnapshot(balance: 500, date: engTime(engNov2026, 24, hour: 23.9))
         XCTAssertEqual(d.bankBalance(on: day(engNov2026, 24)) ?? .nan, 500, accuracy: 0.001)
-        XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 11.9)) ?? .nan, 500, accuracy: 0.001)
+        // Nieuw gedrag (per kalenderdag): het salaris van de 25e telt op de 25e de hele dag, ook om 11:54.
+        XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 24, hour: 23.9)) ?? .nan, 500, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 11.9)) ?? .nan, 3_500, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 12.1)) ?? .nan, 3_500, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(on: day(engNov2026, 25)) ?? .nan, 3_500, accuracy: 0.001)
     }
@@ -139,7 +145,11 @@ final class BankSnapshotDayTests: XCTestCase {
         // Geen ingevuld saldo, alleen een storting om 08:30: er is niets gemeten, dus niets is "al verwerkt".
         var d = salaryData()
         d.addBankEntry(amount: 100, note: "Storting", date: engTime(engNov2026, 25, hour: 8.5))
-        XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 11.9)) ?? .nan, 100, accuracy: 0.001)
+        // Nieuw gedrag (per kalenderdag): het salaris van de 25e telt op de 25e de hele dag, dus ook om 11:54.
+        // Vóór de storting zelf is er nog geen saldo bekend.
+        XCTAssertNil(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 8)))
+        XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 8.6)) ?? .nan, 3_100, accuracy: 0.001)
+        XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 11.9)) ?? .nan, 3_100, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(atMoment: engTime(engNov2026, 25, hour: 12.1)) ?? .nan, 3_100, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(on: day(engNov2026, 25)) ?? .nan, 3_100, accuracy: 0.001)
     }
