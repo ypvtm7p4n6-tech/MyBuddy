@@ -50,6 +50,7 @@ final class AppStore {
         loaded.materialize(upTo: today)
         // Rente die inmiddels is uitbetaald, komt nu in de spaarpot (herhaald aanroepen boekt nooit dubbel).
         _ = loaded.applyDueInterest(upTo: Date())
+        loaded.compactAppliedAccelerators()
         self.data = loaded
         self.now = today
         self.startupNotice = notice
@@ -89,7 +90,13 @@ final class AppStore {
     func applyRemote(_ remote: FinanceData) {
         var incoming = remote
         incoming.materialize(upTo: now)
+        incoming.compactAppliedAccelerators()
         data = incoming
+        persist()
+    }
+
+    /// Probeert de gegevens nog een keer op te slaan, bijvoorbeeld na een mislukte poging.
+    func retrySave() {
         persist()
     }
 

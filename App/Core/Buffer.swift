@@ -303,26 +303,28 @@ enum BufferCalc {
         return overview.fixed + overview.variable > 0
     }
 
-    /// Banksaldo, maar nooit onder nul.
-    static func bankAmount(in data: FinanceData, current: YearMonth) -> Double {
-        max(0, data.bankBalanceNow(current: current)).cents
+    /// Banksaldo van nu (`today`), maar nooit onder nul.
+    static func bankAmount(in data: FinanceData, current: YearMonth, today: Date = Date()) -> Double {
+        max(0, data.bankBalanceNow(current: current, today: today)).cents
     }
 
-    /// Saldo van de gekozen pot, maar nooit onder nul. 0 zonder pot.
-    static func potAmount(in data: FinanceData, setup: BufferSetup, current: YearMonth) -> Double {
+    /// Saldo van de gekozen pot van nu (`today`, zoals `potBalanceNow`: de inleg van de 25e telt pas vanaf de 25e),
+    /// maar nooit onder nul. 0 zonder pot.
+    static func potAmount(in data: FinanceData, setup: BufferSetup, current: YearMonth, today: Date = Date()) -> Double {
         guard let pot = resolvedPot(in: data, preferred: setup.potID) else { return 0 }
-        return max(0, data.potBalance(pot.id, at: current)).cents
+        return max(0, data.potBalanceNow(pot.id, current: current, today: today)).cents
     }
 
-    /// De huidige buffer volgens de gekozen bron.
-    static func currentAmount(in data: FinanceData, setup: BufferSetup, current: YearMonth) -> Double {
+    /// De huidige buffer volgens de gekozen bron, zoals die er op het moment `today` voor staat.
+    static func currentAmount(in data: FinanceData, setup: BufferSetup, current: YearMonth, today: Date = Date()) -> Double {
         switch setup.source {
         case .bank:
-            return bankAmount(in: data, current: current)
+            return bankAmount(in: data, current: current, today: today)
         case .pot:
-            return potAmount(in: data, setup: setup, current: current)
+            return potAmount(in: data, setup: setup, current: current, today: today)
         case .bankAndPot:
-            return (bankAmount(in: data, current: current) + potAmount(in: data, setup: setup, current: current)).cents
+            return (bankAmount(in: data, current: current, today: today)
+                    + potAmount(in: data, setup: setup, current: current, today: today)).cents
         case .manual:
             return max(0, setup.manualCurrent).cents
         }
@@ -354,24 +356,26 @@ enum BufferCalc {
     }
 
     /// Zet app-gegevens en keuzes om in de invoer van de berekening.
-    /// Zonder ingevulde uitgaven telt het handmatige bedrag als vaste uitgaven.
+    /// Zonder ingevulde uitgaven telt het handmatige bedrag als vaste uitgaven. De huidige buffer is het saldo van
+    /// nu (`today`).
     static func inputs(from data: FinanceData, setup: BufferSetup, current: YearMonth,
-                       monthlySaving: Double, fillWithin: Int) -> BufferInputs {
+                       monthlySaving: Double, fillWithin: Int, today: Date = Date()) -> BufferInputs {
         let overview = data.expenseOverview(in: current)
         let known = overview.fixed + overview.variable > 0
         return BufferInputs(months: setup.situation.recommendation.months,
                             fixedMonthly: known ? overview.fixed : max(0, setup.manualEssential),
                             variableMonthly: known ? overview.variable : 0,
                             variableShare: setup.variableShare,
-                            current: currentAmount(in: data, setup: setup, current: current),
+                            current: currentAmount(in: data, setup: setup, current: current, today: today),
                             monthlySaving: monthlySaving,
                             fillWithin: fillWithin,
                             annualRate: setup.useInterest ? data.settings.savingsRate : 0)
     }
 
     /// Korte uitkomst met het standaard maandbedrag (voor het blok op de Savings-pagina).
-    static func summary(for data: FinanceData, setup: BufferSetup, current: YearMonth) -> BufferResult {
+    static func summary(for data: FinanceData, setup: BufferSetup, current: YearMonth, today: Date = Date()) -> BufferResult {
         let saving = defaultMonthlySaving(in: data, setup: setup, current: current)
-        return calculate(inputs(from: data, setup: setup, current: current, monthlySaving: saving, fillWithin: 12))
+        return calculate(inputs(from: data, setup: setup, current: current, monthlySaving: saving, fillWithin: 12,
+                                today: today))
     }
 }

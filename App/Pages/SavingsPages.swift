@@ -157,7 +157,8 @@ struct MonthPickerBlock: View {
 
     var body: some View {
         @Bindable var router = router
-        MonthStepper(month: $router.focusMonth, current: store.now)
+        let window = MonthWindow.bounds(startMonth: store.data.startMonth, now: store.now)
+        MonthStepper(month: $router.focusMonth, current: store.now, minMonth: window.min, maxMonth: window.max)
             .padding(Theme.cardInset)
             .glassCard()
     }
@@ -464,6 +465,21 @@ struct MoneyLineRow: View {
     }
 }
 
+/// Kijkt vooruit voor een uitgave die elke maand uit een spaarpot komt.
+enum PotSpendOutlook {
+    /// Het eerste moment in de `months` maanden vanaf `start` waarop `potID` onder nul staat, gemeten aan het eind van
+    /// de uitgavedag `day` van elke maand (een dag buiten de maand telt als de laatste dag). nil als het saldo op die
+    /// dagen steeds nul of meer is. `data` bevat de uitgave al, anders is de uitkomst die van de pot zonder haar.
+    static func firstMomentBelowZero(of potID: UUID, in data: FinanceData, from start: YearMonth,
+                                     day: Int, months: Int = 12) -> Date? {
+        for offset in 0..<max(0, months) {
+            let moment = start.adding(offset).date(day: day)
+            if CentsMath.int(data.potBalance(potID, asOf: moment)) < 0 { return moment }
+        }
+        return nil
+    }
+}
+
 struct MoneyLineSheet: View {
     let line: MoneyLine?
     let kind: FinanceData.LineKind
@@ -610,6 +626,33 @@ struct MoneyLineSheet: View {
         return notes
     }
 
+    /// Bij een terugkerende uitgave uit een pot: komt de pot daardoor in een latere maand onder nul? Alleen potten die
+    /// door deze uitgave onder nul komen, of eerder dan zonder haar. Rekent op een kopie van de gegevens met de regel
+    /// erin en een kopie zonder de regel; er wordt niets opgeslagen.
+    private func recurringNotes(_ d: FinanceData) -> [ShareNote] {
+        guard kind == .expense, fromPotsOn, recurring else { return [] }
+        let draft = draftLine()
+        guard !draft.potShares.isEmpty else { return [] }
+        var with = d
+        with.upsertLine(draft, kind: .expense, in: month)
+        let expenseDay = draft.day ?? 1
+        var notes: [ShareNote] = []
+        for share in draft.potShares {
+            guard let pot = d.pot(share.potID),
+                  let moment = PotSpendOutlook.firstMomentBelowZero(of: pot.id, in: with, from: month, day: expenseDay)
+            else { continue }
+            var without = d
+            without.deleteLine(id: draft.id, kind: .expense, in: month)
+            if let before = PotSpendOutlook.firstMomentBelowZero(of: pot.id, in: without, from: month, day: expenseDay),
+               before <= moment {
+                continue
+            }
+            notes.append(ShareNote(id: pot.id,
+                                   text: "Met deze terugkerende uitgave staat \(pot.name) vanaf \(Fmt.month(YearMonth(date: moment))) onder nul."))
+        }
+        return notes
+    }
+
     @ViewBuilder
     private func potSection(_ d: FinanceData) -> some View {
         Section {
@@ -632,6 +675,7 @@ struct MoneyLineSheet: View {
         let available = availabilityMap(d)
         let notes = shareNotes(d, available: available)
         let bankCents = amountCents - potsCents(d)
+        let ahead = recurringNotes(d)
         ForEach(d.pots) { pot in
             potRow(pot, available: available[pot.id] ?? 0)
         }
@@ -651,6 +695,11 @@ struct MoneyLineSheet: View {
                 .foregroundStyle(Theme.negative)
         }
         ForEach(notes) { note in
+            Label(note.text, systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(Theme.warning)
+        }
+        ForEach(ahead) { note in
             Label(note.text, systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote)
                 .foregroundStyle(Theme.warning)
@@ -743,7 +792,8 @@ struct MoneyLineSheet: View {
         return result
     }
 
-    private func save() {
+    /// De regel zoals hij bij "Bewaar" wordt opgeslagen. Slaat zelf niets op.
+    private func draftLine() -> MoneyLine {
         var updated = line ?? MoneyLine(name: "", amount: 0)
         updated.name = name.trimmingCharacters(in: .whitespaces)
         updated.amount = amount.cents
@@ -751,7 +801,11 @@ struct MoneyLineSheet: View {
         updated.kind = kind == .expense ? expenseKind : .fixed
         updated.day = day.map { YearMonth.clampedDay($0) }
         updated.potShares = (kind == .expense && fromPotsOn) ? builtShares(store.data.pots) : []
-        let result = updated
+        return updated
+    }
+
+    private func save() {
+        let result = draftLine()
         let lineKind = kind
         let lineMonth = month
         withAnimation(Theme.motion) {
@@ -842,7 +896,7 @@ struct DistributePage: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 10) {
                                 SymbolBadge(symbol: pot.symbol, color: Theme.color(pot.colorIndex), size: 30)
-                                NumberRow(title: pot.name, value: allocationBinding(pot.id, month))
+                                NumberRow(title: pot.name, value: allocationBinding(pot.id, month), allowsNegative: true)
                             }
                             Text(transferCaption(id: pot.id, month: month, d: d))
                                 .font(.caption)
@@ -862,7 +916,7 @@ struct DistributePage: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 10) {
                                 SymbolBadge(symbol: h.kind.symbol, color: Theme.accent, size: 30)
-                                NumberRow(title: h.name, value: allocationBinding(h.id, month))
+                                NumberRow(title: h.name, value: allocationBinding(h.id, month), allowsNegative: true)
                             }
                             Text(transferCaption(id: h.id, month: month, d: d))
                                 .font(.caption)
@@ -1243,6 +1297,13 @@ struct BankBufferBlock: View {
 
 struct BankHistoryBlock: View {
     @Environment(AppStore.self) private var store
+    /// Een boeking waarvan het verwijderen eerst om een bevestiging vraagt, omdat er een andere helft bij hoort.
+    @State private var pendingDelete: PendingDelete?
+
+    private struct PendingDelete: Identifiable {
+        let id: UUID
+        let message: String
+    }
 
     private struct Item: Identifiable {
         let id: UUID
@@ -1280,15 +1341,7 @@ struct BankHistoryBlock: View {
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.7)
                             Menu {
-                                Button("Verwijder", role: .destructive) {
-                                    let id = item.id
-                                    let snapshot = item.isSnapshot
-                                    withAnimation(Theme.motion) {
-                                        store.mutate { data in
-                                            if snapshot { data.deleteBankSnapshot(id) } else { data.deleteBankEntry(id) }
-                                        }
-                                    }
-                                }
+                                Button("Verwijder", role: .destructive) { requestDelete(item) }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                             }
@@ -1301,7 +1354,46 @@ struct BankHistoryBlock: View {
                     }
                 }
             }
+            .confirmationDialog("Boeking verwijderen?",
+                                isPresented: Binding(get: { pendingDelete != nil },
+                                                     set: { if !$0 { pendingDelete = nil } }),
+                                titleVisibility: .visible, presenting: pendingDelete) { pending in
+                Button("Verwijder", role: .destructive) { delete(pending.id, snapshot: false) }
+            } message: { pending in
+                Text(pending.message)
+            }
         }
+    }
+
+    /// Een ingevuld saldo en een losse storting of opname verdwijnen meteen. Hoort een boeking bij een overboeking
+    /// naar of van een spaarpot, dan vraagt de app eerst om bevestiging en zegt ze wat er verdwijnt.
+    private func requestDelete(_ item: Item) {
+        if !item.isSnapshot, let message = confirmationMessage(forBankEntry: item.id) {
+            pendingDelete = PendingDelete(id: item.id, message: message)
+        } else {
+            delete(item.id, snapshot: item.isSnapshot)
+        }
+    }
+
+    private func delete(_ id: UUID, snapshot: Bool) {
+        withAnimation(Theme.motion) {
+            store.mutate { data in
+                if snapshot { data.deleteBankSnapshot(id) } else { data.deleteBankEntry(id) }
+            }
+        }
+    }
+
+    /// De tekst voor de bevestiging, of nil als de boeking los staat (dan is verwijderen veilig).
+    private func confirmationMessage(forBankEntry id: UUID) -> String? {
+        let d = store.data
+        guard let entry = d.bankEntries.first(where: { $0.id == id }) else { return nil }
+        // Een overboeking met `pairID`: de rekenmotor verwijdert beide helften en zegt zelf wat er verdwijnt.
+        if let warning = d.pairedEntries(ofBank: id).warning { return warning }
+        // Een oude overboeking zonder `pairID`: alleen de kant op de bankrekening verdwijnt.
+        if entry.kind == .toPot || entry.kind == .fromPot {
+            return "Dit verwijdert alleen de boeking op de bankrekening. De bijbehorende boeking bij de spaarpot blijft staan; die verwijder je bij de spaarpot."
+        }
+        return nil
     }
 }
 
@@ -1331,7 +1423,7 @@ struct BankActionSheet: View {
                         }
                     }
                 }
-                NumberRow(title: action == .balance ? "Saldo nu" : "Bedrag", value: $amount)
+                NumberRow(title: action == .balance ? "Saldo nu" : "Bedrag", value: $amount, allowsNegative: action == .balance)
                 TextField("Notitie (optioneel)", text: $note)
             } header: {
                 Text(headerText(bank: bank, potBalance: potBalance))

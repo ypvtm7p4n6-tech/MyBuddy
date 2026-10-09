@@ -156,10 +156,15 @@ final class DayEventsTests: XCTestCase {
 
     // MARK: Saldo per dag
 
+    // Planboekingen (salaris, huur, inleg: ze staan op 12:00) op dezelfde dag als het meetpunt gelden als al verwerkt.
+    // De tests hieronder willen de huur van de 1e juist wel laten meetellen, dus hun meetpunt ligt vlak voor de 1e
+    // (de dag ervoor om 23:30, `hour: -0.5`) en niet op de 1e zelf.
+
     func testBalanceOnEveryDayOfAMonthBeforeAndAfterPayday() {
         var d = makeBaseData()
-        d.addBankSnapshot(balance: 500, date: engTime(sep2026, 1, hour: 0.5))
-        XCTAssertNil(d.bankBalance(on: day(aug2026, 31)), "voor het eerste meetpunt is het saldo onbekend")
+        d.addBankSnapshot(balance: 500, date: engTime(sep2026, 1, hour: -0.5))
+        XCTAssertNil(d.bankBalance(on: day(aug2026, 30)), "voor het eerste meetpunt is het saldo onbekend")
+        XCTAssertEqual(d.bankBalance(on: day(aug2026, 31)) ?? .nan, 500, accuracy: 0.001, "het meetpunt zelf (31 augustus 23:30)")
         for dayNumber in 1...30 {
             // Huur (1000) op de 1e om 12:00, salaris en toeslag (3100) op de 25e.
             let expected: Double = dayNumber < 25 ? -500 : 2_600
@@ -188,26 +193,28 @@ final class DayEventsTests: XCTestCase {
         XCTAssertEqual(d.bankBalance(on: day(oct2026, 31)) ?? .nan, 6_200, accuracy: 0.001)
     }
 
-    func testSnapshotOnTheSameDayAsAnEventDependsOnTheMoment() {
-        // Huur op de 1e om 12:00.
-        var morning = makeBaseData()
-        morning.addBankSnapshot(balance: 1_000, date: engTime(sep2026, 1, hour: 10))
-        XCTAssertEqual(morning.bankBalance(on: day(sep2026, 1)) ?? .nan, 0, accuracy: 0.001, "huur komt na het meetpunt")
-        var afternoon = makeBaseData()
-        afternoon.addBankSnapshot(balance: 1_000, date: engTime(sep2026, 1, hour: 14))
-        XCTAssertEqual(afternoon.bankBalance(on: day(sep2026, 1)) ?? .nan, 1_000, accuracy: 0.001, "huur zit al in het saldo")
-        // Salaris en toeslag op de 25e om 12:00.
-        var beforePay = makeBaseData()
-        beforePay.addBankSnapshot(balance: 2_000, date: engTime(sep2026, 25, hour: 8))
-        XCTAssertEqual(beforePay.bankBalance(on: day(sep2026, 25)) ?? .nan, 5_100, accuracy: 0.001)
-        var afterPay = makeBaseData()
-        afterPay.addBankSnapshot(balance: 2_000, date: engTime(sep2026, 25, hour: 18))
-        XCTAssertEqual(afterPay.bankBalance(on: day(sep2026, 25)) ?? .nan, 2_000, accuracy: 0.001)
+    func testSnapshotOnTheSameDayMakesThePlannedEventsOfThatDayAlreadyProcessed() {
+        // Planboekingen (huur op de 1e, salaris en toeslag op de 25e, allemaal om 12:00) op de dag van het meetpunt
+        // zitten al in het ingevulde saldo, ook als het meetpunt eerder op die dag valt. Anders telt een saldo dat je
+        // om 08:30 op salarisdag invult het salaris om 12:00 nog eens mee.
+        for hour in [10.0, 14.0] {
+            var rentDay = makeBaseData()
+            rentDay.addBankSnapshot(balance: 1_000, date: engTime(sep2026, 1, hour: hour))
+            XCTAssertEqual(rentDay.bankBalance(on: day(sep2026, 1)) ?? .nan, 1_000, accuracy: 0.001, "huur zit al in het saldo, meetpunt \(hour) uur")
+        }
+        for hour in [8.0, 18.0] {
+            var payDay = makeBaseData()
+            payDay.addBankSnapshot(balance: 2_000, date: engTime(sep2026, 25, hour: hour))
+            XCTAssertEqual(payDay.bankBalance(on: day(sep2026, 25)) ?? .nan, 2_000, accuracy: 0.001, "salaris zit al in het saldo, meetpunt \(hour) uur")
+            // De dag erna telt wat er daarna komt weer mee: oktober, huur op de 1e.
+            XCTAssertEqual(payDay.bankBalance(on: day(sep2026, 30)) ?? .nan, 2_000, accuracy: 0.001)
+            XCTAssertEqual(payDay.bankBalance(on: day(oct2026, 1)) ?? .nan, 1_000, accuracy: 0.001)
+        }
     }
 
     func testBalanceAtMonthEqualsBalanceOnTheLastDay() {
         var d = makeBaseData()
-        d.addBankSnapshot(balance: 500, date: engTime(sep2026, 1, hour: 0.5))
+        d.addBankSnapshot(balance: 500, date: engTime(sep2026, 1, hour: -0.5))
         d.addBankEntry(amount: 75.5, date: day(oct2026, 31))
         for m in sep2026.range(count: 12) {
             XCTAssertEqual(d.bankBalance(at: m), d.bankBalance(on: m.date(day: m.dayCount)), m.key)
@@ -218,7 +225,7 @@ final class DayEventsTests: XCTestCase {
 
     func testBalanceNowUsesTodayInsideTheMonthAndMonthEndOutsideIt() {
         var d = makeBaseData()
-        d.addBankSnapshot(balance: 500, date: engTime(sep2026, 1, hour: 0.5))
+        d.addBankSnapshot(balance: 500, date: engTime(sep2026, 1, hour: -0.5))
         XCTAssertEqual(d.bankBalanceNow(current: sep2026, today: day(sep2026, 24)), -500, accuracy: 0.001)
         XCTAssertEqual(d.bankBalanceNow(current: sep2026, today: day(sep2026, 25)), 2_600, accuracy: 0.001)
         XCTAssertEqual(d.bankBalanceNow(current: sep2026, today: day(oct2026, 3)), 2_600, accuracy: 0.001, "vandaag ligt in een andere maand: eind van de maand")
@@ -285,7 +292,7 @@ final class DayEventsTests: XCTestCase {
         var holding = Holding(name: "ETF", kind: .etf, ticker: nil, units: nil, monthlyContribution: 100, startMonth: aug2026)
         holding.transferDay = 5
         d.addHolding(holding)
-        d.addBankSnapshot(balance: 5_000, date: engTime(sep2026, 1, hour: 0.5))
+        d.addBankSnapshot(balance: 5_000, date: engTime(sep2026, 1, hour: -0.5))
         XCTAssertEqual(d.bankBalance(on: day(sep2026, 4)) ?? .nan, 4_000, accuracy: 0.001) // huur
         XCTAssertEqual(d.bankBalance(on: day(sep2026, 5)) ?? .nan, 3_900, accuracy: 0.001)
         XCTAssertEqual(d.bankBalance(on: day(sep2026, 25)) ?? .nan, 7_000, accuracy: 0.001)
@@ -300,7 +307,7 @@ final class DayEventsTests: XCTestCase {
 
     func testExpensePartlyFromTwoPots() {
         var (d, vakantie, buffer) = engTwoPotData()
-        d.addBankSnapshot(balance: 1_000, date: engTime(oct2026, 1, hour: 0.5))
+        d.addBankSnapshot(balance: 1_000, date: engTime(oct2026, 1, hour: -0.5))
         let withoutShares = d.remaining(in: oct2026)
         XCTAssertEqual(withoutShares, 2_100, accuracy: 0.001)
 
@@ -343,7 +350,7 @@ final class DayEventsTests: XCTestCase {
 
     func testExpenseFullyFromAPotLeavesTheBudgetAlone() {
         var (d, vakantie, _) = engTwoPotData()
-        d.addBankSnapshot(balance: 1_000, date: engTime(oct2026, 1, hour: 0.5))
+        d.addBankSnapshot(balance: 1_000, date: engTime(oct2026, 1, hour: -0.5))
         let before = d.remaining(in: oct2026)
         let line = MoneyLine(name: "Fiets", amount: 200, day: 5, potShares: [PotShare(potID: vakantie.id, amount: 200)])
         d.upsertLine(line, kind: .expense, in: oct2026)
@@ -390,7 +397,7 @@ final class DayEventsTests: XCTestCase {
 
     func testLowestBankPointOfAMonth() {
         var d = makeBaseData()
-        d.addBankSnapshot(balance: 100, date: engTime(sep2026, 1, hour: 0.5))
+        d.addBankSnapshot(balance: 100, date: engTime(sep2026, 1, hour: -0.5))
         // September: de huur van de 1e brengt het saldo op -900; pas op de 25e komt er salaris bij.
         let sep = d.lowestBankPoint(in: sep2026)
         XCTAssertEqual(sep?.balance ?? .nan, -900, accuracy: 0.001)
@@ -400,8 +407,11 @@ final class DayEventsTests: XCTestCase {
         let oct = d.lowestBankPoint(in: oct2026)
         XCTAssertEqual(oct?.balance ?? .nan, 1_200, accuracy: 0.001)
         XCTAssertEqual(oct.map { engDayNumber($0.date) }, 1)
-        // Voor het meetpunt is er niets bekend.
-        XCTAssertNil(d.lowestBankPoint(in: aug2026))
+        // Voor het meetpunt (31 augustus 23:30) is er niets bekend: in augustus alleen die laatste dag.
+        let aug = d.lowestBankPoint(in: aug2026)
+        XCTAssertEqual(aug?.balance ?? .nan, 100, accuracy: 0.001)
+        XCTAssertEqual(aug.map { engDayNumber($0.date) }, 31)
+        XCTAssertNil(d.lowestBankPoint(in: YearMonth(year: 2026, month: 7)))
     }
 
     func testLowestBankPointStartsAtTheFirstKnownDay() {
@@ -414,7 +424,7 @@ final class DayEventsTests: XCTestCase {
 
     func testDailySeriesHasOnePointPerDayWithGrowingDates() {
         var d = makeBaseData()
-        d.addBankSnapshot(balance: 500, date: engTime(sep2026, 1, hour: 0.5))
+        d.addBankSnapshot(balance: 500, date: engTime(sep2026, 1, hour: -0.5))
         let series = d.bankDailySeries(from: day(sep2026, 1), to: day(sep2026, 30), asOf: day(sep2026, 10))
         XCTAssertEqual(series.count, 30)
         for i in series.indices {
@@ -476,7 +486,7 @@ final class DayEventsTests: XCTestCase {
         d.pots[0].monthlyContribution = 150
         d.pots[1].monthlyContribution = 75
         d.pots[1].transferDay = 3
-        d.addBankSnapshot(balance: 1_000, date: engTime(aug2026, 1, hour: 0.5))
+        d.addBankSnapshot(balance: 1_000, date: engTime(aug2026, 1, hour: -0.5))
         d.upsertLine(MoneyLine(name: "Tandarts", amount: 300, day: 12,
                                potShares: [PotShare(potID: vakantie.id, amount: 100), PotShare(potID: buffer.id, amount: 50)]),
                      kind: .expense, in: oct2026)
@@ -587,10 +597,14 @@ final class EngineConsistencyTests: XCTestCase {
         let limit = month.endExclusive
         guard snap.date < limit else { return nil }
         var total = engCents(snap.balance)
+        // Handmatige boekingen tellen vanaf hun eigen tijdstip na het meetpunt; planboekingen pas vanaf de dag erna.
+        let cal = YearMonth.calendar
+        let nextDay = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: snap.date)) ?? snap.date
         var m = YearMonth(date: snap.date)
         while m <= month {
-            for e in d.dayEvents(in: m, asOf: .distantPast) where e.bankAmount != 0 && e.date > snap.date && e.date < limit {
-                total += engCents(e.bankAmount)
+            for e in d.dayEvents(in: m, asOf: .distantPast) where e.bankAmount != 0 && e.date < limit {
+                let counts = e.kind == .bankEntry ? e.date > snap.date : e.date >= nextDay
+                if counts { total += engCents(e.bankAmount) }
             }
             m = m.adding(1)
         }

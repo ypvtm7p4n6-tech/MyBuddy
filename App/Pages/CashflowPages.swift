@@ -345,16 +345,32 @@ struct BankDayBlock: View {
         }
     }
 
+    /// De dagen die je kunt kiezen: vanaf de eerste dag van de startmaand van de gegevens tot twee jaar na vandaag.
+    /// Zonder grens rekent elke body alle maanden vanaf het laatste saldo door (een datum in het jaar 3000 kost
+    /// bijna een seconde), en zoiets ver vooruit zegt niets.
+    private var dayRange: ClosedRange<Date> {
+        let cal = YearMonth.calendar
+        let upper = cal.date(byAdding: .year, value: 2, to: store.today) ?? store.today
+        // Vandaag valt altijd binnen het bereik, ook als de startmaand (na een import) later ligt.
+        let lower = min(store.data.startMonth.firstDay, cal.startOfDay(for: store.today))
+        return lower...upper
+    }
+
+    private func clampedDay(_ value: Date) -> Date {
+        let range = dayRange
+        return min(max(value, range.lowerBound), range.upperBound)
+    }
+
     /// De gekozen dag, met een korte animatie zodat saldo en gebeurtenissen niet hard omspringen.
     private var animatedDate: Binding<Date> {
         Binding<Date>(get: { date },
-                      set: { newValue in withAnimation(Theme.quickMotion) { date = newValue } })
+                      set: { newValue in withAnimation(Theme.quickMotion) { date = clampedDay(newValue) } })
     }
 
     private func shiftDay(_ amount: Int) {
         let cal = YearMonth.calendar
         withAnimation(Theme.quickMotion) {
-            date = cal.date(byAdding: .day, value: amount, to: date) ?? date
+            date = clampedDay(cal.date(byAdding: .day, value: amount, to: date) ?? date)
         }
     }
 
@@ -378,12 +394,12 @@ struct BankDayBlock: View {
             }
         }
         .onAppear {
-            if focus != store.now { date = focus.date(day: 1) }
+            if focus != store.now { date = clampedDay(focus.date(day: 1)) }
         }
         .onChange(of: router.focusMonth) { _, newMonth in
             rangeChoice = nil
             withAnimation(Theme.quickMotion) {
-                date = newMonth == store.now ? store.today : newMonth.date(day: 1)
+                date = clampedDay(newMonth == store.now ? store.today : newMonth.date(day: 1))
             }
         }
     }
@@ -398,7 +414,7 @@ struct BankDayBlock: View {
             }
             .accessibilityLabel("Vorige dag")
             Spacer()
-            DatePicker("Dag", selection: animatedDate, displayedComponents: .date)
+            DatePicker("Dag", selection: animatedDate, in: dayRange, displayedComponents: .date)
                 .labelsHidden()
                 .datePickerStyle(.compact)
                 .environment(\.locale, Fmt.locale)

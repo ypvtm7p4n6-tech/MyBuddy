@@ -1378,3 +1378,172 @@ final class ImportApplyTests: XCTestCase {
         XCTAssertEqual(decoded.holdings.count, 3)
     }
 }
+
+// MARK: - Bedoeling gaat voor onderwerp
+
+/// "Kinderopvangtoeslag" is geld dat binnenkomt, "Sparen voor vakantie" is sparen en "Huur garage" blijft huur: wat een regel
+/// doet gaat voor waar hij over gaat, ongeacht hoe lang het onderwerpwoord is. De verwachte categorieën zijn bedacht
+/// vanuit hoe een Nederlandse begroting gewoonlijk gelezen wordt, niet vanuit de code.
+final class ImportKeywordIntentTests: XCTestCase {
+
+    private func category(_ name: String) -> ImportCategory? { ImportKeywords.best(in: name)?.category }
+
+    private func check(_ cases: [(String, ImportCategory)], file: StaticString = #filePath, line: UInt = #line) {
+        for (name, expected) in cases {
+            guard let hit = ImportKeywords.best(in: name) else {
+                XCTFail("Geen trefwoord voor '\(name)'", file: file, line: line)
+                continue
+            }
+            XCTAssertEqual(hit.category, expected, "'\(name)' kreeg woord '\(hit.word)'", file: file, line: line)
+        }
+    }
+
+    // MARK: De gemelde voorbeelden
+
+    func testToeslagIsIncomeWhateverTheSubjectIs() {
+        check([("Kinderopvangtoeslag", .inkomen), ("Toeslag kinderopvang", .inkomen),
+               ("Kinderopvang", .vasteLasten)])
+        XCTAssertEqual(ImportKeywords.best(in: "Kinderopvangtoeslag")?.word, "toeslag")
+        XCTAssertEqual(ImportKeywords.best(in: "Kinderopvangtoeslag")?.strong, true)
+    }
+
+    func testSavingWordsMakeASavingsPotWhateverTheSubjectIs() {
+        check([("Sparen voor vakantie", .spaarpot), ("Vakantie sparen", .spaarpot),
+               ("Maandelijks sparen vakantie", .spaarpot), ("Spaarbedrag vakantie", .spaarpot),
+               ("Vakantie", .variabeleLasten), ("Vakantiepot", .spaarpot), ("Vakantiegeld", .inkomen)])
+        // Bij een begin van een woord zie je in de reden het woord uit het bestand.
+        XCTAssertEqual(ImportKeywords.best(in: "Spaarbedrag vakantie")?.word, "spaarbedrag")
+        XCTAssertEqual(ImportKeywords.best(in: "Sparen voor vakantie")?.word, "sparen")
+    }
+
+    func testRentWithASubjectBehindItStaysAFixedCost() {
+        check([("Huur garage", .vasteLasten), ("Huur", .vasteLasten), ("Huurwoning", .vasteLasten)])
+        XCTAssertEqual(ImportKeywords.best(in: "Huur garage")?.word, "huur")
+        XCTAssertEqual(ImportKeywords.best(in: "Huur garage")?.strong, true)
+        // Zonder "huur" blijft een garage een variabele uitgave.
+        check([("Garage", .variabeleLasten), ("Garage APK", .variabeleLasten)])
+    }
+
+    func testSavingsInterestIsIncomeButNotCertain() {
+        // Onze keuze, vastgelegd: rente op spaargeld is een bijschrijving (inkomen), met lage zekerheid.
+        let hit = ImportKeywords.best(in: "Spaarrente")
+        XCTAssertEqual(hit?.category, .inkomen)
+        XCTAssertEqual(hit?.uncertain, true)
+        XCTAssertEqual(hit?.confidence, .laag)
+        check([("Rente spaarrekening", .inkomen), ("Rente op spaargeld", .inkomen), ("Spaarrekening rente ING", .inkomen)])
+        XCTAssertEqual(ImportKeywords.best(in: "Rente spaarrekening")?.confidence, .laag)
+        // Rente die je betaalt blijft een last, en sparen zelf blijft sparen.
+        check([("Hypotheekrente", .vasteLasten), ("Rente", .vasteLasten), ("Spaarrekening", .spaarpot)])
+        XCTAssertEqual(ImportKeywords.best(in: "Huur")?.confidence, .hoog)
+        XCTAssertEqual(ImportKeywords.best(in: "Gas")?.confidence, .middel)
+    }
+
+    // MARK: Meer realistische begrotingsregels
+
+    func testIncomeWordsBeatSubjectWords() {
+        check([
+            ("Reiskostenvergoeding", .inkomen), ("Onkostenvergoeding werkgever", .inkomen),
+            ("Teruggave inkomstenbelasting", .inkomen), ("Restitutie energierekening", .inkomen),
+            ("Uitkering WW", .inkomen), ("Salaris partner", .inkomen), ("Loon parttime baan", .inkomen),
+            ("Bonus december", .inkomen), ("Dividend ontvangen", .inkomen), ("Huur ontvangen garagebox", .inkomen),
+            ("Alimentatie ontvangen", .inkomen), ("Zorgtoeslag", .inkomen), ("Huurtoeslag", .inkomen),
+            ("Ontvangen rente spaarrekening", .inkomen), ("Huur inkomsten", .inkomen)
+        ])
+    }
+
+    func testSavingWordsBeatSubjectWordsAndCompounds() {
+        check([
+            ("Spaarbedrag auto", .spaarpot), ("Reserveren voor weekendje weg", .spaarpot), ("Autosparen", .spaarpot),
+            ("Vakantiesparen kinderen", .spaarpot), ("Bonus sparen", .spaarpot), ("Toeslag sparen", .spaarpot),
+            ("Noodbuffer", .spaarpot), ("Reservering onderhoud woning", .spaarpot), ("Sparen voor nieuwe fiets", .spaarpot)
+        ])
+    }
+
+    func testInvestingWordsStillWinOverSaving() {
+        check([("Sparen voor pensioen", .belegging), ("ETF sparen", .belegging), ("Maandelijks sparen in aandelen", .belegging),
+               ("Bonus beleggen", .belegging), ("Sparen en beleggen", .belegging)])
+    }
+
+    func testRentWithASubjectIsFixedButOtherCostsKeepTheirOwnWord() {
+        check([
+            ("Huur parkeerplaats", .vasteLasten), ("Huur kapsalon", .vasteLasten), ("Huur auto", .vasteLasten),
+            ("Maandelijkse huur garagebox", .vasteLasten), ("Huur vastgoed", .belegging),
+            ("Kapper", .variabeleLasten), ("Parkeren", .variabeleLasten)
+        ])
+    }
+
+    func testWordsThatLookLikeIntentWordsAreLeftAlone() {
+        check([
+            ("Spaarhypotheek", .vasteLasten), ("Spaarlening", .vasteLasten), ("Spaarverzekering", .vasteLasten),
+            ("Loonbelasting", .vasteLasten), ("Besparen op energie", .vasteLasten), ("Alimentatie kinderen", .vasteLasten),
+            ("Boodschappen", .variabeleLasten), ("Netflix", .vasteLasten), ("Zorgverzekering", .vasteLasten)
+        ])
+        XCTAssertNil(ImportKeywords.best(in: "Iets heel onbekends"))
+    }
+
+    // MARK: In een bestand
+
+    func testBudgetLinesGetTheRightCategoryAndConfidenceInADraft() throws {
+        let text = """
+        Omschrijving;Bedrag
+        Salaris;2.850
+        Kinderopvangtoeslag;320
+        Toeslag kinderopvang;45
+        Reiskostenvergoeding;90
+        Huur;950
+        Huur garage;75
+        Kinderopvang;610
+        Sparen voor vakantie;110
+        Vakantie sparen;65
+        Maandelijks sparen vakantie;35
+        Spaarbedrag vakantie;25
+        Spaarrente;12
+        Boodschappen;420
+        """
+        let draft = try csvDraft(text)
+        let expected: [(String, ImportCategory)] = [
+            ("Salaris", .inkomen), ("Kinderopvangtoeslag", .inkomen), ("Toeslag kinderopvang", .inkomen),
+            ("Reiskostenvergoeding", .inkomen), ("Huur", .vasteLasten), ("Huur garage", .vasteLasten),
+            ("Kinderopvang", .vasteLasten), ("Sparen voor vakantie", .spaarpot), ("Vakantie sparen", .spaarpot),
+            ("Maandelijks sparen vakantie", .spaarpot), ("Spaarbedrag vakantie", .spaarpot), ("Spaarrente", .inkomen),
+            ("Boodschappen", .variabeleLasten)
+        ]
+        XCTAssertEqual(draft.rows.count, expected.count, "\(draft.rows.map(\.name))")
+        for (name, category) in expected {
+            XCTAssertEqual(row(draft, name).category, category, name)
+        }
+        // Een bedrag naast "maandelijks sparen" is de inleg per maand.
+        XCTAssertEqual(row(draft, "Maandelijks sparen vakantie").meaning, .perMaand)
+        XCTAssertEqual(row(draft, "Kinderopvangtoeslag").confidence, .hoog)
+        XCTAssertEqual(row(draft, "Kinderopvangtoeslag").reason, "woord 'toeslag' herkend")
+        XCTAssertEqual(row(draft, "Huur garage").confidence, .hoog)
+        // Alleen rente op spaargeld is onzeker: het scherm vraagt dan om een controle.
+        let uncertain = draft.rows.filter { $0.confidence == .laag }.map(\.name)
+        XCTAssertEqual(uncertain, ["Spaarrente"])
+        XCTAssertEqual(row(draft, "Spaarrente").amount, 12)
+    }
+
+    func testTheHeadingStillBeatsTheKeywordInADraft() throws {
+        // Onder het kopje Vaste lasten blijft een regel een vaste last; de bedoeling telt alleen zonder structuur.
+        let draft = try csvDraft("Vaste lasten;Bedrag\nSparen voor vakantie;100\nHuur;900\n")
+        XCTAssertEqual(row(draft, "Huur").category, .vasteLasten)
+        XCTAssertEqual(row(draft, "Sparen voor vakantie").category, .vasteLasten)
+    }
+
+    // MARK: Begrensde invoer
+
+    func testOnlyTheFirst200CharactersOfATextAreLookedAt() {
+        let long = String(repeating: "a", count: 1_000_000)
+        XCTAssertEqual(ImportText.normalize(long).count, ImportText.maxInspectedCharacters)
+        XCTAssertEqual(ImportText.maxInspectedCharacters, 200)
+        XCTAssertEqual(ImportText.cleanName(long).count, 80)
+        // Een woord ver achter de 200 tekens telt niet meer mee, een woord ervoor wel.
+        let late = String(repeating: "x ", count: 150) + "huur"
+        XCTAssertNil(ImportKeywords.best(in: late))
+        XCTAssertEqual(ImportKeywords.best(in: "huur " + String(repeating: "x", count: 5_000))?.category, .vasteLasten)
+        // Veel spaties en regeleinden zijn snel genoeg.
+        let spaced = String(repeating: " \n\t ", count: 250_000)
+        XCTAssertEqual(ImportText.normalize(spaced), "")
+        XCTAssertEqual(ImportText.cleanName(spaced + "Huur"), "")
+    }
+}

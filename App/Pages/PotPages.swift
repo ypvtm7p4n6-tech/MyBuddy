@@ -152,9 +152,11 @@ struct PotHistoryContext {
         return storedInterest.contains(id) ? id : nil
     }
 
-    /// De boeking die je mag verwijderen. Rente die de app zelf beheert kan pas weg als de rente uit staat.
+    /// De boeking die je mag verwijderen. Rente nooit: de app boekt ontbrekende rente bij de volgende start
+    /// (of het volgende bewaren van de pot) opnieuw, dus verwijderen helpt niet en maakt alleen de geschiedenis
+    /// onbetrouwbaar. Klopt het saldo niet, pas het dan aan met "Saldo aanpassen".
     func deletableEntryID(for item: PotTimelineItem) -> UUID? {
-        guard let id = entryID(for: item) else { return nil }
+        guard item.kind != .interest, let id = entryID(for: item) else { return nil }
         return managedInterest.contains(id) ? nil : id
     }
 }
@@ -344,11 +346,19 @@ enum PotAction: String, Identifiable {
 struct PotDetailPage: View {
     let potID: UUID
     @Environment(AppStore.self) private var store
+    @Environment(Router.self) private var router
     @Environment(\.dismiss) private var dismiss
     @State private var action: PotAction?
     @State private var showEdit = false
     @State private var confirmDelete = false
     @State private var showAllHistory = false
+    /// Een boeking waarvan het verwijderen eerst om een bevestiging vraagt, omdat er een andere helft bij hoort.
+    @State private var pendingEntryDelete: PendingEntryDelete?
+
+    private struct PendingEntryDelete: Identifiable {
+        let id: UUID
+        let message: String
+    }
     /// Datum voor de tegel "Saldo op datum". Begint een maand vooruit.
     @State private var balanceDate = YearMonth.calendar.date(byAdding: .month, value: 1, to: Date()) ?? Date()
 
@@ -376,6 +386,8 @@ struct PotDetailPage: View {
         let plannedThisMonth = CentsMath.value(CentsMath.sum(plannedCents))
         let thisMonth = d.allocation(pot.id, in: now)
         let history = PotHistoryContext(pot: pot, data: d, through: now.adding(PotLayout.lookAheadMonths))
+        // Een positief saldo (op centen) moet bij verwijderen een keuze krijgen: terugzetten of laten vervallen.
+        let hasBalance = CentsMath.int(balance) > 0
 
         PageScaffold(title: pot.name) {
             VStack(spacing: Theme.pageSpacing) {
@@ -396,13 +408,33 @@ struct PotDetailPage: View {
         .sheet(item: $action) { act in PotEntrySheet(pot: pot, action: act) }
         .sheet(isPresented: $showEdit) { PotEditSheet(pot: pot) }
         .confirmationDialog("Deze spaarpot verwijderen?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Verwijder \(pot.name)", role: .destructive) {
-                let id = pot.id
-                store.mutate { $0.deletePot(id) }
-                dismiss()
+            if hasBalance {
+                Button("Saldo terugzetten op je rekening en verwijderen") {
+                    let id = pot.id
+                    let current = store.now
+                    let moment = store.today
+                    store.mutate { $0.deletePot(id, returningBalanceToBank: true, current: current, today: moment) }
+                    dismiss()
+                }
+                Button("Verwijderen en saldo laten vervallen", role: .destructive) {
+                    let id = pot.id
+                    store.mutate { $0.deletePot(id) }
+                    dismiss()
+                }
+            } else {
+                Button("Verwijder \(pot.name)", role: .destructive) {
+                    let id = pot.id
+                    store.mutate { $0.deletePot(id) }
+                    dismiss()
+                }
             }
+            Button("Annuleren", role: .cancel) {}
         } message: {
-            Text("De boekingen van deze pot verdwijnen ook.")
+            if hasBalance {
+                Text("Er staat \(Fmt.euro(balance)) op. Zet je het saldo terug, dan komt dat bedrag op je rekening. Laat je het vervallen, dan verdwijnt het uit je vermogen. De boekingen van deze pot verdwijnen in beide gevallen.")
+            } else {
+                Text("De boekingen van deze pot verdwijnen ook.")
+            }
         }
     }
 
@@ -472,7 +504,12 @@ struct PotDetailPage: View {
             }
             ChipGrid {
                 ChipButton(title: "Doel en instellingen", symbol: "pencil") { showEdit = true }
-                ChipLink(title: "Verdelen", symbol: "square.split.2x2", destination: .distribute)
+                // De inleg hoort bij deze maand: de verdeelpagina opent op de huidige maand, niet op de maand
+                // waar je op Savings het laatst keek. `open` gebruikt het pad van de tab waar je nu bent.
+                ChipButton(title: "Verdelen", symbol: "square.split.2x2") {
+                    router.showCurrentMonth(store.now)
+                    router.open(.distribute)
+                }
             }
         }
     }
@@ -507,7 +544,7 @@ struct PotDetailPage: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 if d.potEntries.contains(where: { $0.potID == pot.id && $0.kind == .interest }) {
-                    Text("Rente die al is bijgeschreven kun je in de geschiedenis weghalen met het menu achter de boeking.")
+                    Text("Rente die al is bijgeschreven blijft in de geschiedenis staan. Klopt het saldo niet meer, pas het dan aan met Saldo aanpassen.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -572,6 +609,16 @@ struct PotDetailPage: View {
                     withAnimation(Theme.motion) { showAllHistory.toggle() }
                 }
             }
+        }
+        // Op dit blok (niet op de hele pagina), zodat het niet botst met de bevestiging voor "Spaarpot verwijderen".
+        .confirmationDialog("Boeking verwijderen?",
+                            isPresented: Binding(get: { pendingEntryDelete != nil },
+                                                 set: { if !$0 { pendingEntryDelete = nil } }),
+                            titleVisibility: .visible, presenting: pendingEntryDelete) { pending in
+            Button("Verwijder", role: .destructive) { deleteEntry(pending.id) }
+            Button("Annuleren", role: .cancel) {}
+        } message: { pending in
+            Text(pending.message)
         }
     }
 
@@ -670,11 +717,7 @@ struct PotDetailPage: View {
                 .layoutPriority(1)
             if let entryID = history.deletableEntryID(for: item) {
                 Menu {
-                    Button("Verwijder boeking", role: .destructive) {
-                        withAnimation(Theme.motion) {
-                            store.mutate { $0.deletePotEntry(entryID) }
-                        }
-                    }
+                    Button("Verwijder boeking", role: .destructive) { requestDelete(entryID) }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -685,6 +728,37 @@ struct PotDetailPage: View {
         }
         .padding(.vertical, 8)
         .opacity(item.isPlanned ? 0.75 : 1)
+    }
+
+    /// Een losse boeking verdwijnt meteen. Hoort ze bij een overboeking, dan vraagt de app eerst om bevestiging
+    /// en zegt ze wat er verdwijnt.
+    private func requestDelete(_ entryID: UUID) {
+        if let message = deleteMessage(forEntry: entryID) {
+            pendingEntryDelete = PendingEntryDelete(id: entryID, message: message)
+        } else {
+            deleteEntry(entryID)
+        }
+    }
+
+    private func deleteEntry(_ entryID: UUID) {
+        withAnimation(Theme.motion) {
+            store.mutate { $0.deletePotEntry(entryID) }
+        }
+    }
+
+    /// De tekst voor de bevestiging, of nil als de boeking los staat (dan is verwijderen veilig).
+    private func deleteMessage(forEntry id: UUID) -> String? {
+        let d = store.data
+        guard let entry = d.potEntries.first(where: { $0.id == id }) else { return nil }
+        // Een overboeking met `pairID`: `deletePotEntry` verwijdert beide helften, dus dat zeggen we vooraf.
+        if !d.pairedEntries(ofPot: id).isEmpty {
+            return "Dit verwijdert ook de bijbehorende boeking op de bankrekening of bij de andere spaarpot."
+        }
+        // Een oude overboeking tussen potten zonder `pairID`: alleen deze kant verdwijnt.
+        if entry.kind == .transferIn || entry.kind == .transferOut {
+            return "Dit is een oude overboeking zonder koppeling: alleen deze boeking verdwijnt. De bijbehorende boeking bij de andere spaarpot blijft staan; die verwijder je daar zelf."
+        }
+        return nil
     }
 
     private func rowSymbol(_ item: PotTimelineItem) -> String {

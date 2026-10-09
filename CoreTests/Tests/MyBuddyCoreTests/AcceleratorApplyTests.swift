@@ -37,7 +37,7 @@ private func accPick(_ prefix: String, _ d: FinanceData, _ goal: LifeGoal) -> Ac
 }
 
 private func goalMonths(_ d: FinanceData, _ goal: LifeGoal) -> Int? {
-    d.analyze(d.goal(goal.id) ?? goal, current: oct2026).monthsToGoal
+    d.analyze(d.goal(goal.id) ?? goal, current: oct2026, today: accNow).monthsToGoal
 }
 
 private func accEuro(_ v: Double) -> String { Fmt.euro(v) }
@@ -120,7 +120,8 @@ final class AcceleratorApplyTests: XCTestCase {
         var f = accPotFixture()
         let acc = try XCTUnwrap(accPick("free", f.data, f.goal))
         XCTAssertEqual(acc.change.extraMonthly, 1800, accuracy: 0.001)
-        XCTAssertEqual(goalMonths(f.data, f.goal), 16)   // (6000 - 1400) / 300 = 15,3
+        // Op 12 oktober staat er 500 + augustus + september = 1100 in de pot (de inleg van oktober volgt op de 25e).
+        XCTAssertEqual(goalMonths(f.data, f.goal), 17)   // (6000 - 1100) / 300 = 16,3
 
         let record = try XCTUnwrap(f.data.apply(acc, for: f.goal, current: oct2026, now: accNow))
         let d = f.data
@@ -133,9 +134,9 @@ final class AcceleratorApplyTests: XCTestCase {
         XCTAssertEqual(d.allocation(f.pot.id, in: accNov), 2100, accuracy: 0.001)
         XCTAssertEqual(d.remaining(in: oct2026), 0, accuracy: 0.001)
 
-        // Eind oktober: 500 + 300 + 300 + 2100 = 3200; daarna 2100 per maand: (6000 - 3200) / 2100 = 1,3 -> 2 maanden.
-        XCTAssertEqual(goalMonths(d, f.goal), 2)
-        // De versneller zelf rekende voorzichtiger (de inleg van deze maand telde niet als startbedrag mee): 3 maanden.
+        // De hogere inleg van oktober volgt pas op de 25e, dus het saldo van nu blijft 1100: (6000 - 1100) / 2100 = 2,3 -> 3 maanden.
+        XCTAssertEqual(goalMonths(d, f.goal), 3)
+        // De versneller rekende met dezelfde uitgangspunten en beloofde dus hetzelfde.
         XCTAssertEqual(acc.newMonths, 3)
 
         XCTAssertEqual(d.appliedAccelerators.count, 1)
@@ -146,7 +147,7 @@ final class AcceleratorApplyTests: XCTestCase {
         XCTAssertEqual(record.summary.first,
                        "Inleg Vakantie gaat van \(accEuro(300)) naar \(accEuro(2100)) per maand, vanaf \(Fmt.month(oct2026)).")
         XCTAssertEqual(record.summary.last,
-                       "Je haalt Japan nu over \(Fmt.duration(months: 2)) in plaats van over \(Fmt.duration(months: 16)).")
+                       "Je haalt Japan nu over \(Fmt.duration(months: 3)) in plaats van over \(Fmt.duration(months: 17)).")
     }
 
     func testBackupHoldsOnlyWhatChanged() throws {
@@ -299,8 +300,8 @@ final class AcceleratorApplyTests: XCTestCase {
                        "Uitgave Huur gaat van \(accEuro(1000)) naar \(accEuro(900)) per maand, vanaf \(Fmt.month(oct2026)).")
         XCTAssertEqual(record.summary[1],
                        "Inleg Vakantie gaat van \(accEuro(300)) naar \(accEuro(400)) per maand, vanaf \(Fmt.month(oct2026)).")
-        // Eind oktober 500 + 300 + 300 + 400 = 1500, daarna 400: (6000 - 1500) / 400 = 11,25 -> 12 maanden.
-        XCTAssertEqual(goalMonths(d, f.goal), 12)
+        // Het saldo van 12 oktober is 500 + 300 + 300 = 1100 (de hogere inleg volgt op de 25e): (6000 - 1100) / 400 = 12,25 -> 13 maanden.
+        XCTAssertEqual(goalMonths(d, f.goal), 13)
     }
 
     func testASingleExpenseIsNotOfferedAndIsRefusedWhenAsked() throws {
@@ -411,9 +412,9 @@ final class AcceleratorApplyTests: XCTestCase {
         XCTAssertEqual(d.bankEntries.first?.kind, .toPot)
         XCTAssertEqual(d.bankEntries.first?.amount ?? 0, -7966.66, accuracy: 0.001)
         XCTAssertEqual(d.potEntries.filter { $0.kind == .deposit }.count, 1)
-        // Start eind oktober: 1400 + 7966,66 = 9366,66; inleg 300: (20000 - 9366,66) / 300 = 35,4 -> 36.
-        XCTAssertEqual(goalMonths(d, f.goal), 36)
-        XCTAssertEqual(acc.newMonths, 36)
+        // Start op 12 oktober: 1100 + 7966,66 = 9066,66; inleg 300: (20000 - 9066,66) / 300 = 36,4 -> 37.
+        XCTAssertEqual(goalMonths(d, f.goal), 37)
+        XCTAssertEqual(acc.newMonths, 37)
         XCTAssertTrue(record.before.isEmpty, "geen enkele entiteit is aangepast, alleen boekingen erbij")
         // Daarna is er geen overschot meer en bestaat de versneller niet meer.
         XCTAssertNil(accPick("bank", d, f.goal))
@@ -481,7 +482,7 @@ final class AcceleratorApplyTests: XCTestCase {
         // 1400 boven het doel van 2000. Dat is wat je nu kunt overboeken.
         let acc = try XCTUnwrap(accPick("pot", f.data, f.goal))
         XCTAssertEqual(acc.change.oneOff, 1400, accuracy: 0.001)
-        XCTAssertEqual(acc.newMonths, 11)   // start 1400 + 1400 = 2800, (6000 - 2800) / 300 = 10,7
+        XCTAssertEqual(acc.newMonths, 12)   // start 1100 + 1400 = 2500, (6000 - 2500) / 300 = 11,7
         let record = try XCTUnwrap(f.data.apply(acc, for: f.goal, current: oct2026, now: accNow))
         let d = f.data
         XCTAssertEqual(d.potBalanceNow(buffer.id, current: oct2026, today: accNow), 2000, accuracy: 0.001)
@@ -489,7 +490,7 @@ final class AcceleratorApplyTests: XCTestCase {
         // Eind oktober komt de inleg van beide potten er nog bij: Buffer 2200, Vakantie 2800.
         XCTAssertEqual(d.potBalance(buffer.id, at: oct2026), 2200, accuracy: 0.001)
         XCTAssertEqual(d.potBalance(f.pot.id, at: oct2026), 2800, accuracy: 0.001)
-        XCTAssertEqual(goalMonths(d, f.goal), 11)
+        XCTAssertEqual(goalMonths(d, f.goal), 12)
         XCTAssertEqual(d.potEntries.filter { $0.kind == .transferOut }.count, 1)
         XCTAssertEqual(d.potEntries.filter { $0.kind == .transferIn }.count, 1)
         XCTAssertEqual(d.bankEntries.count, 0)
@@ -624,7 +625,7 @@ final class AcceleratorApplyTests: XCTestCase {
         let after = try XCTUnwrap(goalMonths(d, f.goal))
         XCTAssertLessThanOrEqual(after, predicted)
         // En de inleg is niet hoger dan nodig: één euro minder haalt de belofte niet.
-        let start = d.potBalance(f.pot.id, at: oct2026) - monthly + 300   // zonder de verhoging van deze maand
+        let start = d.potBalanceNow(f.pot.id, current: oct2026, today: accNow)   // de verhoging van deze maand volgt op de 25e: 1100
         let lessMonths = Growth.monthsToReach(target: 60_000, start: start, monthly: monthly - 1, annualReturn: 0)
         XCTAssertGreaterThan(lessMonths ?? Int.max, predicted)
         XCTAssertTrue(record.summary[0].contains("Inleg Vakantie"))
@@ -696,8 +697,8 @@ final class AcceleratorApplyTests: XCTestCase {
         XCTAssertEqual(plan.lines[0].oldValue, accEuro(300))
         XCTAssertEqual(plan.lines[0].newValue, accEuro(2100))
         XCTAssertEqual(plan.lines[0].detail, "per maand, vanaf \(Fmt.month(oct2026))")
-        XCTAssertEqual(plan.monthsBefore, 16)
-        XCTAssertEqual(plan.monthsAfter, 2)
+        XCTAssertEqual(plan.monthsBefore, 17)   // (6000 - 1100) / 300 = 16,3
+        XCTAssertEqual(plan.monthsAfter, 3)     // (6000 - 1100) / 2100 = 2,3
         XCTAssertNil(plan.message)
         XCTAssertNil(plan.headline)
         XCTAssertFalse(plan.alreadyApplied)
@@ -781,7 +782,7 @@ final class AcceleratorApplyTests: XCTestCase {
         XCTAssertTrue(f.data.restoreAccelerator(record.id))
         XCTAssertEqual(f.data, original)
         XCTAssertTrue(f.data.appliedAccelerators.isEmpty)
-        XCTAssertEqual(goalMonths(f.data, f.goal), 16)
+        XCTAssertEqual(goalMonths(f.data, f.goal), 17)
     }
 
     func testRestoreOfAnUnknownRecordDoesNothing() {
@@ -1122,8 +1123,8 @@ final class AcceleratorApplyTests: XCTestCase {
         XCTAssertEqual(plan.lines[1].oldValue, accEuro(1100))   // 500 + augustus + september, de inleg van oktober volgt op de 25e
         XCTAssertEqual(plan.lines[1].newValue, accEuro(9066.66))
         XCTAssertFalse(plan.notes.isEmpty)
-        XCTAssertEqual(plan.monthsBefore, 62)   // (20000 - 1400) / 300
-        XCTAssertEqual(plan.monthsAfter, 36)
+        XCTAssertEqual(plan.monthsBefore, 63)   // (20000 - 1100) / 300 = 63
+        XCTAssertEqual(plan.monthsAfter, 37)    // (20000 - 9066,66) / 300 = 36,4
     }
 
     func testPlanWarnsWhenMoreIsAllocatedThanIncome() throws {

@@ -25,11 +25,15 @@ enum NumberUnit {
 }
 
 /// Invulveld voor bedragen, percentages en aantallen. Leest "12,5" en "1.234,56".
+/// Wat geen geldig getal is (letters, "inf", e-notatie, meer dan een biljoen) verandert de waarde niet.
+/// Een leeg veld is 0. Voor bedragen die negatief mogen zijn (een saldo, geld terug) zet je `allowsNegative` aan:
+/// het decimale toetsenbord van de iPhone heeft geen minteken.
 struct NumberRow: View {
     let title: String
     @Binding var value: Double
     var unit: NumberUnit = .euro
     var maxDigits: Int = 2
+    var allowsNegative: Bool = false
 
     @State private var text = ""
     @FocusState private var focused: Bool
@@ -41,7 +45,7 @@ struct NumberRow: View {
             TextField("0", text: $text)
                 .multilineTextAlignment(.trailing)
                 #if os(iOS)
-                .keyboardType(.decimalPad)
+                .keyboardType(allowsNegative ? .numbersAndPunctuation : .decimalPad)
                 #endif
                 .focused($focused)
                 .frame(minWidth: 70, maxWidth: 150)
@@ -51,8 +55,7 @@ struct NumberRow: View {
         }
         .onAppear { text = display(value) }
         .onChange(of: text) { _, newText in
-            let parsed = AmountParser.parse(newText) ?? 0
-            let newValue = parsed / unit.scale
+            guard let newValue = NumberRow.value(from: newText, unit: unit) else { return }
             if abs(newValue - value) > 1e-9 { value = newValue }
         }
         .onChange(of: focused) { _, isFocused in
@@ -63,8 +66,31 @@ struct NumberRow: View {
         }
     }
 
+    /// De waarde bij een getypte tekst. Leeg is 0. nil als de tekst geen geldig getal (meer) is, bijvoorbeeld
+    /// "-" halverwege het typen, letters of een getal boven een biljoen: dan blijft de huidige waarde staan.
+    static func value(from text: String, unit: NumberUnit) -> Double? {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return 0 }
+        guard let parsed = AmountParser.parse(text), parsed.isFinite, abs(parsed) <= AmountParser.maxAbsolute else {
+            return nil
+        }
+        return parsed / unit.scale
+    }
+
     private func display(_ v: Double) -> String {
-        v == 0 ? "" : Fmt.input(v * unit.scale, maxDigits: maxDigits)
+        guard v.isFinite, v != 0 else { return "" }
+        return Fmt.input(v * unit.scale, maxDigits: maxDigits)
+    }
+}
+
+/// Zet een Double veilig om naar een Int. `Int(x)` stopt de app bij NaN, oneindig en getallen buiten het bereik
+/// van een Int (bijvoorbeeld 1e999 uit een invulveld); dit begrenst eerst op `range` en rondt dan af.
+enum SafeInt {
+    static func clamped(_ value: Double, to range: ClosedRange<Int>) -> Int {
+        guard !value.isNaN else { return range.lowerBound }
+        let rounded = value.rounded()
+        if rounded <= Double(range.lowerBound) { return range.lowerBound }
+        if rounded >= Double(range.upperBound) { return range.upperBound }
+        return Int(rounded)
     }
 }
 

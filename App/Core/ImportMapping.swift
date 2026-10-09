@@ -311,9 +311,14 @@ enum ImportExistingPolicy {
 // MARK: - Tekst
 
 enum ImportText {
+    /// Meer dan dit aantal tekens van een cel kijken we niet naar: een naam of kopje is korter, en een enorme cel
+    /// (een plaktekst, een gemanipuleerd bestand) zou anders elke rij en elke kolom opnieuw veel werk kosten.
+    static let maxInspectedCharacters = 200
+
     /// Kleine letters, zonder accenten, leestekens als spaties, één spatie tussen woorden.
+    /// Alleen de eerste `maxInspectedCharacters` tekens tellen mee.
     static func normalize(_ text: String) -> String {
-        var source = text.lowercased()
+        var source = String(text.prefix(maxInspectedCharacters)).lowercased()
         source = source.replacingOccurrences(of: "s&p", with: "sp")
         let folded = source.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
         var result = ""
@@ -332,9 +337,10 @@ enum ImportText {
         return result
     }
 
-    /// Een nette weergavenaam: spaties samengevoegd, kopteken en dubbele punt weg.
+    /// Een nette weergavenaam: spaties samengevoegd, kopteken en dubbele punt weg (hoogstens 80 tekens).
+    /// Alleen de eerste `maxInspectedCharacters` tekens tellen mee.
     static func cleanName(_ text: String) -> String {
-        var name = text.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
+        var name = String(text.prefix(maxInspectedCharacters)).replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\t", with: " ")
         while name.contains("  ") { name = name.replacingOccurrences(of: "  ", with: " ") }
         name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         while let first = name.first, "-•*·>–—".contains(first) {
@@ -547,6 +553,14 @@ struct ImportKeywordHit: Equatable {
     var word: String
     var category: ImportCategory
     var strong: Bool
+    /// Het woord wijst deze kant op, maar er is een goede reden om te twijfelen (bijvoorbeeld "Spaarrente": inkomen of spaarpot).
+    var uncertain: Bool = false
+
+    /// Hoe zeker de indeling op grond van dit woord is.
+    var confidence: ImportConfidence {
+        if uncertain { return .laag }
+        return strong ? .hoog : .middel
+    }
 }
 
 enum ImportKeywords {
@@ -566,7 +580,7 @@ enum ImportKeywords {
                      "uitkering", "uitkeringen", "aow", "wia", "wao", "ww", "bijstand", "studiefinanciering", "stufi",
                      "huurinkomsten", "huurinkomen", "huuropbrengst", "teruggave", "belastingteruggave",
                      "terugbetaling", "restitutie", "dividend", "dividenduitkering", "rente ontvangen",
-                     "inkomsten", "inkomen", "ontvangen", "ontvangst", "ontvangsten", "omzet", "freelance", "zzp",
+                     "inkomsten", "inkomen", "ontvangen", "ontvangst", "ontvangsten", "opbrengst", "omzet", "freelance", "zzp",
                      "declaratie", "vakantiegeld", "dertiende maand", "13e maand", "eindejaarsuitkering",
                      "bijverdienste", "bijbaan", "alimentatie ontvangen", "pensioenuitkering", "pensioen uitkering",
                      "cadeau ontvangen"],
@@ -638,7 +652,16 @@ enum ImportKeywords {
         return list
     }
 
-    /// Het beste trefwoord in een tekst: het langste woord wint, bij een gelijke stand de volgorde van `all`.
+    /// Het beste trefwoord in een tekst. Eerst telt wat een regel *doet* (geld ontvangen, geld opzij zetten), want dat zegt
+    /// meer dan waar hij over gaat ("Kinderopvangtoeslag" is inkomen, "Sparen voor vakantie" is sparen). Daarna het langste woord;
+    /// bij een gelijke stand de volgorde van `all`. Volgorde van voorrang:
+    /// 1. ontvangen geld (ontvangen, uitkering, teruggave, restitutie): inkomen, ook naast een spaarwoord;
+    /// 2. rente op spaargeld ("Spaarrente"): inkomen, maar onzeker (het kan ook als spaarpot bedoeld zijn);
+    /// 3. een sterk beleggingswoord naast een van de woorden hieronder: de bestemming wint, dus beleggen;
+    /// 4. sparen en reserveren (sparen, spaar..., buffer, reservering): spaarpot;
+    /// 5. de bron van geld (toeslag, salaris, loon, bonus, vergoeding): inkomen;
+    /// 6. "huur" als los woord ("Huur garage"): vaste last, het woord erachter is het onderwerp;
+    /// 7. het langste trefwoord.
     static func best(in text: String) -> ImportKeywordHit? {
         let normalized = ImportText.normalize(text)
         guard !normalized.isEmpty else { return nil }
@@ -647,6 +670,8 @@ enum ImportKeywords {
         let plain = Array(normalized.utf8)
         let padded = [UInt8(32)] + plain + [UInt8(32)]
 
+        if let hit = intentHit(tokens: tokens, tokenSet: tokenSet, plain: plain, padded: padded) { return hit }
+
         var best: ImportKeyword?
         for keyword in all {
             if let current = best, keyword.word.count <= current.word.count { continue }
@@ -654,6 +679,143 @@ enum ImportKeywords {
         }
         guard let found = best else { return nil }
         return ImportKeywordHit(word: found.word, category: found.category, strong: found.strong)
+    }
+
+    // MARK: Bedoeling gaat voor onderwerp
+
+    /// Hoe een bedoelingswoord in een woord van de tekst gezocht wordt.
+    private enum IntentMatch {
+        /// Het hele woord.
+        case word
+        /// Ergens in een woord ("kinderopvangtoeslag").
+        case anywhere
+        /// Aan het begin van een woord ("spaarbedrag"), behalve de genoemde woorden.
+        case prefix(except: [String])
+        /// Aan het begin of eind van een woord ("sparen", "vakantiesparen"), behalve woorden met de genoemde eindes ("besparen").
+        case compound(exceptSuffix: [String])
+    }
+
+    private struct IntentRule {
+        var word: String
+        var match: IntentMatch
+        var category: ImportCategory
+        var strong: Bool
+
+        /// Het woord uit de tekst waarin de regel past, of nil.
+        func find(in tokens: [String]) -> String? {
+            for token in tokens {
+                switch match {
+                case .word:
+                    if token == word { return token }
+                case .anywhere:
+                    if token.contains(word) { return token }
+                case .prefix(let except):
+                    if token.hasPrefix(word), !except.contains(where: { token.hasPrefix($0) }) { return token }
+                case .compound(let exceptSuffix):
+                    if token.hasPrefix(word) || (token.hasSuffix(word) && !exceptSuffix.contains(where: { token.hasSuffix($0) })) {
+                        return token
+                    }
+                }
+            }
+            return nil
+        }
+
+        func hit(for token: String) -> ImportKeywordHit {
+            // Bij een begin van een woord is het gevonden woord zelf informatiever ("spaarbedrag") dan het begin ("spaar").
+            if case .prefix = match { return ImportKeywordHit(word: token, category: category, strong: strong) }
+            return ImportKeywordHit(word: word, category: category, strong: strong)
+        }
+    }
+
+    /// Woorden die met "spaar" beginnen maar geen spaargeld zijn: hypotheek, lening, verzekering, lamp, zuinig.
+    private static let notSavings = ["spaarhypotheek", "spaarlening", "spaarkrediet", "spaarverzekering", "spaarlamp", "spaarzaam"]
+
+    /// Geld dat binnenkomt. De richting is duidelijk, ook naast een spaarwoord ("Rente spaarrekening ontvangen").
+    private static let receivedRules: [IntentRule] = [
+        IntentRule(word: "ontvangen", match: .anywhere, category: .inkomen, strong: true),
+        IntentRule(word: "ontvangst", match: .anywhere, category: .inkomen, strong: true),
+        IntentRule(word: "uitkering", match: .anywhere, category: .inkomen, strong: true),
+        IntentRule(word: "teruggave", match: .anywhere, category: .inkomen, strong: true),
+        IntentRule(word: "restitutie", match: .anywhere, category: .inkomen, strong: true)
+    ]
+
+    /// Geld opzij zetten.
+    private static let savingRules: [IntentRule] = [
+        IntentRule(word: "sparen", match: .compound(exceptSuffix: ["besparen", "versparen"]), category: .spaarpot, strong: true),
+        IntentRule(word: "spaar", match: .prefix(except: notSavings + ["spaarrente"]), category: .spaarpot, strong: true),
+        IntentRule(word: "buffer", match: .anywhere, category: .spaarpot, strong: true),
+        IntentRule(word: "reservering", match: .anywhere, category: .spaarpot, strong: true),
+        IntentRule(word: "reserveren", match: .anywhere, category: .spaarpot, strong: false)
+    ]
+
+    /// Waar het geld vandaan komt: wint van een onderwerp ("Kinderopvangtoeslag"), maar niet van een bestemming (sparen, beleggen).
+    private static let sourceRules: [IntentRule] = [
+        IntentRule(word: "salaris", match: .anywhere, category: .inkomen, strong: true),
+        IntentRule(word: "loon", match: .word, category: .inkomen, strong: true),
+        IntentRule(word: "toeslag", match: .anywhere, category: .inkomen, strong: true),
+        IntentRule(word: "bonus", match: .anywhere, category: .inkomen, strong: true),
+        IntentRule(word: "vergoeding", match: .anywhere, category: .inkomen, strong: false)
+    ]
+
+    /// De beste regel van een groep die in de tekst past (en het woord waarin hij past): een sterk woord gaat voor een zwak,
+    /// daarna het langste woord, daarna de volgorde van de groep. Alle regels van een groep geven dezelfde categorie.
+    private static func longest(of rules: [IntentRule], in tokens: [String]) -> (rule: IntentRule, token: String)? {
+        var found: (rule: IntentRule, token: String)?
+        for rule in rules {
+            guard let token = rule.find(in: tokens) else { continue }
+            if let current = found {
+                if current.rule.strong != rule.strong {
+                    if current.rule.strong { continue }
+                } else if current.rule.word.count >= rule.word.count {
+                    continue
+                }
+            }
+            found = (rule, token)
+        }
+        return found
+    }
+
+    private static func intentHit(tokens: [String], tokenSet: Set<String>, plain: [UInt8], padded: [UInt8]) -> ImportKeywordHit? {
+        // 1. Ontvangen geld.
+        if let found = longest(of: receivedRules, in: tokens) { return found.rule.hit(for: found.token) }
+
+        // 2. Rente op spaargeld: "Spaarrente", "Rente spaarrekening". Het is meestal een bijschrijving, maar zeker is het niet.
+        let isSavingsWord = { (token: String) in token.hasPrefix("spaar") && !notSavings.contains(where: { token.hasPrefix($0) }) }
+        if tokens.contains(where: { $0.hasPrefix("spaarrente") })
+            || (tokenSet.contains("rente") && tokens.contains(where: isSavingsWord)) {
+            return ImportKeywordHit(word: "spaarrente", category: .inkomen, strong: false, uncertain: true)
+        }
+
+        let saving = longest(of: savingRules, in: tokens)
+        let source = longest(of: sourceRules, in: tokens)
+        let huur = tokenSet.contains("huur") && tokens.count > 1
+        guard saving != nil || source != nil || huur else { return nil }
+
+        // Een sterk beleggingswoord wijst de bestemming aan ("ETF sparen", "Sparen voor pensioen", "Bonus beleggen"):
+        // dan is het beleggen. Bij alleen een zwak beleggingswoord ("fonds", "world") beslist het langste woord, zoals altijd.
+        var investing: ImportKeyword?
+        var weakInvesting = false
+        for keyword in all where keyword.category == .belegging {
+            guard matches(keyword, plain: plain, padded: padded, tokens: tokens, tokenSet: tokenSet) else { continue }
+            if keyword.strong {
+                if investing == nil || keyword.word.count > investing!.word.count { investing = keyword }
+            } else {
+                weakInvesting = true
+            }
+        }
+        if let investing { return ImportKeywordHit(word: investing.word, category: investing.category, strong: true) }
+        if weakInvesting { return nil }
+
+        // 3. Sparen of reserveren.
+        if let found = saving { return found.rule.hit(for: found.token) }
+        // 4. De bron van het geld.
+        if let found = source { return found.rule.hit(for: found.token) }
+
+        // 5. "Huur garage", "Huur parkeerplaats": het woord erachter zegt waarvoor je huurt, het blijft een vaste last.
+        // Staat er een inkomstenwoord bij ("Huur inkomsten"), dan beslist het langste woord.
+        let income = all.contains { $0.category == .inkomen && matches($0, plain: plain, padded: padded, tokens: tokens, tokenSet: tokenSet) }
+        if !income { return ImportKeywordHit(word: "huur", category: .vasteLasten, strong: true) }
+        return nil
     }
 
     private static func matches(_ keyword: ImportKeyword, plain: [UInt8], padded: [UInt8], tokens: [String], tokenSet: Set<String>) -> Bool {
@@ -835,6 +997,9 @@ enum ImportMapper {
             visible = workbook.tables.filter { $0.hasContent }
         } else if hiddenCount > 0 {
             warnings.append(hiddenCount == 1 ? "Eén verborgen blad is overgeslagen." : "\(hiddenCount) verborgen bladen zijn overgeslagen.")
+        }
+        if workbook.skippedSheets > 0 {
+            warnings.append("Het bestand heeft meer dan \(XLSXReader.maxSheets) bladen. Alleen de eerste \(XLSXReader.maxSheets) zijn gelezen; \(workbook.skippedSheets) bladen zijn overgeslagen.")
         }
 
         // Een blad per maand (Januari, Februari, ...): neem alleen het blad van de gekozen maand.
@@ -1889,7 +2054,7 @@ private struct TableMapper {
         if !decided, extracted.forced == .expense {
             if let keyword, keyword.category == .vasteLasten || keyword.category == .variabeleLasten {
                 category = keyword.category
-                confidence = keyword.strong ? .hoog : .middel
+                confidence = keyword.confidence
                 reason = "woord '\(keyword.word)' herkend"
             } else {
                 category = .variabeleLasten
@@ -1918,7 +2083,7 @@ private struct TableMapper {
         }
         if !decided, let keyword {
             category = keyword.category
-            confidence = keyword.strong ? .hoog : .middel
+            confidence = keyword.confidence
             reason = "woord '\(keyword.word)' herkend"
             decided = true
         }

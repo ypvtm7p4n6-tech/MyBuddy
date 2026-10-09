@@ -15,8 +15,12 @@ enum Fmt {
     }
 
     /// Standaard weergave van bedragen: afgerond op hele euro's, "€ 1.235". Overal in de app gebruiken.
+    /// Uitzondering: een bedrag onder 1 euro dat geen 0 is toont zijn centen ("€ 0,40"), anders leest 40 cent
+    /// als "€ 0" en 50 cent als "€ 1". Een bedrag dat op centen afrondt op 0 blijft "€ 0".
     static func euro(_ value: Double) -> String {
-        euroWhole(value)
+        let cents = (value * 100).rounded() / 100
+        if cents != 0 && abs(cents) < 1 { return euroExact(cents) }
+        return euroWhole(value)
     }
 
     /// "€ 1.235" (zonder centen). Rondt af en toont nooit "-€ 0".
@@ -122,13 +126,25 @@ enum Fmt {
 }
 
 /// Leest bedragen die mensen intikken: "12,5", "1.234,56", "€ 12.50", "1 234".
+///
+/// Strikt: alleen cijfers, punt, komma, minteken, spaties (ook harde spaties) en het euroteken (en het procentteken,
+/// dat genegeerd wordt zodat "6,5%" in een procentveld werkt). Letters geven nil, dus ook "inf", "nan", "1e999" en
+/// "0x10": die zouden niet-eindige getallen opleveren waar het opslaan (JSON) op vastloopt. Het resultaat is
+/// altijd eindig en niet groter dan `maxAbsolute`.
 enum AmountParser {
+    /// Grootste bedrag (zonder teken) dat nog als geldig geldt: een biljoen.
+    static let maxAbsolute: Double = 1_000_000_000_000
+
     static func parse(_ text: String) -> Double? {
-        var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        s = s.replacingOccurrences(of: "€", with: "")
-        s = s.replacingOccurrences(of: "%", with: "")
-        s = s.replacingOccurrences(of: " ", with: "")
-        s = s.replacingOccurrences(of: "\u{00A0}", with: "")
+        var s = ""
+        for ch in text {
+            if ch.isWhitespace || ch == "€" || ch == "%" { continue }
+            if let ascii = ch.asciiValue, (ascii >= 48 && ascii <= 57) || ch == "." || ch == "," || ch == "-" {
+                s.append(ch)
+            } else {
+                return nil
+            }
+        }
         guard !s.isEmpty else { return nil }
 
         let hasComma = s.contains(",")
@@ -146,6 +162,7 @@ enum AmountParser {
             let after = s[s.index(after: dot)...]
             if after.count == 3, !s.hasPrefix("0.") { s = s.replacingOccurrences(of: ".", with: "") }
         }
-        return Double(s)
+        guard let value = Double(s), value.isFinite, abs(value) <= maxAbsolute else { return nil }
+        return value
     }
 }

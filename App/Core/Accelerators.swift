@@ -119,9 +119,9 @@ extension FinanceData {
         accelerators.reduce(ScenarioChange()) { $0.combined(with: $1.change) }
     }
 
-    /// Grafiekdata: basis en scenario, beide t/m `months` maanden.
-    func goalCurves(for goal: LifeGoal, change: ScenarioChange, months: Int, current: YearMonth) -> GoalCurves {
-        let inputs = goalInputs(for: goal, current: current)
+    /// Grafiekdata: basis en scenario, beide t/m `months` maanden. `today` is het moment waarop het saldo van een spaarpot wordt bekeken.
+    func goalCurves(for goal: LifeGoal, change: ScenarioChange, months: Int, current: YearMonth, today: Date = Date()) -> GoalCurves {
+        let inputs = goalInputs(for: goal, current: current, today: today)
         let base = Growth.monthlySeries(start: inputs.start, monthly: inputs.monthly,
                                         annualReturn: inputs.effectiveReturn, months: months)
         let scen = Growth.monthlySeries(start: inputs.start, monthly: inputs.monthly + change.extraMonthly,
@@ -162,9 +162,9 @@ extension FinanceData {
     }
 
     /// Alle versnellers die voor dit doel iets opleveren, met de grootste winst bovenaan.
-    /// `today` is het moment waarop het banksaldo wordt bekeken (voor tests).
+    /// `today` is het moment waarop het saldo van de bank en van spaarpotten wordt bekeken (voor tests).
     func accelerators(for goal: LifeGoal, current: YearMonth, today: Date = Date()) -> [Accelerator] {
-        let inputs = goalInputs(for: goal, current: current)
+        let inputs = goalInputs(for: goal, current: current, today: today)
         let baseline = Growth.monthsToReach(target: inputs.target, start: inputs.start,
                                             monthly: inputs.monthly, annualReturn: inputs.effectiveReturn)
         if baseline == 0 { return [] }
@@ -190,15 +190,22 @@ extension FinanceData {
                                ScenarioChange(extraMonthly: fivePercent)))
         }
 
-        // 3. Grootste terugkerende uitgaven 10% omlaag (een eenmalige uitgave levert geen vaste inleg op)
-        let topExpenses = plan(for: current).expenses.filter { $0.amount >= Self.minimumExpenseForAccelerator && $0.isRecurring }
-            .sorted { $0.amount > $1.amount }.prefix(3)
-        for line in topExpenses {
-            let saving = (line.amount * 0.10).cents
-            candidates.append(("expense-\(line.id.uuidString)", "Verlaag \(line.name) met 10%",
-                               "\(line.name) kost \(Fmt.euro(line.amount)) per maand. 10% minder is \(Fmt.euro(saving)) per maand voor je doel.",
+        // 3. Grootste terugkerende uitgaven 10% omlaag (een eenmalige uitgave levert geen vaste inleg op).
+        // De besparing is wat er van de bank afgaat: een uitgave die uit een spaarpot komt levert je maandbudget niets op
+        // en wordt dus niet voorgesteld (toepassen zou "niets te doen" melden).
+        let topExpenses = plan(for: current).expenses
+            .filter { $0.amount >= Self.minimumExpenseForAccelerator && $0.isRecurring }
+            .map { (line: $0, effect: expenseCutEffect(of: $0)) }
+            .filter { $0.effect.freed > 0 }
+            .sorted { $0.line.amount > $1.line.amount }.prefix(3)
+        for (line, effect) in topExpenses {
+            var detail = "\(line.name) kost \(Fmt.euro(line.amount)) per maand. 10% minder is \(Fmt.euro(effect.freed)) per maand voor je doel."
+            if effect.freed < effect.cut {
+                detail += " Het deel dat uit een spaarpot komt telt niet mee."
+            }
+            candidates.append(("expense-\(line.id.uuidString)", "Verlaag \(line.name) met 10%", detail,
                                "scissors",
-                               ScenarioChange(extraMonthly: saving)))
+                               ScenarioChange(extraMonthly: effect.freed)))
         }
 
         // 4. Overtollig geld op de bankrekening
@@ -432,6 +439,17 @@ fileprivate extension Pot {
 }
 
 fileprivate extension Holding {
+    /// De kopie die we bewaren om te herstellen: zonder meetpunten en koers. Herstellen zet alleen de velden terug die een
+    /// versneller aanpast (inleg, kosten, aantal, ingelegd) en haalt het meetpunt van de versneller zelf weg; de meetpunten
+    /// en koersen van nu blijven staan. Een volledige kopie kost bij veel meetpunten enkele tientallen KB per toepassing.
+    var acceleratorBackupCopy: Holding {
+        var copy = self
+        copy.snapshots = []
+        copy.lastPrice = nil
+        copy.lastPriceDate = nil
+        return copy
+    }
+
     mutating func restoreAcceleratorFields(_ fields: AcceleratorFields, from old: Holding, removingSnapshot snapshotID: UUID) {
         if fields.contains(.contribution) { monthlyContribution = old.monthlyContribution }
         if fields.contains(.cost) { annualCost = old.annualCost }
@@ -440,6 +458,18 @@ fileprivate extension Holding {
             investedTotal = old.investedTotal
             snapshots.removeAll { $0.id == snapshotID }
         }
+    }
+}
+
+fileprivate extension MonthPlan {
+    /// De kopie van een maandplan die we bewaren om te herstellen. `AcceleratorMath.restoreSlots` leest daaruit alleen de
+    /// verdelingen van de aangepaste potten en beleggingen (`allocationIDs`) en het bedrag van de verlaagde uitgaveregel
+    /// (`keepExpenses`). Al het andere (inkomsten, overige uitgaven, dagen) blijft weg.
+    func acceleratorBackupCopy(allocationIDs: Set<String>, keepExpenses: [MoneyLine]) -> MonthPlan {
+        var copy = MonthPlan()
+        copy.allocations = allocations.filter { allocationIDs.contains($0.key) }
+        copy.expenses = keepExpenses
+        return copy
     }
 }
 
@@ -653,7 +683,7 @@ extension FinanceData {
             return plan
         }
         let g = self.goal(goal.id) ?? goal
-        plan.monthsBefore = analyze(g, current: current).monthsToGoal
+        plan.monthsBefore = analyze(g, current: current, today: now).monthsToGoal
         var simulation = self
         let run = simulation.performAccelerator(acc, goal: g, current: current, now: now, recordID: UUID())
         guard !run.lines.isEmpty else {
@@ -663,7 +693,7 @@ extension FinanceData {
         plan.lines = run.lines
         plan.notes = run.notes
         plan.headline = run.headline
-        plan.monthsAfter = simulation.analyze(simulation.goal(goal.id) ?? g, current: current).monthsToGoal
+        plan.monthsAfter = simulation.analyze(simulation.goal(goal.id) ?? g, current: current, today: now).monthsToGoal
         return plan
     }
 
@@ -675,14 +705,14 @@ extension FinanceData {
         guard applyBlockReason(acc, goalID: goal.id, current: current) == nil else { return nil }
         let original = self
         let g = self.goal(goal.id) ?? goal
-        let before = analyze(g, current: current).monthsToGoal
+        let before = analyze(g, current: current, today: now).monthsToGoal
         let recordID = UUID()
         let run = performAccelerator(acc, goal: g, current: current, now: now, recordID: recordID)
         guard !run.lines.isEmpty else {
             self = original
             return nil
         }
-        let after = analyze(self.goal(goal.id) ?? g, current: current).monthsToGoal
+        let after = analyze(self.goal(goal.id) ?? g, current: current, today: now).monthsToGoal
 
         var summary = run.lines.map(\.sentence)
         if let outcome = AcceleratorMath.outcomeSentence(goal: g.name, before: before, after: after) {
@@ -692,24 +722,79 @@ extension FinanceData {
                                         date: now, summary: summary,
                                         before: Self.acceleratorBackup(from: original, to: self))
         appliedAccelerators.append(record)
+        compactAppliedAccelerators()
         return record
     }
 
-    /// Alleen wat er is veranderd, in de toestand van vóór het toepassen.
+    /// Hoeveel toegepaste versnellers we bewaren (de nieuwste). Oudere vallen af en zijn daarna niet meer te herstellen;
+    /// hun effect blijft gewoon in je gegevens staan.
+    static let maxStoredAppliedAccelerators = 20
+
+    /// Maakt de bewaarde toestanden van toegepaste versnellers compact en houdt hoogstens
+    /// `maxStoredAppliedAccelerators` records over. Oudere bestanden bewaarden volledige beleggingen met alle meetpunten en
+    /// hele maandplannen; herstellen leest daar alleen een paar velden uit. Het formaat blijft hetzelfde, dus zowel oude
+    /// als compacte records laden en herstellen. Geeft true als er iets veranderde (de aanroeper hoeft anders niet op te slaan).
+    @discardableResult
+    mutating func compactAppliedAccelerators() -> Bool {
+        var changed = false
+        let surplus = appliedAccelerators.count - Self.maxStoredAppliedAccelerators
+        if surplus > 0 {
+            appliedAccelerators.removeFirst(surplus)
+            changed = true
+        }
+        for index in appliedAccelerators.indices {
+            let kind = AcceleratorKind(id: appliedAccelerators[index].acceleratorID)
+            if Self.compact(&appliedAccelerators[index].before, kind: kind) { changed = true }
+        }
+        return changed
+    }
+
+    /// Haalt uit een bewaarde toestand weg wat herstellen nooit leest. Zie `compactAppliedAccelerators`.
+    private static func compact(_ backup: inout AcceleratorBackup, kind: AcceleratorKind) -> Bool {
+        var changed = false
+        for index in backup.holdings.indices {
+            let slim = backup.holdings[index].acceleratorBackupCopy
+            if slim != backup.holdings[index] {
+                backup.holdings[index] = slim
+                changed = true
+            }
+        }
+        let touched = Set(backup.pots.map(\.id.uuidString) + backup.holdings.map(\.id.uuidString))
+        for (key, plan) in backup.plans {
+            // Alleen een uitgave-versneller leest regels uit het bewaarde plan (het bedrag van de verlaagde regel).
+            let slim = plan.acceleratorBackupCopy(allocationIDs: touched, keepExpenses: kind.isExpense ? plan.expenses : [])
+            if slim != plan {
+                backup.plans[key] = slim
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    /// Alleen wat er is veranderd, in de toestand van vóór het toepassen, en alleen de velden die herstellen terugzet:
+    /// van een belegging zonder meetpunten en koers, van een maandplan de verdelingen van de aangepaste potten en
+    /// beleggingen en de aangepaste uitgaveregels. Bij herstellen wordt alleen in de huidige gegevens teruggezet wat
+    /// de versneller veranderde (zie `restoreAcceleratorFields`); de huidige meetpunten en koersen blijven.
     private static func acceleratorBackup(from old: FinanceData, to new: FinanceData) -> AcceleratorBackup {
         var backup = AcceleratorBackup()
         for pot in new.pots {
             if let before = old.pots.first(where: { $0.id == pot.id }), before != pot { backup.pots.append(before) }
         }
         for holding in new.holdings {
-            if let before = old.holdings.first(where: { $0.id == holding.id }), before != holding { backup.holdings.append(before) }
+            if let before = old.holdings.first(where: { $0.id == holding.id }), before != holding {
+                backup.holdings.append(before.acceleratorBackupCopy)
+            }
         }
         for goal in new.goals {
             if let before = old.goals.first(where: { $0.id == goal.id }), before != goal { backup.goals.append(before) }
         }
+        let touched = Set(backup.pots.map(\.id.uuidString) + backup.holdings.map(\.id.uuidString))
         for (key, plan) in new.months {
             if let before = old.months[key] {
-                if before != plan { backup.plans[key] = before }
+                if before != plan {
+                    let changedLines = before.expenses.filter { line in plan.expenses.first(where: { $0.id == line.id }) != line }
+                    backup.plans[key] = before.acceleratorBackupCopy(allocationIDs: touched, keepExpenses: changedLines)
+                }
             } else {
                 backup.newPlanKeys.append(key)
             }
@@ -744,7 +829,7 @@ extension FinanceData {
             applyExtraHours(extra: acc.change.extraMonthly, goal: g, current: current, recordID: recordID, run: &run)
 
         case .stepUp:
-            applyStepUp(acc, goal: g, current: current, run: &run)
+            applyStepUp(acc, goal: g, current: current, now: now, run: &run)
 
         case .bank:
             applyBankSurplus(acc.change.oneOff, accelerator: acc, goal: g, current: current, now: now,
@@ -895,6 +980,17 @@ extension FinanceData {
         return chain.sorted { $0.month < $1.month }
     }
 
+    /// Wat 10% minder op een uitgaveregel oplevert: hoeveel de regel zakt (`cut`), de verlaagde regel en wat daarvan echt
+    /// vrijkomt van de bankrekening (`freed`). Een deel dat uit een spaarpot komt, levert je maandbudget niets op.
+    /// Zowel het voorstel (`accelerators(for:)`) als het toepassen gebruiken dit, zodat ze nooit uiteenlopen.
+    fileprivate func expenseCutEffect(of line: MoneyLine) -> (cut: Double, smaller: MoneyLine, freed: Double) {
+        let cut = (line.amount * 0.10).cents
+        var smaller = line
+        smaller.amount = (line.amount - cut).cents
+        let freed = CentsMath.value(expenseSplit(of: line).bankCents - expenseSplit(of: smaller).bankCents)
+        return (cut, smaller, freed)
+    }
+
     fileprivate mutating func applyExpenseCut(lineID: UUID, goal g: LifeGoal, current: YearMonth, run: inout AcceleratorRun) {
         guard let line = plan(for: current).expenses.first(where: { $0.id == lineID }), line.amount > 0 else {
             run.message = "Deze uitgave staat niet meer in \(Fmt.month(current))."
@@ -908,11 +1004,8 @@ extension FinanceData {
             run.message = "\(line.name.isEmpty ? "Deze uitgave" : line.name) komt maar één keer voor. Verlagen levert je doel geen vaste maandinleg op."
             return
         }
-        let cut = (line.amount * 0.10).cents
-        var smaller = line
-        smaller.amount = (line.amount - cut).cents
         // Alleen wat van de bank afgaat komt vrij voor je doel; een deel uit een spaarpot niet.
-        let freed = CentsMath.value(expenseSplit(of: line).bankCents - expenseSplit(of: smaller).bankCents)
+        let (cut, smaller, freed) = expenseCutEffect(of: line)
         guard cut > 0, freed > 0 else {
             run.message = "Deze uitgave wordt vooral uit een spaarpot betaald. Verlagen levert je maandbudget niets extra op."
             return
@@ -962,12 +1055,13 @@ extension FinanceData {
 
     // MARK: Jaarlijkse stijging
 
-    fileprivate mutating func applyStepUp(_ acc: Accelerator, goal g: LifeGoal, current: YearMonth, run: inout AcceleratorRun) {
+    fileprivate mutating func applyStepUp(_ acc: Accelerator, goal g: LifeGoal, current: YearMonth, now: Date,
+                                          run: inout AcceleratorRun) {
         if let problem = contributionProblem(for: g, current: current) {
             run.message = problem
             return
         }
-        let inputs = goalInputs(for: g, current: current)
+        let inputs = goalInputs(for: g, current: current, today: now)
         guard let goalMonths = acc.newMonths else {
             run.message = "Deze versneller kan niet worden toegepast."
             return

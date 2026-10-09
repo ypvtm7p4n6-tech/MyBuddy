@@ -20,10 +20,22 @@ struct FinanceStorage {
         return FinanceStorage(url: dir.appendingPathComponent("finance.json"))
     }
 
+    /// De opgemaakte codering: leesbaar en met vaste volgorde van sleutels. Gebruikt voor de cloud (zie
+    /// `FirebaseDatabaseClient`, `CloudSync`), de back-up (`Export`) en het vergelijken van gegevens. Die moeten
+    /// precies hetzelfde blijven, dus pas deze uitvoer niet aan; het lokale bestand gebruikt `makeFileEncoder()`.
     static func makeEncoder() -> JSONEncoder {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return e
+    }
+
+    /// De codering van het lokale bestand: compact (zonder opmaak, veel sneller en kleiner), met vaste volgorde van
+    /// sleutels. Elke wijziging schrijft het bestand opnieuw, dus de kosten tellen. Lezen kan beide vormen.
+    static func makeFileEncoder() -> JSONEncoder {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        e.outputFormatting = [.sortedKeys]
         return e
     }
 
@@ -33,6 +45,7 @@ struct FinanceStorage {
         return d
     }
 
+    /// Leest het bestand, compact of opgemaakt (oudere versies schreven het opgemaakt).
     func load() -> LoadResult {
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else { return .empty }
@@ -53,7 +66,7 @@ struct FinanceStorage {
     }
 
     func save(_ data: FinanceData) throws {
-        let encoded = try Self.makeEncoder().encode(data)
+        let encoded = try Self.makeFileEncoder().encode(data)
         try encoded.write(to: url, options: .atomic)
     }
 

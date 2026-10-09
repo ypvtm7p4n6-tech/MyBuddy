@@ -6,8 +6,23 @@ import SwiftUI
 /// eigen doel) met voortgang en haalbaarheid, en een korte samenvatting van je spaardoel-berekening.
 /// Tikken opent de pagina Doelen.
 struct GoalsHubBlock: View {
+    @Environment(AuthStore.self) private var auth
+    @Environment(\.cloudAccount) private var cloud
+
+    var body: some View {
+        // Het concept van de spaardoel-calculator staat per account op dit apparaat bewaard.
+        let account = accountPrefsID(auth: auth, cloud: cloud)
+        GoalsHubBlockContent(draftKey: SavingsGoalDraft.storageKey(account: account))
+    }
+}
+
+private struct GoalsHubBlockContent: View {
     @Environment(AppStore.self) private var store
-    @AppStorage(SavingsGoalDraft.storageKey) private var storedDraft = ""
+    @AppStorage private var storedDraft: String
+
+    init(draftKey: String) {
+        _storedDraft = AppStorage(wrappedValue: "", draftKey)
+    }
 
     var body: some View {
         let d = store.data
@@ -416,7 +431,7 @@ struct GoalDetailPage: View {
                     Label("Bij je huidige inleg haal je dit over \(Fmt.duration(months: months)).", systemImage: "flag.checkered")
                         .font(.subheadline.weight(.semibold))
                     if let month = a.reachMonth {
-                        Text("Dat is in \(Fmt.month(month))" + (a.reachAge.map { ", als je ongeveer \(Int($0)) jaar bent" } ?? "") + ".")
+                        Text("Dat is in \(Fmt.month(month))" + (a.reachAge.map { ", als je ongeveer \(SafeInt.clamped($0.rounded(.down), to: 0...150)) jaar bent" } ?? "") + ".")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -516,12 +531,12 @@ struct GoalEditSheet: View {
 
     private var ageBinding: Binding<Double?> {
         Binding(get: { g.currentAge.map { Double($0) } },
-                set: { g.currentAge = $0.map { Int($0.rounded()) } })
+                set: { g.currentAge = $0.map { SafeInt.clamped($0, to: 0...150) } })
     }
 
     private var yearsBinding: Binding<Double?> {
         Binding(get: { g.partTimeYears.map { Double($0) } },
-                set: { g.partTimeYears = $0.map { max(1, Int($0.rounded())) } })
+                set: { g.partTimeYears = $0.map { SafeInt.clamped($0, to: 1...150) } })
     }
 
     private var gapBinding: Binding<Double?> {
@@ -600,7 +615,7 @@ struct GoalEditSheet: View {
             } header: {
                 Text("Rekenen met")
             } footer: {
-                Text("Mijn beleggingen gebruikt je portefeuille, inleg en verwacht rendement. Koopkracht van vandaag houdt rekening met inflatie.")
+                Text("Mijn beleggingen gebruikt de waarde van je beleggingen, je inleg en het verwachte rendement. Koopkracht van vandaag houdt rekening met inflatie.")
             }
         }
         .onAppear {

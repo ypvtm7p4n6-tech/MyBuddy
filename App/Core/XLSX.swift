@@ -41,7 +41,7 @@ enum SpreadsheetError: Error, Equatable, LocalizedError {
         case .empty:
             return "Het bestand bevat geen gegevens."
         case .tooLarge:
-            return "Het bestand is te groot om te importeren (meer dan 50 MB)."
+            return "Het bestand is te groot om te importeren (meer dan 50 MB, of meer dan 2 miljoen gevulde cellen). Haal ongebruikte bladen of gegevens weg en probeer opnieuw."
         }
     }
 
@@ -197,6 +197,8 @@ struct SpreadsheetTable: Equatable {
 struct SpreadsheetWorkbook: Equatable {
     var fileName: String
     var tables: [SpreadsheetTable]
+    /// Aantal werkbladen dat niet is gelezen omdat het bestand er meer dan `XLSXReader.maxSheets` heeft.
+    var skippedSheets = 0
 }
 
 // MARK: - Bestand herkennen en lezen
@@ -301,12 +303,33 @@ enum SpreadsheetReader {
 
 // MARK: - XLSX
 
+/// De grenzen waarbinnen een werkmap gelezen wordt. De standaardwaarden staan in `XLSXReader`; tests gebruiken lagere om snel te
+/// kunnen zien wat er gebeurt als een grens wordt overschreden.
+struct XLSXLimits: Equatable {
+    var maxSheets = XLSXReader.maxSheets
+    var maxCells = XLSXReader.maxCells
+    var maxVisited = XLSXReader.maxVisited
+    var maxInflatedBytes = XLSXReader.maxInflatedBytes
+}
+
 enum XLSXReader {
     /// Meer rijen per blad lezen we niet.
     static let maxRows = 20_000
     static let maxColumns = 256
+    /// Meer werkbladen lezen we niet; de rest wordt overgeslagen (`SpreadsheetWorkbook.skippedSheets`).
+    /// Verwijzingen naar hetzelfde werkblad tellen als één blad.
+    static let maxSheets = 50
+    /// Hoeveel gevulde cellen we in totaal over alle bladen bewaren. Meer is `SpreadsheetError.tooLarge`.
+    static let maxCells = 2_000_000
+    /// Hoeveel cellen en rijen we in totaal doorlopen, ook lege met alleen een opmaak. Bij een gewoon bestand is dat ruim
+    /// genoeg (20.000 rijen van 256 kolommen is 5 miljoen); daarboven is het bestand te groot.
+    static let maxVisited = 6_000_000
+    /// Langere teksten in een cel kappen we af; een naam, kopje of notitie is korter.
+    static let maxTextLength = 500
+    /// Hoeveel XML we in totaal uitpakken (alle onderdelen samen). Elk onderdeel heeft daarnaast zijn eigen grens in Zip.swift.
+    static let maxInflatedBytes = 2 * Inflate.defaultLimit
 
-    static func read(_ data: Data, fileName: String = "") throws -> SpreadsheetWorkbook {
+    static func read(_ data: Data, fileName: String = "", limits: XLSXLimits = XLSXLimits()) throws -> SpreadsheetWorkbook {
         let archive: ZipArchive
         do {
             archive = try ZipArchive(data: data)
@@ -314,9 +337,14 @@ enum XLSXReader {
             throw SpreadsheetError.from(error)
         }
 
+        // Alles wat we uitpakken telt mee, zodat veel grote onderdelen samen ook begrensd zijn.
+        var inflatedBytes = 0
         func part(_ name: String) throws -> Data? {
             do {
-                return try archive.data(named: name)
+                guard let data = try archive.data(named: name) else { return nil }
+                inflatedBytes += data.count
+                if inflatedBytes > limits.maxInflatedBytes { throw SpreadsheetError.tooLarge }
+                return data
             } catch let error as ZipError {
                 throw SpreadsheetError.from(error)
             }
@@ -357,8 +385,12 @@ enum XLSXReader {
         let sharedPath = relationships.first(where: { $0.type.hasSuffix("/sharedStrings") })
             .map { resolve($0.target, relativeTo: directory) } ?? (directory + "sharedStrings.xml")
         if let shared = try part(sharedPath) {
-            sharedStrings = SharedStringsParser.parse(shared)
+            let parsed = SharedStringsParser.parse(shared, maxStrings: limits.maxCells)
+            if parsed.tooMany { throw SpreadsheetError.tooLarge }
+            sharedStrings = parsed.strings
         }
+        // De getrimde waarde van een gedeelde tekst rekenen we één keer uit, hoe vaak hij ook in het blad staat.
+        let sharedTexts = SharedTextCache(strings: sharedStrings)
         var styles: [XLSXCellStyle] = []
         let stylesPath = relationships.first(where: { $0.type.hasSuffix("/styles") })
             .map { resolve($0.target, relativeTo: directory) } ?? (directory + "styles.xml")
@@ -367,19 +399,43 @@ enum XLSXReader {
         }
 
         var tables: [SpreadsheetTable] = []
+        let budget = XLSXBudget(limits: limits)
+        // Per pad van een werkblad: de plek in `tables`, of -1 als het onderdeel ontbreekt. Meerdere verwijzingen naar hetzelfde
+        // werkblad lezen we één keer; anders kost een bestand met honderden verwijzingen honderden keren de leestijd.
+        var seenPaths: [String: Int] = [:]
+        var skippedSheets = 0
+        // Opzoeken op id (bij dubbele id's geldt de eerste), zodat veel bladen bij veel relaties niet kwadratisch worden.
+        let relationshipByID = Dictionary(relationships.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for (index, sheet) in book.sheets.enumerated() {
             var target: String?
-            if let relID = sheet.relationshipID, let rel = relationships.first(where: { $0.id == relID }) {
+            if let relID = sheet.relationshipID, let rel = relationshipByID[relID] {
                 // Grafiekbladen en dergelijke hebben geen cellen.
                 guard rel.type.isEmpty || rel.type.hasSuffix("/worksheet") else { continue }
                 target = resolve(rel.target, relativeTo: directory)
             } else {
                 target = directory + "worksheets/sheet\(index + 1).xml"
             }
-            guard let path = target, let sheetData = try part(path) else { continue }
+            guard let path = target else { continue }
+            let key = path.lowercased()
+            if let known = seenPaths[key] {
+                // Hetzelfde werkblad onder een tweede naam: het blad is zichtbaar zodra één van de namen dat is.
+                if known >= 0 { tables[known].isHidden = tables[known].isHidden && sheet.isHidden }
+                continue
+            }
+            if tables.count >= limits.maxSheets {
+                skippedSheets += 1
+                continue
+            }
+            guard let sheetData = try part(path) else {
+                seenPaths[key] = -1
+                continue
+            }
+            seenPaths[key] = tables.count
 
-            let parser = WorksheetParser(sharedStrings: sharedStrings, styles: styles, date1904: book.date1904)
-            guard parser.parse(sheetData) else {
+            let parser = WorksheetParser(sharedTexts: sharedTexts, styles: styles, date1904: book.date1904, budget: budget)
+            let parsed = parser.parse(sheetData)
+            if budget.exceeded { throw SpreadsheetError.tooLarge }
+            guard parsed else {
                 throw SpreadsheetError.corrupt("werkblad '\(sheet.name)' is onleesbaar")
             }
             var table = parser.table(named: sheet.name)
@@ -388,7 +444,9 @@ enum XLSXReader {
         }
 
         guard !tables.isEmpty else { throw SpreadsheetError.corrupt("geen werkbladen gevonden") }
-        return SpreadsheetWorkbook(fileName: fileName, tables: tables)
+        // Verwijzingen voorbij `maxSheetElements` hebben we niet eens bekeken; ze tellen alleen mee als de bladen al vol zaten.
+        if tables.count >= limits.maxSheets { skippedSheets += book.ignoredSheets }
+        return SpreadsheetWorkbook(fileName: fileName, tables: tables, skippedSheets: skippedSheets)
     }
 
     /// Een ZIP zonder Excel-werkmap: wat is het dan?
@@ -522,7 +580,12 @@ private final class WorkbookParser: NSObject, XMLParserDelegate {
         var isHidden: Bool
     }
 
+    /// Meer `<sheet>`-elementen bewaren we niet (een gemaakt bestand kan er honderdduizenden hebben).
+    static let maxSheetElements = 1_000
+
     var sheets: [Sheet] = []
+    /// Aantal `<sheet>`-elementen boven `maxSheetElements`.
+    var ignoredSheets = 0
     var date1904 = false
 
     static func parse(_ data: Data) -> WorkbookParser {
@@ -535,6 +598,10 @@ private final class WorkbookParser: NSObject, XMLParserDelegate {
                 qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         switch localName(elementName) {
         case "sheet":
+            guard sheets.count < WorkbookParser.maxSheetElements else {
+                ignoredSheets += 1
+                return
+            }
             let state = attribute(attributeDict, "state") ?? "visible"
             sheets.append(Sheet(name: attribute(attributeDict, "name") ?? "Blad \(sheets.count + 1)",
                                 relationshipID: attribute(attributeDict, "id"),
@@ -550,17 +617,52 @@ private final class WorkbookParser: NSObject, XMLParserDelegate {
 
 // MARK: - Gedeelde teksten
 
+/// Tekst die we uit XML verzamelen, met een grens: een cel van een megabyte tekst hoeft niet in zijn geheel in het geheugen.
+/// Genoeg bytes voor `XLSXReader.maxTextLength` tekens (hoogstens 4 bytes per teken); de rest laten we weg.
+private struct TextBuffer {
+    static let byteLimit = XLSXReader.maxTextLength * 4
+
+    private(set) var text = ""
+    private var bytes = 0
+
+    mutating func reset() {
+        text = ""
+        bytes = 0
+    }
+
+    mutating func append(_ piece: String) {
+        guard bytes < TextBuffer.byteLimit else { return }
+        text += piece
+        bytes += piece.utf8.count
+    }
+
+    /// De tekst, hoogstens `XLSXReader.maxTextLength` tekens.
+    var capped: String { cappedCellText(text) }
+}
+
+/// Kapt een celtekst af op `XLSXReader.maxTextLength` tekens.
+private func cappedCellText(_ text: String) -> String {
+    text.count > XLSXReader.maxTextLength ? String(text.prefix(XLSXReader.maxTextLength)) : text
+}
+
 private final class SharedStringsParser: NSObject, XMLParserDelegate {
     var strings: [String] = []
-    private var current = ""
+    /// Er staan meer gedeelde teksten in dan we ooit in cellen kunnen gebruiken (`XLSXLimits.maxCells`).
+    var tooMany = false
+    private let maxStrings: Int
+    private var current = TextBuffer()
     private var inItem = false
     private var collecting = false
     private var phoneticDepth = 0
 
-    static func parse(_ data: Data) -> [String] {
-        let handler = SharedStringsParser()
+    init(maxStrings: Int) {
+        self.maxStrings = maxStrings
+    }
+
+    static func parse(_ data: Data, maxStrings: Int) -> (strings: [String], tooMany: Bool) {
+        let handler = SharedStringsParser(maxStrings: maxStrings)
         _ = parseXML(data, delegate: handler)
-        return handler.strings
+        return (handler.strings, handler.tooMany)
     }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
@@ -568,7 +670,7 @@ private final class SharedStringsParser: NSObject, XMLParserDelegate {
         switch localName(elementName) {
         case "si":
             inItem = true
-            current = ""
+            current.reset()
         case "rPh":
             phoneticDepth += 1
         case "t":
@@ -580,11 +682,11 @@ private final class SharedStringsParser: NSObject, XMLParserDelegate {
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
-        if collecting { current += string }
+        if collecting { current.append(string) }
     }
 
     func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
-        if collecting, let text = String(data: CDATABlock, encoding: .utf8) { current += text }
+        if collecting, let text = String(data: CDATABlock, encoding: .utf8) { current.append(text) }
     }
 
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
@@ -594,11 +696,65 @@ private final class SharedStringsParser: NSObject, XMLParserDelegate {
         case "rPh":
             phoneticDepth = max(0, phoneticDepth - 1)
         case "si":
-            strings.append(current)
+            if strings.count >= maxStrings {
+                tooMany = true
+                parser.abortParsing()
+                return
+            }
+            strings.append(current.capped)
             inItem = false
         default:
             break
         }
+    }
+}
+
+/// De gedeelde teksten als celwaarde. De getrimde waarde (en of de tekst leeg is) rekenen we één keer per tekst uit,
+/// ook als duizenden cellen naar dezelfde tekst verwijzen.
+private final class SharedTextCache {
+    private let strings: [String]
+    private var values: [CellValue?]
+
+    init(strings: [String]) {
+        self.strings = strings
+        values = [CellValue?](repeating: nil, count: strings.count)
+    }
+
+    var count: Int { strings.count }
+
+    /// De waarde van gedeelde tekst `index` (nil als die niet bestaat).
+    func value(at index: Int) -> CellValue? {
+        guard index >= 0, index < strings.count else { return nil }
+        if let known = values[index] { return known }
+        let made = WorksheetParser.textValue(strings[index])
+        values[index] = made
+        return made
+    }
+}
+
+/// Wat we in één werkmap hoogstens doorlopen en bewaren, over alle werkbladen samen.
+private final class XLSXBudget {
+    private let limits: XLSXLimits
+    private(set) var storedCells = 0
+    private(set) var visited = 0
+    private(set) var exceeded = false
+
+    init(limits: XLSXLimits) {
+        self.limits = limits
+    }
+
+    /// Telt een rij of cel die we doorlopen. False zodra het budget op is.
+    func visit() -> Bool {
+        visited += 1
+        if visited > limits.maxVisited { exceeded = true }
+        return !exceeded
+    }
+
+    /// Telt een gevulde cel die we bewaren. False zodra het budget op is.
+    func store() -> Bool {
+        storedCells += 1
+        if storedCells > limits.maxCells { exceeded = true }
+        return !exceeded
     }
 }
 
@@ -702,13 +858,21 @@ enum NumberFormatKind {
 // MARK: - Werkblad
 
 private final class WorksheetParser: NSObject, XMLParserDelegate {
-    private let sharedStrings: [String]
+    private let sharedTexts: SharedTextCache
     private let styles: [XLSXCellStyle]
     private let date1904: Bool
+    private let budget: XLSXBudget
+
+    /// Hoeveel samengevoegde vakken we onthouden en hoeveel cellen we er in totaal voor invullen.
+    private static let maxMerges = 20_000
+    private static let maxMergeFill = 1_000_000
 
     private var cells: [(row: Int, column: Int, value: CellValue)] = []
     private var merges: [(firstRow: Int, firstColumn: Int, lastRow: Int, lastColumn: Int)] = []
     private var truncated = false
+    /// We zijn doelbewust gestopt (te veel rijen, of het budget is op): dat is geen kapot bestand.
+    private var stoppedOnPurpose = false
+    private var activeParser: XMLParser?
 
     private var rowNumber = 0
     private var nextColumn = 0
@@ -717,17 +881,18 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
     private var cellColumn = 0
     private var cellType = ""
     private var cellStyle = 0
-    private var valueText = ""
-    private var inlineText = ""
+    private var valueText = TextBuffer()
+    private var inlineText = TextBuffer()
     private var collectingValue = false
     private var collectingInline = false
     private var inInlineString = false
     private var phoneticDepth = 0
 
-    init(sharedStrings: [String], styles: [XLSXCellStyle], date1904: Bool) {
-        self.sharedStrings = sharedStrings
+    init(sharedTexts: SharedTextCache, styles: [XLSXCellStyle], date1904: Bool, budget: XLSXBudget) {
+        self.sharedTexts = sharedTexts
         self.styles = styles
         self.date1904 = date1904
+        self.budget = budget
     }
 
     func parse(_ data: Data) -> Bool {
@@ -736,9 +901,17 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
         parser.delegate = self
         parser.shouldProcessNamespaces = false
         parser.shouldResolveExternalEntities = false
+        activeParser = parser
         let ok = parser.parse()
-        // Een afgebroken bestand met al bruikbare cellen laten we niet falen.
-        return ok || !cells.isEmpty
+        activeParser = nil
+        // Doelbewust gestopt, of een afgebroken bestand met al bruikbare cellen: laten we niet falen.
+        return ok || stoppedOnPurpose || !cells.isEmpty
+    }
+
+    /// Stopt met lezen van dit blad.
+    private func stop() {
+        stoppedOnPurpose = true
+        activeParser?.abortParsing()
     }
 
     // MARK: Delegate
@@ -747,6 +920,7 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
                 qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         switch localName(elementName) {
         case "row":
+            guard budget.visit() else { return stop() }
             if let text = attribute(attributeDict, "r"), let number = Int(text) {
                 rowNumber = number
             } else {
@@ -754,9 +928,10 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
             }
             nextColumn = 0
         case "c":
+            guard budget.visit() else { return stop() }
             inCell = true
-            valueText = ""
-            inlineText = ""
+            valueText.reset()
+            inlineText.reset()
             cellType = attribute(attributeDict, "t") ?? ""
             cellStyle = Int(attribute(attributeDict, "s") ?? "") ?? 0
             cellRow = rowNumber
@@ -766,22 +941,29 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
                 if let row = parsed.row { cellRow = row }
             }
             nextColumn = cellColumn + 1
+            // Rijen staan in een gewoon bestand op volgorde: een cel voorbij de laatste rij die we lezen, betekent dat de rest ook
+            // voorbij de grens ligt. Stoppen scheelt veel tijd bij bladen met honderdduizenden opgemaakte rijen.
+            if cellRow - 1 >= XLSXReader.maxRows {
+                truncated = true
+                stop()
+            }
         case "v":
             if inCell {
                 collectingValue = true
-                valueText = ""
+                valueText.reset()
             }
         case "is":
             if inCell {
                 inInlineString = true
-                inlineText = ""
+                inlineText.reset()
             }
         case "rPh":
             phoneticDepth += 1
         case "t":
             collectingInline = inInlineString && phoneticDepth == 0
         case "mergeCell":
-            if let reference = attribute(attributeDict, "ref"), let range = WorksheetParser.parseRange(reference) {
+            if merges.count < WorksheetParser.maxMerges,
+               let reference = attribute(attributeDict, "ref"), let range = WorksheetParser.parseRange(reference) {
                 merges.append(range)
             }
         default:
@@ -791,18 +973,18 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
         if collectingValue {
-            valueText += string
+            valueText.append(string)
         } else if collectingInline {
-            inlineText += string
+            inlineText.append(string)
         }
     }
 
     func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
         guard let text = String(data: CDATABlock, encoding: .utf8) else { return }
         if collectingValue {
-            valueText += text
+            valueText.append(text)
         } else if collectingInline {
-            inlineText += text
+            inlineText.append(text)
         }
     }
 
@@ -835,19 +1017,20 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
         }
         let value = makeValue()
         if case .empty = value { return }
+        guard budget.store() else { return stop() }
         cells.append((row: row, column: cellColumn, value: value))
     }
 
     private func makeValue() -> CellValue {
-        let raw = valueText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = WorksheetParser.trimmed(valueText.text)
         switch cellType {
         case "s":
-            guard let index = Int(raw), index >= 0, index < sharedStrings.count else { return .empty }
-            return WorksheetParser.textValue(sharedStrings[index])
+            guard let index = Int(raw) else { return .empty }
+            return sharedTexts.value(at: index) ?? .empty
         case "str":
-            return WorksheetParser.textValue(valueText)
+            return WorksheetParser.textValue(valueText.text)
         case "inlineStr":
-            return WorksheetParser.textValue(inlineText.isEmpty ? valueText : inlineText)
+            return WorksheetParser.textValue(inlineText.text.isEmpty ? valueText.text : inlineText.text)
         case "b":
             return .bool(raw == "1" || raw.lowercased() == "true")
         case "e":
@@ -857,7 +1040,7 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
             return WorksheetParser.parseISODate(raw).map { CellValue.date($0) } ?? WorksheetParser.textValue(raw)
         default:
             guard !raw.isEmpty else {
-                return inlineText.isEmpty ? .empty : WorksheetParser.textValue(inlineText)
+                return inlineText.text.isEmpty ? .empty : WorksheetParser.textValue(inlineText.text)
             }
             guard let number = Double(raw), number.isFinite else { return WorksheetParser.textValue(raw) }
             let style = cellStyle >= 0 && cellStyle < styles.count ? styles[cellStyle] : XLSXCellStyle()
@@ -869,8 +1052,19 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
         }
     }
 
-    private static func textValue(_ text: String) -> CellValue {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .text(text)
+    /// Zoals `trimmingCharacters(in: .whitespacesAndNewlines)`, maar zonder Foundation als het begin en eind gewone tekens zijn
+    /// (de meeste waarden zijn getallen). Staat er op een rand iets anders dan een ASCII-teken, dan beslist Foundation.
+    private static func trimmed(_ text: String) -> String {
+        let bytes = text.utf8
+        guard let first = bytes.first, let last = bytes.last else { return text }
+        func plain(_ byte: UInt8) -> Bool { byte > 32 && byte < 127 }
+        return plain(first) && plain(last) ? text : text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Een celtekst: leeg (of alleen spaties) is een lege cel, en langer dan `XLSXReader.maxTextLength` tekens wordt afgekapt.
+    fileprivate static func textValue(_ text: String) -> CellValue {
+        let capped = cappedCellText(text)
+        return capped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .empty : .text(capped)
     }
 
     /// "2026-10-08" of "2026-10-08T00:00:00".
@@ -886,32 +1080,41 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
     /// "B5" naar (kolom 1, rij 5).
     static func parseReference(_ reference: String) -> (column: Int, row: Int?)? {
         var column = 0
-        var rowDigits = ""
+        var row = 0
+        var hasRow = false
+        var rowOverflow = false
         var sawLetter = false
-        for scalar in reference.unicodeScalars {
-            if scalar.value >= 65 && scalar.value <= 90 {
-                if !rowDigits.isEmpty { return nil }
-                column = column * 26 + Int(scalar.value - 64)
+        for byte in reference.utf8 {
+            switch byte {
+            case 65...90, 97...122:
+                // Letters horen voor de cijfers; hoofd- en kleine letters tellen gelijk (A en a zijn allebei 1).
+                if hasRow { return nil }
+                column = column * 26 + Int(byte & 0x1F)
                 sawLetter = true
                 if column > 1_000_000 { return nil }
-            } else if scalar.value >= 97 && scalar.value <= 122 {
-                if !rowDigits.isEmpty { return nil }
-                column = column * 26 + Int(scalar.value - 96)
-                sawLetter = true
-                if column > 1_000_000 { return nil }
-            } else if scalar.value >= 48 && scalar.value <= 57 {
-                rowDigits.unicodeScalars.append(scalar)
-            } else if scalar == "$" {
+            case 48...57:
+                hasRow = true
+                if !rowOverflow {
+                    let multiplied = row.multipliedReportingOverflow(by: 10)
+                    let added = multiplied.partialValue.addingReportingOverflow(Int(byte - 48))
+                    if multiplied.overflow || added.overflow {
+                        rowOverflow = true
+                    } else {
+                        row = added.partialValue
+                    }
+                }
+            case 36:   // "$"
                 continue
-            } else {
+            default:
                 return nil
             }
         }
         guard sawLetter, column > 0 else { return nil }
-        let row = rowDigits.isEmpty ? nil : Int(rowDigits)
+        // Een rijnummer dat niet in een Int past, lezen we als "geen rijnummer".
+        let parsedRow: Int? = (hasRow && !rowOverflow) ? row : nil
         // Excel kent 1.048.576 rijen; alles daarboven is onzin of een poging om ons te laten vastlopen.
-        if let row, row > 2_000_000 { return nil }
-        return (column - 1, row)
+        if let parsedRow, parsedRow > 2_000_000 { return nil }
+        return (column - 1, parsedRow)
     }
 
     static func parseRange(_ reference: String) -> (firstRow: Int, firstColumn: Int, lastRow: Int, lastColumn: Int)? {
@@ -930,17 +1133,24 @@ private final class WorksheetParser: NSObject, XMLParserDelegate {
         let rowCount = min((cells.map { $0.row }.max() ?? -1) + 1, XLSXReader.maxRows)
         var rows = [[CellValue]](repeating: [], count: max(rowCount, 0))
         for cell in cells where cell.row < rows.count {
-            if rows[cell.row].count <= cell.column {
-                rows[cell.row].append(contentsOf: [CellValue](repeating: .empty, count: cell.column + 1 - rows[cell.row].count))
+            // Vul de kolommen ervoor aan met lege cellen; een cel op de volgende kolom komt er gewoon achter.
+            while rows[cell.row].count < cell.column { rows[cell.row].append(.empty) }
+            if rows[cell.row].count == cell.column {
+                rows[cell.row].append(cell.value)
+            } else {
+                rows[cell.row][cell.column] = cell.value
             }
-            rows[cell.row][cell.column] = cell.value
         }
 
-        // Samengevoegde cellen: de waarde linksboven geldt voor het hele vak.
+        // Samengevoegde cellen: de waarde linksboven geldt voor het hele vak. In totaal vullen we er hoogstens
+        // `maxMergeFill` in: een gemaakt bestand met tienduizenden grote vakken zou anders eindeloos duren.
+        var mergeFill = 0
         for merge in merges {
             let height = merge.lastRow - merge.firstRow + 1
             let width = merge.lastColumn - merge.firstColumn + 1
             guard height > 0, width > 0, height * width <= 10_000, height * width > 1 else { continue }
+            mergeFill += height * width
+            if mergeFill > WorksheetParser.maxMergeFill { break }
             guard merge.firstRow >= 0, merge.firstColumn >= 0,
                   merge.firstRow < rows.count, merge.firstColumn < rows[merge.firstRow].count else { continue }
             let value = rows[merge.firstRow][merge.firstColumn]

@@ -14,6 +14,14 @@ struct HomeView: View {
                     if let notice = store.startupNotice {
                         NoticeBanner(text: notice, symbol: "exclamationmark.triangle.fill")
                     }
+                    // Opslaan is mislukt: anders zie je dit pas in Instellingen, terwijl wijzigingen verloren kunnen gaan.
+                    if store.saveFailed {
+                        NoticeBanner(text: "Opslaan is mislukt. Je laatste wijzigingen zijn mogelijk niet bewaard.",
+                                     symbol: "exclamationmark.triangle.fill",
+                                     actionTitle: "Opnieuw proberen",
+                                     action: { store.retrySave() })
+                            .transition(.opacity)
+                    }
                     if store.data.isEmptyStart {
                         WelcomeBlock()
                     }
@@ -22,6 +30,7 @@ struct HomeView: View {
                         OrderedBlocks(page: .home) { id in homeBlock(id) }
                     }
                 }
+                .animation(Theme.motion, value: store.saveFailed)
             }
             .navigationDestination(for: Destination.self) { DestinationView(destination: $0) }
         }
@@ -42,12 +51,20 @@ struct HomeView: View {
 struct NoticeBanner: View {
     let text: String
     var symbol = "info.circle.fill"
+    /// Optionele knop onder de tekst (bijvoorbeeld "Opnieuw proberen").
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: symbol).foregroundStyle(Theme.warning)
-            Text(text).font(.footnote)
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: symbol).foregroundStyle(Theme.warning)
+                Text(text).font(.footnote)
+                Spacer(minLength: 0)
+            }
+            if let actionTitle, let action {
+                ChipButton(title: actionTitle, symbol: "arrow.clockwise", action: action)
+            }
         }
         .padding(Theme.cardInset)
         .glassCard(radius: Theme.cardRadius)
@@ -59,6 +76,7 @@ struct NoticeBanner: View {
 struct WelcomeBlock: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
+    @State private var confirmSample = false
 
     var body: some View {
         GlassBlock(title: "Welkom bij MyBuddy", symbol: "sparkles", tint: Theme.olive.opacity(0.3)) {
@@ -71,8 +89,20 @@ struct WelcomeBlock: View {
                     router.open(.income)
                 }
                 ChipButton(title: "Voorbeelddata", symbol: "wand.and.stars") {
-                    store.loadSampleData()
+                    confirmSample = true
                 }
+            }
+        }
+        // Voorbeelddata vervangt alles, ook in de cloud en op andere apparaten: eerst vragen.
+        .confirmationDialog("Voorbeelddata laden?", isPresented: $confirmSample, titleVisibility: .visible) {
+            Button("Vervang mijn gegevens door voorbeelddata", role: .destructive) {
+                store.loadSampleData()
+            }
+        } message: {
+            if FirebaseConfig.isConfigured {
+                Text("Je huidige gegevens worden vervangen, ook in de cloud en op je andere apparaten.")
+            } else {
+                Text("Je huidige gegevens worden vervangen.")
             }
         }
     }
@@ -348,7 +378,7 @@ struct InvestBlock: View {
         let series = d.portfolioSeries(from: now.adding(-6), count: 13, current: now).map { TimePoint($0) }
         let tiles = d.homeHoldings()
         GlassBlock(title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis",
-                   subtitle: d.holdings.isEmpty ? nil : "Groei van je portefeuille",
+                   subtitle: d.holdings.isEmpty ? nil : "Groei van je beleggingen",
                    headerLink: .portfolio) {
             if d.holdings.isEmpty {
                 EmptyHint(symbol: "chart.line.uptrend.xyaxis", title: "Nog geen beleggingen",

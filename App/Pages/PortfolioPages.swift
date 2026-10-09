@@ -145,7 +145,8 @@ struct HoldingRow: View {
 
     private var subtitle: String {
         if holding.isTracked, let t = holding.ticker {
-            if let price = holding.lastPrice { return "\(t) · \(Fmt.euro(price))" }
+            // De koers is een eenheidsprijs: met centen (een koers van 0,52 is geen "€ 1").
+            if let price = holding.lastPrice { return "\(t) · \(Fmt.euroExact(price))" }
             return t
         }
         return holding.kind.title
@@ -288,8 +289,14 @@ struct HoldingDetailPage: View {
                 store.mutate { $0.deleteHolding(id) }
                 dismiss()
             }
+            Button("Annuleren", role: .cancel) {}
         } message: {
-            Text("Ook de meetpunten en de geplande inleg verdwijnen.")
+            // Wat de belegging nu waard is, verdwijnt uit je vermogen: dat moet je vooraf zien.
+            if CentsMath.int(state?.value ?? 0) > 0 {
+                Text("De waarde van \(Fmt.euro(state?.value ?? 0)) verdwijnt uit je vermogen. Ook de meetpunten en de geplande inleg verdwijnen.")
+            } else {
+                Text("Ook de meetpunten en de geplande inleg verdwijnen.")
+            }
         }
     }
 
@@ -297,7 +304,7 @@ struct HoldingDetailPage: View {
     private func trackedInfo(_ holding: Holding) -> some View {
         HStack(spacing: 8) {
             StatTile(title: "Aantal", value: Fmt.input(holding.units ?? 0, maxDigits: 6))
-            StatTile(title: "Koers", value: holding.lastPrice.map { Fmt.euro($0) } ?? "–",
+            StatTile(title: "Koers", value: holding.lastPrice.map { Fmt.euroExact($0) } ?? "–",
                      caption: holding.ticker)
         }
         HStack(spacing: 8) {
@@ -372,6 +379,8 @@ struct HoldingEditSheet: View {
     @State private var expectedReturn = HoldingKind.etf.defaultReturn
     @State private var annualCost = HoldingKind.etf.defaultCost
     @State private var monthly = 0.0
+    /// Eigen overschrijfdag voor de inleg. nil = je salarisdag.
+    @State private var transferDay: Int?
 
     @State private var query = ""
     @State private var results: [SymbolMatch] = []
@@ -440,10 +449,23 @@ struct HoldingEditSheet: View {
                 }
                 NumberRow(title: "Totaal ingelegd", value: $invested)
                 NumberRow(title: "Inleg per maand", value: $monthly)
+                Toggle("Eigen overschrijfdag", isOn: animated(Binding(
+                    get: { transferDay != nil },
+                    set: { on in transferDay = on ? store.data.salaryDay() : nil }
+                )))
+                if let day = transferDay {
+                    Stepper(value: Binding(get: { day }, set: { transferDay = $0 }), in: 1...31) {
+                        HStack {
+                            Text("Overschrijfdag inleg")
+                            Spacer()
+                            Text(PotFormat.dayName(day)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             } header: {
                 Text("Bedragen")
             } footer: {
-                Text("Het totaal ingelegd gebruikt de app voor het rendement. De inleg per maand verschijnt in je maandverdeling.")
+                moneyFooter
             }
 
             Section {
@@ -473,9 +495,29 @@ struct HoldingEditSheet: View {
                 expectedReturn = h.expectedReturn
                 annualCost = h.annualCost
                 monthly = h.monthlyContribution
+                transferDay = h.transferDay
             }
             loaded = true
         }
+    }
+
+    /// Uitleg onder de bedragen. Zelfde opbouw als bij een spaarpot.
+    private var moneyFooter: some View {
+        let payDay = store.data.salaryDay()
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Het totaal ingelegd gebruikt de app voor het rendement. De inleg per maand verschijnt in je maandverdeling.")
+            Text("Op de overschrijfdag gaat de inleg van je bankrekening naar de belegging. Zonder eigen dag is dat je salarisdag (\(PotFormat.dayName(payDay))). Een verdeling die je voor één maand maakt, kan een eigen dag hebben; die gaat voor.")
+        }
+    }
+
+    /// Dezelfde binding, maar een wijziging beweegt zacht (rijen die verschijnen of verdwijnen).
+    private func animated<T>(_ binding: Binding<T>) -> Binding<T> {
+        Binding(
+            get: { binding.wrappedValue },
+            set: { newValue in
+                withAnimation(Theme.motion) { binding.wrappedValue = newValue }
+            }
+        )
     }
 
     // MARK: Zoeken
@@ -519,7 +561,7 @@ struct HoldingEditSheet: View {
         preview = "Koers ophalen…"
         do {
             let q = try await store.previewQuote(ticker: t)
-            var text = "Koers nu: \(Fmt.euro(q.priceEUR))"
+            var text = "Koers nu: \(Fmt.euroExact(q.priceEUR))"
             if q.nativeCurrency != "EUR" { text += " (\(Fmt.input(q.nativePrice)) \(q.nativeCurrency))" }
             if units > 0 { text += " · waarde \(Fmt.euro(q.priceEUR * units))" }
             preview = text
@@ -543,6 +585,7 @@ struct HoldingEditSheet: View {
         h.expectedReturn = expectedReturn
         h.annualCost = annualCost
         h.monthlyContribution = monthly.cents
+        h.transferDay = transferDay
         let result = h
 
         if holding == nil {

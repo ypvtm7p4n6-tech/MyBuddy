@@ -22,11 +22,20 @@ private enum SavingsGoalScenario: String, CaseIterable, Identifiable {
 
 /// Snelle spaardoel-calculator: hoeveel per maand, en wanneer ben je klaar.
 /// Hij staat onder "Spaardoel berekenen" op de pagina Doelen. Alle cijfers worden in `body` berekend uit de invoer,
-/// dus tekst, balken en grafieken bewegen direct mee. De invoer wordt op dit apparaat onthouden
+/// dus tekst, balken en grafieken bewegen direct mee. De invoer wordt op dit apparaat onthouden, per account
 /// (`SavingsGoalDraft`), zodat je cijfers blijven staan en het doelenblok ze kan samenvatten.
 struct SavingsGoalCalculator: View {
+    @Environment(AuthStore.self) private var auth
+    @Environment(\.cloudAccount) private var cloud
+
+    var body: some View {
+        SavingsGoalCalculatorContent(account: accountPrefsID(auth: auth, cloud: cloud))
+    }
+}
+
+private struct SavingsGoalCalculatorContent: View {
     @Environment(AppStore.self) private var store
-    @AppStorage(SavingsGoalDraft.storageKey) private var storedDraft = ""
+    @AppStorage private var storedDraft: String
 
     @State private var draft: SavingsGoalDraft
     @State private var scenario: SavingsGoalScenario = .mine
@@ -38,8 +47,10 @@ struct SavingsGoalCalculator: View {
     /// meteen de nieuwe waarde (een veld dat nog de focus heeft, werkt zijn tekst anders niet bij).
     @State private var fieldEpoch = 0
 
-    init() {
-        let saved = UserDefaults.standard.string(forKey: SavingsGoalDraft.storageKey) ?? ""
+    init(account: String) {
+        let key = SavingsGoalDraft.storageKey(account: account)
+        _storedDraft = AppStorage(wrappedValue: "", key)
+        let saved = UserDefaults.standard.string(forKey: key) ?? ""
         _draft = State(initialValue: SavingsGoalDraft.decode(saved) ?? SavingsGoalDraft())
     }
 

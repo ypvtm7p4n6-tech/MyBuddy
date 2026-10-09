@@ -289,6 +289,43 @@ extension FinanceData {
         }
     }
 
+    /// Verwijdert een spaarpot. Met `returningBalanceToBank` boekt hij eerst het saldo van nu naar de bankrekening
+    /// (`transferPotToBank`, op het moment `today`); een leeg of negatief saldo geeft geen boeking. Zonder dat is het
+    /// gewoon `deletePot(_:)`: het geld in de pot verdwijnt dan uit het overzicht.
+    ///
+    /// Met een pot verdwijnen ook zijn geplande overboekingen uit het bankverloop. Ligt een deel daarvan al achter
+    /// ons maar na het laatste ingevulde banksaldo (de inleg van de 25e), dan zou de bank dat geld dubbel krijgen: één
+    /// keer doordat die overboeking verdwijnt en nog eens in het teruggeboekte saldo. Dat verschil boekt deze functie
+    /// daarom als tweede, losse bankboeking terug. Bank en potten samen veranderen dus alleen door het verwijderen
+    /// zelf niet. De boekingen staan los (zonder `pairID` of pot): hun potkant verdwijnt met de pot.
+    mutating func deletePot(_ id: UUID, returningBalanceToBank: Bool, current: YearMonth = YearMonth.current(),
+                            today: Date = Date()) {
+        guard returningBalanceToBank, let removed = pot(id) else {
+            deletePot(id)
+            return
+        }
+        let balance = potBalanceNow(id, current: current, today: today)
+        // Wat de bank door het verdwijnen van de pot er in het saldo van nu bij of af krijgt.
+        var without = self
+        without.deletePot(id)
+        let shift = CentsMath.int(without.bankBalanceNow(current: current, today: today))
+            - CentsMath.int(bankBalanceNow(current: current, today: today))
+
+        let countBefore = bankEntries.count
+        transferPotToBank(potID: id, amount: balance, date: today)
+        if shift != 0 {
+            let name = removed.name.isEmpty ? "spaarpot" : removed.name
+            bankEntries.append(BankEntry(date: today, amount: CentsMath.value(-shift), kind: shift > 0 ? .toPot : .fromPot,
+                                         note: shift > 0 ? "Eerder overgemaakt naar \(name)" : "Eerder betaald uit \(name)"))
+        }
+        let created = Set(bankEntries.dropFirst(countBefore).map { $0.id })
+        deletePot(id)
+        for i in bankEntries.indices where created.contains(bankEntries[i].id) {
+            bankEntries[i].pairID = nil
+            bankEntries[i].potID = nil
+        }
+    }
+
     mutating func deletePot(_ id: UUID) {
         pots.removeAll { $0.id == id }
         potEntries.removeAll { $0.potID == id }
@@ -314,8 +351,13 @@ extension FinanceData {
         potEntries.append(PotEntry(potID: potID, date: date, amount: amount.cents, kind: kind, note: note))
     }
 
+    /// Verwijdert een boeking. Hoort ze bij een overboeking (`pairID`), dan verdwijnt de andere helft ook (de
+    /// bankboeking, of de boeking in de andere pot): zo ontstaat er geen geld uit het niets. Boekingen zonder
+    /// `pairID` (van vóór deze regel) blijven los verwijderbaar.
     mutating func deletePotEntry(_ id: UUID) {
-        potEntries.removeAll { $0.id == id }
+        let pair = potEntries.first { $0.id == id }?.pairID
+        potEntries.removeAll { $0.id == id || (pair != nil && $0.pairID == pair) }
+        if let pair { bankEntries.removeAll { $0.pairID == pair } }
     }
 
     /// Zet het saldo op een nieuw bedrag via een correctieboeking.
@@ -330,12 +372,14 @@ extension FinanceData {
         addPotEntry(potID: potID, amount: diff, kind: .adjustment, note: note, date: date)
     }
 
+    /// Boekt geld van de ene spaarpot naar de andere. Beide helften delen een `pairID`.
     mutating func transfer(from: UUID, to: UUID, amount: Double, note: String = "", date: Date = Date()) {
         guard from != to, amount > 0, let source = pot(from), let target = pot(to) else { return }
+        let pair = UUID()
         potEntries.append(PotEntry(potID: from, date: date, amount: -amount.cents, kind: .transferOut,
-                                   note: note.isEmpty ? "Naar \(target.name)" : note))
+                                   note: note.isEmpty ? "Naar \(target.name)" : note, pairID: pair))
         potEntries.append(PotEntry(potID: to, date: date, amount: amount.cents, kind: .transferIn,
-                                   note: note.isEmpty ? "Van \(source.name)" : note))
+                                   note: note.isEmpty ? "Van \(source.name)" : note, pairID: pair))
     }
 
     // MARK: Home-keuze

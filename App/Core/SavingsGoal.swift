@@ -327,8 +327,14 @@ struct SavingsGoalPlan: Equatable {
 /// De invoer van de spaardoel-calculator. De app onthoudt hem op dit apparaat, zodat je cijfers blijven staan
 /// en het doelenblok ze kan samenvatten. Oude of onvolledige bewaarde gegevens vallen terug op de beginwaarden.
 struct SavingsGoalDraft: Codable, Equatable {
-    /// Sleutel waaronder de invoer wordt bewaard.
+    /// Basissleutel waaronder de invoer wordt bewaard. Per account komt er een achtervoegsel achter
+    /// (`storageKey(account:)`), zodat een tweede account op hetzelfde apparaat de invoer van het eerste niet ziet.
     static let storageKey = "savingsGoalDraft"
+
+    /// Sleutel voor de invoer van één account, zoals de Buffer en de Aankoopcheck (een sessie zonder account is "demo").
+    static func storageKey(account: String) -> String {
+        AccountPrefs.key(storageKey, account: account)
+    }
 
     /// Gewenst bedrag.
     var goal: Double = 5_000
@@ -390,8 +396,10 @@ struct SavingsGoalDraft: Codable, Equatable {
         value.isFinite && value > 0 ? value : nil
     }
 
-    /// Wist de bewaarde invoer van dit apparaat, bijvoorbeeld bij "Alles wissen" of als een account verdwijnt.
-    static func clearStored(in defaults: UserDefaults = .standard) {
+    /// Wist de bewaarde invoer van dit apparaat, bijvoorbeeld bij "Alles wissen" of als een account verdwijnt:
+    /// die van `account` en de oude gedeelde invoer zonder account (die kon van elk account zijn).
+    static func clearStored(in defaults: UserDefaults = .standard, account: String = "demo") {
+        defaults.removeObject(forKey: storageKey(account: account))
         defaults.removeObject(forKey: storageKey)
     }
 

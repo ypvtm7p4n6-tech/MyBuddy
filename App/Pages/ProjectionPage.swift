@@ -27,6 +27,20 @@ struct ProjectionPage: View {
         var id: String { scenario.rawValue }
     }
 
+    /// De langste looptijd (100 jaar, zoals de rest van de rekenmotor) uitgedrukt in de gekozen eenheid.
+    private func maxHorizon(for unit: HorizonUnit) -> Double {
+        Double(Growth.maxMonths) / unit.months(1)
+    }
+
+    /// De looptijd, begrensd op 0 tot 100 jaar: een veel te groot getal rekent de grafiek en de uitkomst stuk.
+    private var horizonBinding: Binding<Double> {
+        Binding(get: { horizon },
+                set: { newValue in
+                    guard newValue.isFinite else { return }
+                    horizon = min(max(newValue, 0), maxHorizon(for: unit))
+                })
+    }
+
     var body: some View {
         let inflation = store.data.settings.inflation
         let months = unit.months(horizon)
@@ -42,12 +56,15 @@ struct ProjectionPage: View {
         PageScaffold(title: "Toekomstschatting") {
             VStack(spacing: Theme.pageSpacing) {
                 GlassBlock(title: "Hoe ver kijk je vooruit?", symbol: "calendar.badge.clock") {
-                    NumberRow(title: "Over", value: $horizon, unit: .plain(unit.title), maxDigits: 1)
+                    NumberRow(title: "Over", value: horizonBinding, unit: .plain(unit.title), maxDigits: 1)
                     Picker("Eenheid", selection: $unit) {
                         ForEach(HorizonUnit.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                    Text("Je kunt maximaal 100 jaar vooruit kijken.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     ChipGrid(minimumWidth: 90) {
                         ForEach([1, 5, 10, 20, 30], id: \.self) { years in
                             ChipButton(title: "\(years) jaar") {
@@ -108,6 +125,10 @@ struct ProjectionPage: View {
             loaded = true
             resetToPortfolio()
         }
+        // Een andere eenheid kan dezelfde waarde te groot maken (36.000 dagen is 100 jaar, 36.000 jaar niet).
+        .onChange(of: unit) { _, newUnit in
+            horizon = min(horizon, maxHorizon(for: newUnit))
+        }
     }
 
     // MARK: Onderdelen
@@ -135,7 +156,7 @@ struct ProjectionPage: View {
             let inflation = store.data.settings.inflation
             let rate = inflationAdjusted ? Growth.realReturn(nominal: annualReturn, inflation: inflation) : annualReturn
             let needed = Growth.monthsToReach(target: target, start: start, monthly: monthly, annualReturn: rate)
-            let totalMonths = max(1, Int(months.rounded()))
+            let totalMonths = SafeInt.clamped(months, to: 1...Growth.maxMonths)
             let required = Growth.requiredMonthly(target: target, start: start, annualReturn: rate, months: totalMonths)
             VStack(alignment: .leading, spacing: 8) {
                 if let needed {

@@ -101,7 +101,8 @@ struct AcceleratorsSection: View {
                 resultRow(baseline: baseline, scenario: scenario, hasSelection: !chosen.isEmpty)
                 if !chosen.isEmpty {
                     GoalCurveChart(curves: d.goalCurves(for: goal, change: change,
-                                                        months: horizon(baseline: baseline, scenario: scenario), current: now),
+                                                        months: horizon(baseline: baseline, scenario: scenario), current: now,
+                                                        today: store.today),
                                    start: now)
                         .transition(.opacity)
                 }

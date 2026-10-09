@@ -56,8 +56,16 @@ enum CRC32 {
 
     static func checksum(_ bytes: [UInt8]) -> UInt32 {
         var crc: UInt32 = 0xFFFF_FFFF
-        for byte in bytes {
-            crc = table[Int((crc ^ UInt32(byte)) & 0xFF)] ^ (crc >> 8)
+        // Met wijzers en een lokale tabel: ook in een debugbouw (de tests) snel genoeg voor tientallen megabytes.
+        bytes.withUnsafeBufferPointer { data in
+            table.withUnsafeBufferPointer { lookup in
+                var i = 0
+                let count = data.count
+                while i < count {
+                    crc = lookup[Int((crc ^ UInt32(data[i])) & 0xFF)] ^ (crc >> 8)
+                    i += 1
+                }
+            }
         }
         return crc ^ 0xFFFF_FFFF
     }

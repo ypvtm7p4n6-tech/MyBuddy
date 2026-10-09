@@ -4,8 +4,9 @@ import Foundation
 
 /// Basisdata voor de buffertests. "Nu" is oktober 2026.
 /// Oktober: salaris 3000 + toeslag 100, vast 1000 (huur), variabel 400 (boodschappen).
-/// Met pot: saldo 1100 (500 + 3 x 200), verdeling 200 per maand, overschot 1500.
-/// Met bank (beginsaldo 1500 in augustus): 4500 met pot, 4900 zonder pot.
+/// Met pot: saldo 900 op 9 oktober (500 + 2 x 200; de inleg van de 25e komt nog, aan het eind van de maand is het
+/// 1100), verdeling 200 per maand, overschot 1500.
+/// Met bank (beginsaldo 1500 in augustus): 4500 op 9 oktober met pot, 4900 zonder pot.
 private func bufferTestData(pot: Bool = false, bank: Bool = false) -> (data: FinanceData, pot: Pot?) {
     var d = makeBaseData()
     d.upsertLine(MoneyLine(name: "Boodschappen", amount: 400, isRecurring: true, kind: .variable),
@@ -16,6 +17,10 @@ private func bufferTestData(pot: Bool = false, bank: Bool = false) -> (data: Fin
     d.materialize(upTo: oct2026)
     return (d, created)
 }
+
+/// "Nu" in de tests: 9 oktober. Het salaris en de inleg van de 25e komen nog. (Zonder `today` rekent `BufferCalc`
+/// met de klok, en die hoort niet in een test.)
+private let bufferToday = day(oct2026, 9)
 
 /// Invoer met vaste en variabele uitgaven die samen 1550 per maand noodzakelijk zijn (1200 + 70% van 500).
 private func bufferSample(saving: Double = 400, within: Int = 12, rate: Double = 0) -> BufferInputs {
@@ -257,7 +262,7 @@ final class BufferTests: XCTestCase {
         var setup = BufferSetup()
         setup.source = .manual
         setup.manualCurrent = 960
-        let input = BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 480, fillWithin: 12)
+        let input = BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 480, fillWithin: 12, today: bufferToday)
         XCTAssertEqual(input.months, 3)
         XCTAssertEqual(input.fixedMonthly, 1000, accuracy: 0.001)
         XCTAssertEqual(input.variableMonthly, 400, accuracy: 0.001)
@@ -282,14 +287,14 @@ final class BufferTests: XCTestCase {
 
         // De helft van de variabele uitgaven: 1000 + 200 = 1200 per maand, 3 maanden.
         setup.variableShare = 0.5
-        let half = BufferCalc.calculate(BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 480, fillWithin: 12))
+        let half = BufferCalc.calculate(BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 480, fillWithin: 12, today: bufferToday))
         XCTAssertEqual(half.essentialMonthly, 1200, accuracy: 0.001)
         XCTAssertEqual(half.target, 3600, accuracy: 0.001)
 
         // Zzp met partner zonder inkomen, kind en woning: 9 maanden van 1280.
         setup.variableShare = 0.7
         setup.situation = BufferSituation(employment: .selfEmployed, household: .partnerWithoutIncome, children: 1, isHomeowner: true)
-        let nine = BufferCalc.calculate(BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 480, fillWithin: 12))
+        let nine = BufferCalc.calculate(BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 480, fillWithin: 12, today: bufferToday))
         XCTAssertEqual(nine.months, 9)
         XCTAssertEqual(nine.target, 11520, accuracy: 0.001)
         XCTAssertEqual(nine.monthsToFill, 22)
@@ -299,7 +304,7 @@ final class BufferTests: XCTestCase {
         let d = FinanceData(startMonth: oct2026)
         var setup = BufferSetup()
         setup.manualEssential = 900
-        let input = BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 0, fillWithin: 12)
+        let input = BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 0, fillWithin: 12, today: bufferToday)
         XCTAssertEqual(input.fixedMonthly, 900, accuracy: 0.001)
         XCTAssertEqual(input.variableMonthly, 0, accuracy: 0.001)
         let r = BufferCalc.calculate(input)
@@ -307,7 +312,7 @@ final class BufferTests: XCTestCase {
 
         // Een negatief handmatig bedrag telt als nul.
         setup.manualEssential = -100
-        let negative = BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 0, fillWithin: 12)
+        let negative = BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 0, fillWithin: 12, today: bufferToday)
         XCTAssertEqual(negative.fixedMonthly, 0, accuracy: 0.001)
     }
 
@@ -315,9 +320,9 @@ final class BufferTests: XCTestCase {
         var d = bufferTestData().data
         d.settings.savingsRate = 0.03
         var setup = BufferSetup()
-        XCTAssertEqual(BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 0, fillWithin: 12).annualRate, 0, accuracy: 1e-12)
+        XCTAssertEqual(BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 0, fillWithin: 12, today: bufferToday).annualRate, 0, accuracy: 1e-12)
         setup.useInterest = true
-        XCTAssertEqual(BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 0, fillWithin: 12).annualRate, 0.03, accuracy: 1e-12)
+        XCTAssertEqual(BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 0, fillWithin: 12, today: bufferToday).annualRate, 0.03, accuracy: 1e-12)
     }
 
     func testCurrentAmountPerSource() {
@@ -327,22 +332,58 @@ final class BufferTests: XCTestCase {
         setup.potID = fixture.pot?.id
 
         setup.source = .bank
-        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026), 4500, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026, today: bufferToday), 4500, accuracy: 0.001)
         setup.source = .pot
-        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026), 1100, accuracy: 0.001)
+        // Het saldo van 9 oktober: de inleg van de 25e telt nog niet mee (500 + 200 + 200).
+        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026, today: bufferToday), 900, accuracy: 0.001)
         setup.source = .bankAndPot
-        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026), 5600, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026, today: bufferToday), 5400, accuracy: 0.001)
         setup.source = .manual
         setup.manualCurrent = 250
-        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026), 250, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026, today: bufferToday), 250, accuracy: 0.001)
         setup.manualCurrent = -40
-        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026), 0, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026, today: bufferToday), 0, accuracy: 0.001)
 
         // Bank en pot samen is al boven het doel van 3 maanden (3840).
         setup.source = .bankAndPot
-        let r = BufferCalc.summary(for: d, setup: setup, current: oct2026)
+        let r = BufferCalc.summary(for: d, setup: setup, current: oct2026, today: bufferToday)
         XCTAssertTrue(r.isFull)
         XCTAssertEqual(r.monthsToFill, 0)
+    }
+
+    func testCurrentAmountIsTheBalanceOfNowAndNotOfTheMonthEnd() {
+        let fixture = bufferTestData(pot: true, bank: true)
+        let d = fixture.data
+        var setup = BufferSetup()
+        setup.potID = fixture.pot?.id
+
+        // Pot: de inleg van 200 komt op de 25e (12:00). Daarvoor is het 900, vanaf dat moment 1100.
+        setup.source = .pot
+        let before = BufferCalc.potAmount(in: d, setup: setup, current: oct2026, today: day(oct2026, 24))
+        XCTAssertEqual(before, 900, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026, today: day(oct2026, 24)), 900, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.potAmount(in: d, setup: setup, current: oct2026, today: oct2026.date(day: 25)), 1100, accuracy: 0.001)
+        // Valt vandaag in een andere maand dan `current`, dan geldt het eind van `current`.
+        let december = day(YearMonth(year: 2026, month: 12), 3)
+        XCTAssertEqual(BufferCalc.potAmount(in: d, setup: setup, current: oct2026, today: december), 1100, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.potAmount(in: d, setup: setup, current: oct2026, today: december),
+                       d.potBalance(fixture.pot?.id ?? UUID(), at: oct2026), accuracy: 0.001)
+
+        // Bank: 1500 (3 aug) + augustus 3100 - 200 + september -1400 + 2900 + 1 oktober -1400 = 4500; op de 25e komt 2900 erbij.
+        setup.source = .bank
+        XCTAssertEqual(BufferCalc.bankAmount(in: d, current: oct2026, today: day(oct2026, 24)), 4500, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.bankAmount(in: d, current: oct2026, today: oct2026.date(day: 25)), 7400, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.bankAmount(in: d, current: oct2026, today: december), 7400, accuracy: 0.001)
+
+        // De samenvatting en de invoer volgen hetzelfde "nu".
+        setup.source = .pot
+        let early = BufferCalc.summary(for: d, setup: setup, current: oct2026, today: day(oct2026, 24))
+        let late = BufferCalc.summary(for: d, setup: setup, current: oct2026, today: oct2026.date(day: 25))
+        XCTAssertEqual(early.current, 900, accuracy: 0.001)
+        XCTAssertEqual(late.current, 1100, accuracy: 0.001)
+        let input = BufferCalc.inputs(from: d, setup: setup, current: oct2026, monthlySaving: 100, fillWithin: 12,
+                                      today: day(oct2026, 24))
+        XCTAssertEqual(input.current, 900, accuracy: 0.001)
     }
 
     func testBankBelowZeroCountsAsZero() {
@@ -350,15 +391,15 @@ final class BufferTests: XCTestCase {
         d.addBankSnapshot(balance: -2000, note: "Rood", date: day(oct2026, 20))
         var setup = BufferSetup()
         setup.source = .bank
-        XCTAssertEqual(BufferCalc.bankAmount(in: d, current: oct2026), 0, accuracy: 0.001)
-        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026), 0, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.bankAmount(in: d, current: oct2026, today: bufferToday), 0, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026, today: bufferToday), 0, accuracy: 0.001)
     }
 
     func testPotSourceWithoutPotsIsZero() {
         let d = bufferTestData().data
         var setup = BufferSetup()
         setup.source = .pot
-        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026), 0, accuracy: 0.001)
+        XCTAssertEqual(BufferCalc.currentAmount(in: d, setup: setup, current: oct2026, today: bufferToday), 0, accuracy: 0.001)
         XCTAssertNil(BufferCalc.resolvedPot(in: d, preferred: nil))
     }
 
@@ -389,14 +430,15 @@ final class BufferTests: XCTestCase {
         var setup = BufferSetup()
         setup.source = .pot
         setup.potID = fixture.pot?.id
-        let r = BufferCalc.summary(for: fixture.data, setup: setup, current: oct2026)
+        let r = BufferCalc.summary(for: fixture.data, setup: setup, current: oct2026, today: bufferToday)
         XCTAssertEqual(r.target, 3840, accuracy: 0.001)
-        XCTAssertEqual(r.current, 1100, accuracy: 0.001)
-        XCTAssertEqual(r.gap, 2740, accuracy: 0.001)
+        // Pot van nu (9 oktober): 500 + 200 + 200 = 900. Nog 3840 - 900 = 2940 te gaan: 14,7 maand, dus 15.
+        XCTAssertEqual(r.current, 900, accuracy: 0.001)
+        XCTAssertEqual(r.gap, 2940, accuracy: 0.001)
         XCTAssertEqual(r.monthlySaving, 200, accuracy: 0.001)
-        XCTAssertEqual(r.progress, 0.286458, accuracy: 0.0001)
-        XCTAssertEqual(r.coverageMonths ?? -1, 0.859375, accuracy: 0.0001)
-        XCTAssertEqual(r.monthsToFill, 14)
+        XCTAssertEqual(r.progress, 900.0 / 3840.0, accuracy: 0.0001)
+        XCTAssertEqual(r.coverageMonths ?? -1, 900.0 / 1280.0, accuracy: 0.0001)   // 1280 = 1000 + 70% van 400
+        XCTAssertEqual(r.monthsToFill, 15)
     }
 
     // MARK: Spaarpot en eerste keuzes

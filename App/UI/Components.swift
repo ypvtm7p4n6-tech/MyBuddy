@@ -344,11 +344,12 @@ struct ChipGrid<Content: View>: View {
 // MARK: - Periode kiezen
 
 /// Chevron-knop met een tikvlak van 44 x 44 punten (de minimale maat van Apple). Het icoon blijft aan de
-/// buitenkant staan, het tikvlak reikt naar het midden.
+/// buitenkant staan, het tikvlak reikt naar het midden. Buiten het toegestane bereik is de knop gedempt en uit.
 private struct StepButton: View {
     let symbol: String
     let label: String
     let alignment: Alignment
+    var isEnabled = true
     let action: () -> Void
 
     var body: some View {
@@ -356,20 +357,43 @@ private struct StepButton: View {
             Image(systemName: symbol)
                 .frame(width: 44, height: 44, alignment: alignment)
                 .contentShape(Rectangle())
+                .opacity(isEnabled ? 1 : 0.3)
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
         .accessibilityLabel(label)
     }
 }
 
-/// Terug/vooruit door de maanden.
+/// Hoever je door de maanden kunt bladeren: niet verder terug dan een jaar voor het begin van de gegevens en
+/// niet verder vooruit dan vijf jaar na nu. Daarbuiten is er niets zinvols te zien en rekent de app zich suf.
+enum MonthWindow {
+    static func bounds(startMonth: YearMonth, now: YearMonth) -> (min: YearMonth, max: YearMonth) {
+        let upper = now.adding(60)
+        return (min(startMonth.adding(-12), upper), upper)
+    }
+}
+
+/// Terug/vooruit door de maanden. Met `minMonth` en `maxMonth` houden de knoppen je binnen een bereik.
 struct MonthStepper: View {
     @Binding var month: YearMonth
     var current: YearMonth
+    var minMonth: YearMonth? = nil
+    var maxMonth: YearMonth? = nil
+
+    private var canGoBack: Bool {
+        guard let minMonth else { return true }
+        return month.adding(-1) >= minMonth
+    }
+
+    private var canGoForward: Bool {
+        guard let maxMonth else { return true }
+        return month.adding(1) <= maxMonth
+    }
 
     var body: some View {
         HStack {
-            StepButton(symbol: "chevron.left", label: "Vorige maand", alignment: .leading) {
+            StepButton(symbol: "chevron.left", label: "Vorige maand", alignment: .leading, isEnabled: canGoBack) {
                 month = month.adding(-1)
             }
             Spacer()
@@ -379,7 +403,7 @@ struct MonthStepper: View {
                 else if month == current { Text("Deze maand").font(.caption).foregroundStyle(.secondary) }
             }
             Spacer()
-            StepButton(symbol: "chevron.right", label: "Volgende maand", alignment: .trailing) {
+            StepButton(symbol: "chevron.right", label: "Volgende maand", alignment: .trailing, isEnabled: canGoForward) {
                 month = month.adding(1)
             }
         }
@@ -387,10 +411,20 @@ struct MonthStepper: View {
     }
 }
 
-/// Maand / half jaar / jaar met terug en vooruit.
+/// Maand / half jaar / jaar met terug en vooruit. De knoppen stoppen bij de grenzen van `MonthWindow`.
 struct PeriodControl: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
+
+    private var canGoBack: Bool {
+        let window = MonthWindow.bounds(startMonth: store.data.startMonth, now: store.now)
+        return router.focusMonth.adding(-router.periodMode.stepMonths) >= window.min
+    }
+
+    private var canGoForward: Bool {
+        let window = MonthWindow.bounds(startMonth: store.data.startMonth, now: store.now)
+        return router.focusMonth.adding(router.periodMode.stepMonths) <= window.max
+    }
 
     var body: some View {
         @Bindable var router = router
@@ -402,7 +436,7 @@ struct PeriodControl: View {
             .labelsHidden()
 
             HStack {
-                StepButton(symbol: "chevron.left", label: "Vorige periode", alignment: .leading) {
+                StepButton(symbol: "chevron.left", label: "Vorige periode", alignment: .leading, isEnabled: canGoBack) {
                     router.shiftPeriod(-1)
                 }
                 Spacer()
@@ -414,7 +448,7 @@ struct PeriodControl: View {
                     if let note = statusNote { Text(note).font(.caption).foregroundStyle(Theme.warning) }
                 }
                 Spacer()
-                StepButton(symbol: "chevron.right", label: "Volgende periode", alignment: .trailing) {
+                StepButton(symbol: "chevron.right", label: "Volgende periode", alignment: .trailing, isEnabled: canGoForward) {
                     router.shiftPeriod(1)
                 }
             }
@@ -429,6 +463,17 @@ struct PeriodControl: View {
         if last > store.now { return "Deels verwacht" }
         return nil
     }
+}
+
+// MARK: - Account voor bewaarde keuzes
+
+/// Het account waaronder een pagina zijn eigen keuzes op dit apparaat bewaart (zie `AccountPrefs`): met Firebase
+/// het cloudaccount ("cloud-<uid>"), anders het lokale account, anders "demo" (voorbeeldsessie). Alle pagina's
+/// gebruiken dezelfde id, zodat "Alles wissen" en het verwijderen van een account alles in één keer opruimen.
+@MainActor
+func accountPrefsID(auth: AuthStore, cloud: CloudAccount?) -> String {
+    if FirebaseConfig.isConfigured, let uid = cloud?.user?.uid { return "cloud-" + uid }
+    return auth.currentAccount?.id.uuidString ?? "demo"
 }
 
 // MARK: - Negatief restant
@@ -453,7 +498,7 @@ struct EqualSizeGrid: Layout {
 
     private func columns(for width: CGFloat, items: Int) -> Int {
         guard items > 0 else { return 1 }
-        let fit = Int(((width + spacing) / (minimumColumnWidth + spacing)).rounded(.down))
+        let fit = SafeInt.clamped(Double(((width + spacing) / (minimumColumnWidth + spacing)).rounded(.down)), to: 1...64)
         return max(1, min(items, fit))
     }
 

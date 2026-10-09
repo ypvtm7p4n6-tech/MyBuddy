@@ -38,14 +38,6 @@ extension PurchaseNoteKind {
 
 // MARK: - Wie is er ingelogd
 
-/// Wie er nu is ingelogd, voor instellingen die per account bewaard worden (zoals je eigen uurloon):
-/// het cloudaccount, anders het lokale account, anders nil (voorbeeldsessie, dan geldt "demo").
-@MainActor
-private func purchaseAccountID(auth: AuthStore, cloud: CloudAccount?) -> String? {
-    if FirebaseConfig.isConfigured, let uid = cloud?.user?.uid { return "cloud-" + uid }
-    return auth.currentAccount?.id.uuidString
-}
-
 // MARK: - Blok op de Tools-pagina
 
 /// Tegel op de Tools-pagina: korte uitleg en je uurloon. Toont nooit wat iets kost.
@@ -54,8 +46,9 @@ struct PurchaseBlock: View {
     @Environment(\.cloudAccount) private var cloud
 
     var body: some View {
-        let accountID = purchaseAccountID(auth: auth, cloud: cloud)
-        PurchaseBlockContent(key: PurchaseCalc.accountWageKey(accountID))
+        // Dezelfde account-id als de Buffer en het spaardoel (zie `accountPrefsID`).
+        let account = accountPrefsID(auth: auth, cloud: cloud)
+        PurchaseBlockContent(key: AccountPrefs.key(PurchaseCalc.wageStorageKey, account: account))
     }
 }
 
@@ -206,11 +199,11 @@ struct PurchasePage: View {
     @Environment(\.cloudAccount) private var cloud
 
     var body: some View {
-        let accountID = purchaseAccountID(auth: auth, cloud: cloud)
-        // De Buffer-pagina bewaart zijn keuzes onder het lokale account (of "demo"): hier dezelfde sleutel lezen.
-        let bufferAccount: String = auth.currentAccount?.id.uuidString ?? "demo"
-        PurchasePageContent(wageKey: PurchaseCalc.accountWageKey(accountID),
-                            bufferKey: BufferSetup.storageKey + "." + bufferAccount)
+        // Uurloon en buffer staan onder dezelfde account-id (zie `accountPrefsID`): de Buffer-pagina bewaart zijn
+        // keuzes onder dezelfde sleutel, en hier lezen we ze om te weten welke pot jouw buffer is.
+        let account = accountPrefsID(auth: auth, cloud: cloud)
+        PurchasePageContent(wageKey: AccountPrefs.key(PurchaseCalc.wageStorageKey, account: account),
+                            bufferKey: AccountPrefs.key(BufferSetup.storageKey, account: account))
     }
 }
 

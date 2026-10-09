@@ -53,8 +53,20 @@ extension FinanceData {
                              isProjected: month > current)
     }
 
-    /// Is er al iets ingevuld? Wordt gebruikt om een welkomstkaart te tonen.
+    /// Is er nog niets ingevuld? Wordt gebruikt om een welkomstkaart te tonen (met de knop "Voorbeelddata", die alles
+    /// overschrijft). Alles wat de gebruiker zelf invulde telt als "ingevuld": potten en potboekingen, beleggingen,
+    /// banksaldi en bankboekingen, doelen, salaris (elke afwijking van de beginwaarden), toegepaste versnellers en
+    /// maanden met inkomsten, uitgaven, een verdeling of een eigen salaris, uren of overschrijfdag. Een maand die de app
+    /// zelf vastlegde zonder inhoud (`materialize(upTo:)`) en de instellingen (die worden vanzelf bijgewerkt) tellen niet.
     var isEmptyStart: Bool {
-        pots.isEmpty && holdings.isEmpty && bankSnapshots.isEmpty && salary.monthlyAmount() == 0 && goals.isEmpty
+        if !pots.isEmpty || !potEntries.isEmpty || !holdings.isEmpty { return false }
+        if !bankSnapshots.isEmpty || !bankEntries.isEmpty || !goals.isEmpty { return false }
+        if !appliedAccelerators.isEmpty { return false }
+        if salary != SalarySettings() { return false }
+        for plan in months.values {
+            if !plan.expenses.isEmpty || !plan.extraIncome.isEmpty || !plan.allocations.isEmpty { return false }
+            if plan.salaryOverride != nil || plan.hoursOverride != nil || plan.transferDay != nil { return false }
+        }
+        return true
     }
 }

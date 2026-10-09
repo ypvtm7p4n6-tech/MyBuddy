@@ -137,7 +137,9 @@ extension FinanceData {
         }
     }
 
-    func goalInputs(for goal: LifeGoal, current: YearMonth) -> GoalInputs {
+    /// Uitgangspunten van een doel. Bij financiering uit een spaarpot is `start` het saldo van nu (`today`, zoals
+    /// `potBalanceNow`): de inleg van de 25e telt pas vanaf de 25e mee, en niet al op de 9e.
+    func goalInputs(for goal: LifeGoal, current: YearMonth, today: Date = Date()) -> GoalInputs {
         let inflation = settings.inflation
         let portfolioReturn = weightedNetReturn(current: current)
         var start = 0.0
@@ -150,7 +152,7 @@ extension FinanceData {
             start = portfolioValue(current: current)
             monthly = monthlyInvestment(current: current)
         case .pot(let id):
-            start = potBalance(id, at: current)
+            start = potBalanceNow(id, current: current, today: today)
             monthly = allocation(id, in: current)
             nominal = 0
             name = pot(id)?.name ?? "Spaarpot"
@@ -168,8 +170,8 @@ extension FinanceData {
                           effectiveReturn: effective, target: target, sourceName: name)
     }
 
-    func analyze(_ goal: LifeGoal, current: YearMonth) -> GoalAnalysis {
-        let inputs = goalInputs(for: goal, current: current)
+    func analyze(_ goal: LifeGoal, current: YearMonth, today: Date = Date()) -> GoalAnalysis {
+        let inputs = goalInputs(for: goal, current: current, today: today)
         let months = Growth.monthsToReach(target: inputs.target, start: inputs.start,
                                           monthly: inputs.monthly, annualReturn: inputs.effectiveReturn)
         var analysis = GoalAnalysis(inputs: inputs,

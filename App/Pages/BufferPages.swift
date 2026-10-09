@@ -14,10 +14,11 @@ private func bufferMonthsText(_ value: Double) -> String {
 /// Gebruikt de keuzes die in de calculator zijn bewaard, zodat de cijfers kloppen met de pagina.
 struct BufferBlock: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(\.cloudAccount) private var cloud
 
     var body: some View {
-        let accountID: String = auth.currentAccount?.id.uuidString ?? "demo"
-        BufferBlockContent(key: BufferSetup.storageKey + "." + accountID)
+        let account = accountPrefsID(auth: auth, cloud: cloud)
+        BufferBlockContent(key: AccountPrefs.key(BufferSetup.storageKey, account: account))
     }
 }
 
@@ -67,10 +68,11 @@ private struct BufferBlockContent: View {
 
 struct BufferPage: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(\.cloudAccount) private var cloud
 
     var body: some View {
-        let accountID: String = auth.currentAccount?.id.uuidString ?? "demo"
-        BufferPageContent(key: BufferSetup.storageKey + "." + accountID)
+        let account = accountPrefsID(auth: auth, cloud: cloud)
+        BufferPageContent(key: AccountPrefs.key(BufferSetup.storageKey, account: account))
     }
 }
 
@@ -95,7 +97,7 @@ private struct BufferPageContent: View {
         let d = store.data
         let now = store.now
         let input = BufferCalc.inputs(from: d, setup: setup, current: now,
-                                      monthlySaving: monthlySaving, fillWithin: Int(fillMonths.rounded()))
+                                      monthlySaving: monthlySaving, fillWithin: SafeInt.clamped(fillMonths, to: 1...60))
         let result = BufferCalc.calculate(input)
 
         PageScaffold(title: "Buffer") {

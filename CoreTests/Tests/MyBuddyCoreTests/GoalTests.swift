@@ -96,11 +96,42 @@ final class GoalTests: XCTestCase {
         g.targetAmount = 2000
         g.inflationAdjusted = false
         g.funding = .pot(pot.id)
-        let inputs = d.goalInputs(for: g, current: oct2026)
+        // Na de inleg van de 25e: 500 + 3 x 200 = 1100. (Voor de 25e is het saldo van nu 900, zie de test hieronder.)
+        let afterPayDay = day(oct2026, 26)
+        let inputs = d.goalInputs(for: g, current: oct2026, today: afterPayDay)
         XCTAssertEqual(inputs.start, 1100, accuracy: 0.001)
         XCTAssertEqual(inputs.monthly, 200, accuracy: 0.001)
         XCTAssertEqual(inputs.sourceName, "Buffer")
-        XCTAssertEqual(d.analyze(g, current: oct2026).monthsToGoal, 5)
+        XCTAssertEqual(d.analyze(g, current: oct2026, today: afterPayDay).monthsToGoal, 5)
+    }
+
+    /// De pagina noemt het startbedrag "Nu": het saldo van vandaag, zonder de inleg die nog moet komen.
+    func testPotFundingStartsFromTheBalanceOfNowNotOfTheMonthEnd() {
+        var d = FinanceData(startMonth: oct2026)
+        // Inleg 100 op de 25e (de salarisdag); de pot staat op 1100 vanaf 2 oktober.
+        let pot = Pot(name: "Spaar", monthlyContribution: 100, startMonth: oct2026)
+        d.addPot(pot, openingBalance: 1100, now: day(oct2026, 2))
+        var g = LifeGoal(name: "Uit pot", kind: .custom)
+        g.targetAmount = 2000
+        g.inflationAdjusted = false
+        g.funding = .pot(pot.id)
+
+        // Op de 9e: 1100. De inleg van de 25e is er nog niet.
+        let ninth = day(oct2026, 9)
+        XCTAssertEqual(d.goalInputs(for: g, current: oct2026, today: ninth).start, 1100, accuracy: 0.001)
+        XCTAssertEqual(d.goalInputs(for: g, current: oct2026, today: ninth).monthly, 100, accuracy: 0.001)
+        XCTAssertEqual(d.goalInputs(for: g, current: oct2026, today: day(oct2026, 24)).start, 1100, accuracy: 0.001)
+        // Vanaf de 25e (12:00): 1200.
+        XCTAssertEqual(d.goalInputs(for: g, current: oct2026, today: oct2026.date(day: 25)).start, 1200, accuracy: 0.001)
+        // Vandaag in een andere maand dan `current`: het saldo aan het eind van `current`, zoals eerder.
+        XCTAssertEqual(d.goalInputs(for: g, current: oct2026, today: day(YearMonth(year: 2026, month: 12), 3)).start, 1200, accuracy: 0.001)
+        XCTAssertEqual(d.goalInputs(for: g, current: oct2026, today: day(YearMonth(year: 2026, month: 12), 3)).start,
+                       d.potBalance(pot.id, at: oct2026), accuracy: 0.001)
+
+        // De doorrekening gebruikt hetzelfde startbedrag: (2000 - 1100) / 100 = 9 maanden, vanaf 1200 acht.
+        XCTAssertEqual(d.analyze(g, current: oct2026, today: ninth).monthsToGoal, 9)
+        XCTAssertEqual(d.analyze(g, current: oct2026, today: oct2026.date(day: 25)).monthsToGoal, 8)
+        XCTAssertEqual(d.analyze(g, current: oct2026, today: ninth).progress, 1100.0 / 2000.0, accuracy: 0.0001)
     }
 
     func testReachedGoalHasNoAccelerators() {

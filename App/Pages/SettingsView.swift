@@ -2,6 +2,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
+    @Environment(AuthStore.self) private var auth
+    @Environment(\.cloudAccount) private var cloud
     @Environment(\.dismiss) private var dismiss
     @State private var confirmSample = false
     @State private var confirmErase = false
@@ -115,8 +117,8 @@ struct SettingsView: View {
             }
             .confirmationDialog("Voorbeelddata laden?", isPresented: $confirmSample, titleVisibility: .visible) {
                 Button("Vervang mijn gegevens door voorbeelddata", role: .destructive) {
+                    // loadSampleData stempelt de wijziging zelf voor de cloud.
                     store.loadSampleData()
-                    if FirebaseConfig.isConfigured { store.markChangedForSync() }
                     Task { await store.refreshPrices(force: true) }
                 }
             } message: {
@@ -128,8 +130,12 @@ struct SettingsView: View {
             }
             .confirmationDialog("Alles wissen?", isPresented: $confirmErase, titleVisibility: .visible) {
                 Button("Wis alle gegevens", role: .destructive) {
+                    // eraseEverything stempelt de wijziging zelf voor de cloud.
                     store.eraseEverything()
-                    if FirebaseConfig.isConfigured { store.markChangedForSync() }
+                    // Ook wat dit apparaat voor dit account onthoudt (spaardoel-concept, buffer, uurloon) gaat weg.
+                    let account = accountPrefsID(auth: auth, cloud: cloud)
+                    AccountPrefs.clearAll(account: account)
+                    SavingsGoalDraft.clearStored(account: account)
                 }
             } message: {
                 if FirebaseConfig.isConfigured {
