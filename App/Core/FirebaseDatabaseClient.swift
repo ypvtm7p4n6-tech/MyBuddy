@@ -22,6 +22,8 @@ enum FirebaseDatabaseError: Error, Equatable, LocalizedError {
     case tooLarge(bytes: Int)
     case network
     case server(Int)
+    /// De database wees het verzoek af en gaf een toelichting mee (bijvoorbeeld bij een 400).
+    case rejected(status: Int, message: String)
     case badResponse
     case invalidUser
     case unreadable
@@ -46,6 +48,8 @@ enum FirebaseDatabaseError: Error, Equatable, LocalizedError {
             return "Geen verbinding met de cloud."
         case .server(let code):
             return "De cloud gaf een fout (code \(code)). Probeer het later opnieuw."
+        case .rejected(let status, let message):
+            return "De cloud weigerde het verzoek (code \(status)): \(message)"
         case .badResponse:
             return "Onverwacht antwoord van de cloud."
         case .invalidUser:
@@ -332,7 +336,20 @@ struct FirebaseDatabaseClient {
         case 413:
             return .tooLarge(bytes: 0)
         default:
+            // Een 400 komt met een toelichting als {"error": "..."}: laat die zien, zodat de oorzaak te vinden is.
+            let message = Self.errorMessage(in: body)
+            if status == 400, !message.isEmpty { return .rejected(status: status, message: message) }
             return .server(status)
         }
+    }
+
+    /// Haalt de tekst uit {"error": "..."} of de eerste 160 tekens van het antwoord.
+    private static func errorMessage(in body: Data) -> String {
+        if let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+           let text = object["error"] as? String {
+            return String(text.prefix(160))
+        }
+        let raw = (String(data: body, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(raw.prefix(160))
     }
 }

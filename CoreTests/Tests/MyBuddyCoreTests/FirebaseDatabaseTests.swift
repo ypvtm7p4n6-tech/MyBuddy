@@ -144,6 +144,11 @@ final class FirebaseDatabaseTests: XCTestCase {
         XCTAssertEqual(FirebaseDatabaseClient.error(status: 404, body: Data()), .databaseNotFound)
         XCTAssertEqual(FirebaseDatabaseClient.error(status: 500, body: Data()), .server(500))
         XCTAssertEqual(FirebaseDatabaseClient.error(status: 503, body: Data()), .server(503))
+        // Een 400 laat de toelichting van de database zien, zodat de oorzaak te vinden is.
+        let bad = FirebaseDatabaseClient.error(status: 400, body: Data("{\"error\":\"Invalid data\"}".utf8))
+        XCTAssertEqual(bad, .rejected(status: 400, message: "Invalid data"))
+        XCTAssertTrue((bad.errorDescription ?? "").contains("Invalid data"))
+        XCTAssertEqual(FirebaseDatabaseClient.error(status: 400, body: Data()), .server(400))
         let all: [FirebaseDatabaseError] = [.unauthorized, .permissionDenied, .databaseNotFound, .tooLarge(bytes: 9_000_000),
                                             .tooLarge(bytes: 0), .network, .server(500), .badResponse, .invalidUser,
                                             .unreadable, .unsupportedSchema(2)]
