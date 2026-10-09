@@ -197,6 +197,7 @@ struct BankBlock: View {
         let fixed = overviews.reduce(0) { $0 + $1.fixed }
         let variable = overviews.reduce(0) { $0 + $1.variable }
         let left = overviews.reduce(0) { $0 + $1.leftAfterTransfers }
+        let fromPots = overviews.reduce(0) { $0 + $1.fromPots }
         LinkedBlock(title: "Bankrekening", symbol: "building.columns.fill",
                     subtitle: "Saldo, uitgaven en overschrijvingen",
                     destination: .bank) {
@@ -216,6 +217,12 @@ struct BankBlock: View {
                 StatTile(title: "Variabel", value: Fmt.euro(variable))
                 StatTile(title: "Over", value: Fmt.euro(left),
                          color: left < 0 ? Theme.negative : Color.primary)
+            }
+            // Vast en Variabel bevatten ook wat uit een spaarpot komt, Over niet: zonder uitleg tellen de tegels niet op.
+            if fromPots > 0 {
+                Text("Waarvan \(Fmt.euro(fromPots)) uit spaarpotten. Dat telt niet mee in Over.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

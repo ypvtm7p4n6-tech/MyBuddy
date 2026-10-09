@@ -34,6 +34,9 @@ struct SavingsGoalCalculator: View {
     @State private var name = "Spaardoel"
     @State private var createdPotID: UUID?
     @State private var createdGoalID: UUID?
+    /// Gaat omhoog als een knop of keuze de invoer verandert. De invulvelden bouwen zich dan opnieuw op en tonen
+    /// meteen de nieuwe waarde (een veld dat nog de focus heeft, werkt zijn tekst anders niet bij).
+    @State private var fieldEpoch = 0
 
     init() {
         let saved = UserDefaults.standard.string(forKey: SavingsGoalDraft.storageKey) ?? ""
@@ -55,16 +58,28 @@ struct SavingsGoalCalculator: View {
         draft = copy
     }
 
-    /// Koppelt een invulveld aan een onderdeel van de invoer.
+    /// Verandert de invoer met een knop of keuze (niet door te typen) en ververst de invulvelden.
+    private func pick(_ change: (inout SavingsGoalDraft) -> Void) {
+        edit(change)
+        fieldEpoch += 1
+    }
+
+    /// Koppelt een invulveld aan een onderdeel van de invoer. Dit is voor typen: het veld blijft zijn focus houden.
     private func binding<Value>(_ keyPath: WritableKeyPath<SavingsGoalDraft, Value>) -> Binding<Value> {
         Binding(get: { draft[keyPath: keyPath] },
                 set: { newValue in edit { $0[keyPath: keyPath] = newValue } })
     }
 
-    /// Eigen inleg. Zolang je niets invult toont het veld de benodigde inleg.
+    /// Koppelt een schakelaar aan een onderdeel van de invoer en ververst daarna de invulvelden.
+    private func pickBinding<Value>(_ keyPath: WritableKeyPath<SavingsGoalDraft, Value>) -> Binding<Value> {
+        Binding(get: { draft[keyPath: keyPath] },
+                set: { newValue in pick { $0[keyPath: keyPath] = newValue } })
+    }
+
+    /// Eigen inleg. Laat je het veld leeg (of vul je 0 in), dan geldt de benodigde inleg en toont het veld die.
     private var monthlyBinding: Binding<Double> {
         Binding(get: { currentPlan().monthly },
-                set: { newValue in edit { $0.monthly = newValue } })
+                set: { newValue in edit { $0.monthly = SavingsGoalDraft.ownMonthly(fromField: newValue) } })
     }
 
     /// Wisselen tussen een periode en een datum houdt de termijn gelijk.
@@ -73,7 +88,7 @@ struct SavingsGoalCalculator: View {
                 set: { newValue in
                     let months = currentPlan().months
                     let first = store.now.adding(months).firstDay
-                    edit { d in
+                    pick { d in
                         d.useDate = newValue
                         if newValue {
                             d.targetDate = first
@@ -88,7 +103,7 @@ struct SavingsGoalCalculator: View {
     private var unitBinding: Binding<SavingsGoalPeriodUnit> {
         Binding(get: { draft.periodUnit },
                 set: { newUnit in
-                    edit { d in
+                    pick { d in
                         let months = Double(d.periodUnit.monthCount(d.periodValue))
                         d.periodValue = newUnit == .years ? (months / 12 * 100).rounded() / 100 : months
                         d.periodUnit = newUnit
@@ -100,7 +115,7 @@ struct SavingsGoalCalculator: View {
 
     private var dateBinding: Binding<Date> {
         Binding(get: { max(draft.targetDate ?? store.now.adding(24).firstDay, earliestDate) },
-                set: { newDate in edit { $0.targetDate = newDate } })
+                set: { newDate in pick { $0.targetDate = newDate } })
     }
 
     // MARK: Pagina
@@ -130,6 +145,12 @@ struct SavingsGoalCalculator: View {
         .animation(Theme.motion, value: draft)
         .onChange(of: draft) { _, newValue in
             storedDraft = newValue.edited ? newValue.json : ""
+            createdPotID = nil
+            createdGoalID = nil
+        }
+        .onChange(of: name) { _, _ in
+            createdPotID = nil
+            createdGoalID = nil
         }
     }
 
@@ -151,7 +172,7 @@ struct SavingsGoalCalculator: View {
                 statusLine(plan)
                 if !plan.isReached && abs(plan.cleanMonthly - plan.requiredMonthlyWhole) > 0.004 {
                     ChipButton(title: "Neem benodigde inleg over", symbol: "arrow.down.circle") {
-                        edit { $0.monthly = nil }
+                        pick { $0.monthly = nil }
                     }
                 }
                 Text("Rente wordt per maand bijgeschreven en je inleg komt aan het eind van de maand. Het bedrag per maand is naar boven afgerond, zodat je het doel zeker haalt. Rendement is een aanname, geen garantie.")
@@ -243,7 +264,11 @@ struct SavingsGoalCalculator: View {
     private func goalBlock(_ plan: SavingsGoalPlan) -> some View {
         GlassBlock(title: "Je spaardoel", symbol: "flag.checkered") {
             NumberRow(title: "Doelbedrag", value: binding(\.goal))
+                .id(fieldEpoch)
+                .transition(.identity)
             NumberRow(title: "Al gespaard", value: binding(\.start))
+                .id(fieldEpoch)
+                .transition(.identity)
             Picker("Termijn", selection: termModeBinding) {
                 Text("Over een periode").tag(false)
                 Text("Op een datum").tag(true)
@@ -254,6 +279,8 @@ struct SavingsGoalCalculator: View {
                 DatePicker("Streefdatum", selection: dateBinding, in: earliestDate..., displayedComponents: .date)
             } else {
                 NumberRow(title: "Over", value: binding(\.periodValue), unit: .plain(draft.periodUnit.title), maxDigits: 2)
+                    .id(fieldEpoch)
+                    .transition(.identity)
                 Picker("Eenheid", selection: unitBinding) {
                     ForEach(SavingsGoalPeriodUnit.allCases) { unit in Text(unit.title).tag(unit) }
                 }
@@ -264,12 +291,15 @@ struct SavingsGoalCalculator: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             NumberRow(title: "Mijn inleg per maand", value: monthlyBinding)
+                .id(fieldEpoch)
+                .transition(.identity)
             if draft.edited {
                 ChipButton(title: "Begin opnieuw", symbol: "arrow.counterclockwise") {
                     createdPotID = nil
                     createdGoalID = nil
                     name = "Spaardoel"
                     draft = SavingsGoalDraft()
+                    fieldEpoch += 1
                 }
             }
         }
@@ -286,7 +316,7 @@ struct SavingsGoalCalculator: View {
                         title: option.title,
                         detail: Fmt.percent(option.rate(savingsRate: settings.savingsRate, customRate: draft.customRate), digits: 2),
                         selected: draft.preset == option
-                    ) { edit { $0.preset = option } }
+                    ) { pick { $0.preset = option } }
                 }
             }
             if draft.preset == .custom {
@@ -296,7 +326,7 @@ struct SavingsGoalCalculator: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Toggle("In koopkracht van vandaag", isOn: binding(\.realTerms))
+            Toggle("In koopkracht van vandaag", isOn: pickBinding(\.realTerms))
             if draft.realTerms {
                 Text("Alle bedragen zijn in euro's van vandaag. Er is gerekend met \(Fmt.percent(settings.inflation)) inflatie per jaar, dus met \(Fmt.percent(plan.effectiveReturn, digits: 2)) reëel rendement.")
                     .font(.caption)
@@ -313,7 +343,7 @@ struct SavingsGoalCalculator: View {
             HStack(spacing: 10) {
                 ForEach(plan.whatIfs) { item in
                     SavingsGoalWhatIfButton(title: "+" + Fmt.euro(item.extra), caption: whatIfCaption(item)) {
-                        edit { $0.monthly = plan.cleanMonthly + item.extra }
+                        pick { $0.monthly = plan.cleanMonthly + item.extra }
                     }
                 }
             }
@@ -425,8 +455,12 @@ struct SavingsGoalCalculator: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
+                // Na een tik is de knop uit, zodat je niet per ongeluk twee keer hetzelfde maakt.
+                // Verandert er iets aan de berekening of de naam, dan kan het weer.
                 ChipButton(title: "Maak er een spaarpot van", symbol: "banknote") { createPot(plan) }
+                    .disabled(createdPotID != nil)
                 ChipButton(title: "Maak er een doel van", symbol: "flag.checkered") { createGoal(plan) }
+                    .disabled(createdGoalID != nil)
             }
             if let potID = createdPotID {
                 NavigationLink(value: Destination.pot(potID)) {

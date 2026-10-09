@@ -2,7 +2,8 @@ import XCTest
 @testable import MyBuddyCore
 
 /// Rente op spaarpotten. Rente per uitbetaling = rente / 12 × som van het saldo op de eerste dag van elke maand
-/// in de periode (de maanden tussen twee uitbetalingen, eindigend in de uitbetaalmaand, vanaf de startmaand van de pot).
+/// in de periode: de maanden na de vorige uitbetaling t/m de laatste maand die de uitbetaling meeneemt (de
+/// uitbetaalmaand zelf, maar bij uitbetaling op de 1e de maand ervoor), vanaf de startmaand van de pot.
 /// Alle verwachte bedragen hieronder zijn met de hand nagerekend.
 final class InterestTests: XCTestCase {
     private func list(_ d: FinanceData, _ pot: Pot, from: Date = day(aug2026, 1), to: Date) -> [InterestPayment] {
@@ -56,10 +57,11 @@ final class InterestTests: XCTestCase {
         let payments = list(d, pot, to: day(engFeb2028, 28))
         XCTAssertEqual(payments.map { YearMonth(date: $0.date) }, [engJan2027, engJan2028])
         XCTAssertEqual(payments.map { engDayNumber($0.date) }, [1, 1])
-        // 1 januari 2027: augustus t/m januari = 6 maanden x 1200 = 7200 x 2% / 12 = 12,00.
-        // 1 januari 2028: februari 2027 t/m januari 2028 = 12 maanden x 1212 = 14544 x 2% / 12 = 24,24.
-        XCTAssertEqual(amounts(payments), [1_200, 2_424])
-        XCTAssertEqual(d.potBalance(pot.id, asOf: day(engJan2027, 1)), 1_212, accuracy: 0.0001)
+        // Uitbetaling op de 1e betaalt de rente over de maanden ervoor.
+        // 1 januari 2027: augustus t/m december = 5 maanden x 1200 = 6000 x 2% / 12 = 10,00.
+        // 1 januari 2028: januari t/m december 2027 = 12 maanden x 1210 = 14520 x 2% / 12 = 24,20.
+        XCTAssertEqual(amounts(payments), [1_000, 2_420])
+        XCTAssertEqual(d.potBalance(pot.id, asOf: day(engJan2027, 1)), 1_210, accuracy: 0.0001)
         XCTAssertEqual(d.potBalance(pot.id, asOf: day(engDec2026, 31)), 1_200, accuracy: 0.0001)
     }
 
@@ -293,7 +295,7 @@ final class InterestTests: XCTestCase {
         let (d, pot) = engInterestData(payout: .yearly, payoutDay: 1, payoutMonth: 1)
         let next = d.nextInterestPayment(for: pot.id, asOf: day(oct2026, 8))
         XCTAssertEqual(next.map { YearMonth(date: $0.date) }, engJan2027)
-        XCTAssertEqual(engCents(next?.amount ?? 0), 1_200)
+        XCTAssertEqual(engCents(next?.amount ?? 0), 1_000, "augustus t/m december: 5 maanden x 1200 x 2% / 12")
     }
 
     // MARK: Dagoverzicht en geschiedenis

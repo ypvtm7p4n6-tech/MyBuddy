@@ -13,9 +13,11 @@ struct GoalsHubBlock: View {
         let d = store.data
         let goals = Array(d.goals.prefix(2))
         let plan = savingsPlan(d)
+        // Alleen een berekend spaardoel en nog geen levensdoelen: ga meteen naar de calculator, niet naar een lege lijst.
+        let destination: Destination = (goals.isEmpty && plan != nil) ? .savingsGoal : .goals
         LinkedBlock(title: "Doelen", symbol: "flag.checkered",
                     subtitle: GoalMath.hubSubtitle(goalCount: d.goals.count, hasSavingsGoal: plan != nil),
-                    destination: .goals) {
+                    destination: destination) {
             if goals.isEmpty && plan == nil {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Wat wil je bereiken? Met pensioen, een vakantie of parttime werken. Of bereken hoeveel je per maand spaart voor een bedrag.")

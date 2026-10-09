@@ -343,6 +343,25 @@ struct ChipGrid<Content: View>: View {
 
 // MARK: - Periode kiezen
 
+/// Chevron-knop met een tikvlak van 44 x 44 punten (de minimale maat van Apple). Het icoon blijft aan de
+/// buitenkant staan, het tikvlak reikt naar het midden.
+private struct StepButton: View {
+    let symbol: String
+    let label: String
+    let alignment: Alignment
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .frame(width: 44, height: 44, alignment: alignment)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
 /// Terug/vooruit door de maanden.
 struct MonthStepper: View {
     @Binding var month: YearMonth
@@ -350,8 +369,9 @@ struct MonthStepper: View {
 
     var body: some View {
         HStack {
-            Button { month = month.adding(-1) } label: { Image(systemName: "chevron.left") }
-                .accessibilityLabel("Vorige maand")
+            StepButton(symbol: "chevron.left", label: "Vorige maand", alignment: .leading) {
+                month = month.adding(-1)
+            }
             Spacer()
             VStack(spacing: 1) {
                 Text(Fmt.month(month)).font(.headline)
@@ -359,10 +379,10 @@ struct MonthStepper: View {
                 else if month == current { Text("Deze maand").font(.caption).foregroundStyle(.secondary) }
             }
             Spacer()
-            Button { month = month.adding(1) } label: { Image(systemName: "chevron.right") }
-                .accessibilityLabel("Volgende maand")
+            StepButton(symbol: "chevron.right", label: "Volgende maand", alignment: .trailing) {
+                month = month.adding(1)
+            }
         }
-        .buttonStyle(.plain)
         .padding(.horizontal, 6)
     }
 }
@@ -382,8 +402,9 @@ struct PeriodControl: View {
             .labelsHidden()
 
             HStack {
-                Button { router.shiftPeriod(-1) } label: { Image(systemName: "chevron.left") }
-                    .accessibilityLabel("Vorige periode")
+                StepButton(symbol: "chevron.left", label: "Vorige periode", alignment: .leading) {
+                    router.shiftPeriod(-1)
+                }
                 Spacer()
                 VStack(spacing: 1) {
                     Text(Fmt.period(router.periodMode, containing: router.focusMonth))
@@ -393,10 +414,10 @@ struct PeriodControl: View {
                     if let note = statusNote { Text(note).font(.caption).foregroundStyle(Theme.warning) }
                 }
                 Spacer()
-                Button { router.shiftPeriod(1) } label: { Image(systemName: "chevron.right") }
-                    .accessibilityLabel("Volgende periode")
+                StepButton(symbol: "chevron.right", label: "Volgende periode", alignment: .trailing) {
+                    router.shiftPeriod(1)
+                }
             }
-            .buttonStyle(.plain)
             .padding(.horizontal, 6)
         }
     }

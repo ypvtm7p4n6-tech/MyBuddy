@@ -154,7 +154,7 @@ struct BlockOrderMenu: ViewModifier {
                 Button {
                     router.orderPage = page
                 } label: {
-                    Label("Volgorde aanpassen", systemImage: "arrow.up.arrow.down")
+                    Label("Volgorde aanpassen…", systemImage: "arrow.up.arrow.down")
                 }
                 if canMoveUp {
                     Button { move(-1) } label: { Label("Naar boven", systemImage: "arrow.up") }

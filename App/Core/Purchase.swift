@@ -176,6 +176,19 @@ enum PurchaseCategory: String, CaseIterable, Identifiable {
         return .want
     }
 
+    /// Toon als de uren gelijk of lager zijn dan nodig (rood). Meestal die van het niveau, maar tweedehands past
+    /// niet bij eten en gezondheid: daar past alleen vergelijken en een goedkopere variant.
+    var toneWhenNotWorth: String {
+        switch self {
+        case .food:
+            return "Zoiets heb je gewoon nodig. Vergelijk prijzen of kies een goedkopere variant."
+        case .health:
+            return "Zoiets heb je soms gewoon nodig. Vergelijk prijzen en kijk wat je zorgverzekering vergoedt."
+        default:
+            return needLevel.toneWhenNotWorth
+        }
+    }
+
     /// Aantal dagen wachten voor je koopt. 0 = geen wachttijd nodig.
     var waitDays: Int {
         switch self {
@@ -261,12 +274,18 @@ struct PurchasePotOption: Identifiable, Equatable {
 struct PurchaseContext: Equatable {
     /// Inkomen van deze maand. 0 = onbekend.
     var monthlyIncome: Double = 0
-    /// Wat deze maand nog te verdelen is (kan negatief zijn). nil = geen maandplan ingevuld.
+    /// Wat deze maand nog te verdelen is (kan negatief zijn). nil = geen maandplan ingevuld, of nog geen inkomen.
     var remainingThisMonth: Double?
+    /// Zijn de uitgaven van de bank deze maand al hoger dan het inkomen? Dan komt een negatief restant
+    /// niet doordat je te veel verdeelde, maar doordat de uitgaven hoger zijn dan het inkomen.
+    var expensesExceedIncome: Bool = false
     /// Saldo van de bankrekening nu. nil = geen saldo bekend.
     var bankBalance: Double?
-    /// Wat er boven de bankbuffer staat. nil = geen saldo bekend.
+    /// Wat er boven de bankbuffer staat (nooit negatief). nil = geen saldo bekend.
     var bankSurplus: Double?
+    /// De gewenste bankbuffer. Nodig om te zeggen hoever je onder de buffer komt als je saldo er al onder staat.
+    /// nil = onbekend: dan geldt alleen `bankSurplus`.
+    var bankBuffer: Double?
     var pots: [PurchasePotOption] = []
 }
 
@@ -279,11 +298,16 @@ extension PurchaseContext {
         var context = PurchaseContext()
         let income = data.income(in: current)
         context.monthlyIncome = max(0, income)
-        let hasPlan = income > 0 || data.expensesTotal(in: current) > 0
-        context.remainingThisMonth = hasPlan ? data.remaining(in: current) : nil
+        // Zonder inkomen zegt het maandplan niets: het restant is dan alleen min de uitgaven, en misschien is het
+        // salaris gewoon nog niet ingevuld. Dan laten we het maandplan buiten de uitspraak.
+        if income > 0 {
+            context.remainingThisMonth = data.remaining(in: current)
+            context.expensesExceedIncome = CentsMath.int(income) - CentsMath.int(data.expensesFromBank(in: current)) < 0
+        }
         if data.hasBankBalance {
             context.bankBalance = data.bankBalanceNow(current: current, today: today)
             context.bankSurplus = data.bankSurplusAboveBuffer(current: current, today: today)
+            context.bankBuffer = data.bankBuffer(current: current)
         }
         let chosenID = bufferPotID.flatMap { data.pot($0)?.id }
         let bufferID = chosenID ?? BufferCalc.bufferPot(in: data)?.id
@@ -458,6 +482,11 @@ enum PurchaseCalc {
         hours > 0 ? hoursText(hours) : "minder dan 0,1 uur"
     }
 
+    /// Korte vorm van `costHoursText` voor een smalle tegel: "< 0,1 uur" past, "minder dan 0,1 uur werken" niet.
+    static func costHoursShortText(_ hours: Double) -> String {
+        hours > 0 ? hoursText(hours) : "< 0,1 uur"
+    }
+
     /// Bedrag in een zin: hele euro's, maar onder één euro met centen ("€ 0,40"), zodat er nooit "€ 0" staat
     /// bij een bedrag dat er wel is.
     static func moneyText(_ value: Double) -> String {
@@ -587,10 +616,10 @@ enum PurchaseCalc {
             }
             if r.hoursWilling > 0 {
                 notes.append(PurchaseNote(
-                    text: "Bij \(hoursText(r.hoursWilling)) werken hoort een prijs onder ongeveer \(Fmt.euro(r.maxWorthPrice)). Vind je het daaronder, dan is het je wel waard.",
+                    text: "Bij \(hoursText(r.hoursWilling)) werken hoort een prijs onder ongeveer \(moneyText(r.maxWorthPrice)). Vind je het daaronder, dan is het je wel waard.",
                     kind: .neutral))
             }
-            notes.append(PurchaseNote(text: category.needLevel.toneWhenNotWorth, kind: .neutral))
+            notes.append(PurchaseNote(text: category.toneWhenNotWorth, kind: .neutral))
             if r.usesCheaper {
                 notes.append(PurchaseNote(
                     text: "Goedkoper gevonden scheelt \(moneyText(r.savedByCheaper)), maar het blijft meer dan je ervoor over hebt.",

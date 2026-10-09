@@ -676,6 +676,45 @@ final class SavingsGoalDraftTests: XCTestCase {
         XCTAssertTrue(back.edited)
     }
 
+    func testEmptyOrZeroFieldMeansOwnMonthlyNotFilledIn() {
+        // Het veld "Mijn inleg" geeft 0 als het leeg is: dan geldt de benodigde inleg weer.
+        XCTAssertNil(SavingsGoalDraft.ownMonthly(fromField: 0))
+        XCTAssertNil(SavingsGoalDraft.ownMonthly(fromField: -25))
+        XCTAssertNil(SavingsGoalDraft.ownMonthly(fromField: .nan))
+        XCTAssertNil(SavingsGoalDraft.ownMonthly(fromField: .infinity))
+        XCTAssertEqual(SavingsGoalDraft.ownMonthly(fromField: 150), 150)
+        XCTAssertEqual(SavingsGoalDraft.ownMonthly(fromField: 0.5), 0.5)
+
+        var draft = SavingsGoalDraft()
+        draft.monthly = SavingsGoalDraft.ownMonthly(fromField: 150)
+        XCTAssertEqual(draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026).monthly, 150, accuracy: 0.001)
+        // Veld weer leeg gemaakt: terug naar de benodigde inleg (205 voor 5.000 in 24 maanden bij 2%).
+        draft.monthly = SavingsGoalDraft.ownMonthly(fromField: 0)
+        XCTAssertNil(draft.monthly)
+        let plan = draft.plan(savingsRate: 0.02, inflation: 0.02, now: oct2026)
+        XCTAssertEqual(plan.monthly, 205, accuracy: 0.001)
+        XCTAssertTrue(plan.isOnTrack)
+    }
+
+    func testClearStoredRemovesTheSavedInput() throws {
+        let suite = "MyBuddyTests.SavingsGoalDraftClear"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var draft = SavingsGoalDraft()
+        draft.goal = 9_000
+        draft.edited = true
+        defaults.set(draft.json, forKey: SavingsGoalDraft.storageKey)
+        XCTAssertEqual(SavingsGoalDraft.decode(defaults.string(forKey: SavingsGoalDraft.storageKey) ?? "")?.goal, 9_000)
+
+        SavingsGoalDraft.clearStored(in: defaults)
+        XCTAssertNil(defaults.string(forKey: SavingsGoalDraft.storageKey))
+        XCTAssertNil(SavingsGoalDraft.decode(defaults.string(forKey: SavingsGoalDraft.storageKey) ?? ""))
+        // Nog eens wissen als er niets staat, mag.
+        SavingsGoalDraft.clearStored(in: defaults)
+    }
+
     func testEmptyMonthlyIsNotStored() throws {
         let draft = SavingsGoalDraft()
         XCTAssertFalse(draft.json.contains("\"monthly\""))

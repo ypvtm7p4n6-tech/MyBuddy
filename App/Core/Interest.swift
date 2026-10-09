@@ -69,6 +69,14 @@ enum InterestRules {
     static func firstMonth(for pot: Pot, dataStart: YearMonth) -> YearMonth {
         max(pot.startMonth, dataStart)
     }
+
+    /// De laatste maand waarvan het saldo op de eerste dag meetelt in een uitbetaling op `day` van `payoutMonth`.
+    /// Een uitbetaling betaalt rente over de tijd vóór de uitbetaaldag. Op de 1e is de uitbetaalmaand nog niet
+    /// begonnen, dus telt de maand ervoor als laatste; vanaf de 2e telt de uitbetaalmaand zelf mee.
+    /// Zo betaalt "elk jaar op 1 januari" de rente over januari t/m december van het jaar ervoor.
+    static func lastCoveredMonth(payoutMonth: YearMonth, day: Int) -> YearMonth {
+        day <= 1 ? payoutMonth.adding(-1) : payoutMonth
+    }
 }
 
 /// Alles wat het saldo van een pot bepaalt: de gewone boekingen en de rente-uitbetalingen.
@@ -116,9 +124,14 @@ extension FinanceData {
     /// Boekingen en rente van een pot t/m `last`.
     ///
     /// Rente per uitbetaling = rente / 12 × som van het saldo op de eerste dag van elke maand in de periode.
-    /// De periode zijn de maanden tussen twee uitbetalingen, eindigend in de uitbetaalmaand (bij maandelijks
-    /// dus alleen die maand), en alleen maanden vanaf de startmaand van de pot. Eerdere uitbetalingen (opgeslagen of
-    /// verwacht) tellen mee in het saldo, de uitbetaling zelf niet. Afgerond op centen, nooit negatief.
+    /// De periode loopt vanaf de maand na de vorige uitbetaling (of de startmaand van de pot) t/m de laatste
+    /// maand die de uitbetaling meeneemt (`InterestRules.lastCoveredMonth`). Bij een vast ritme zijn dat de maanden
+    /// tussen twee uitbetalingen. Eerdere uitbetalingen (opgeslagen of verwacht) tellen mee in het saldo, de
+    /// uitbetaling zelf niet. Afgerond op centen, nooit negatief.
+    ///
+    /// Opgeslagen rente (ook van een eerder ritme of handmatig) geldt als uitbetaald t/m de maand die ze meenam.
+    /// Wissel je van ritme, dan betaalt de app die maanden dus niet nog een keer en laat ze er ook geen vallen.
+    /// Het resultaat hangt niet af van `last`: alle opgeslagen rente van de pot telt altijd mee.
     func potFlows(_ pot: Pot, throughMonth last: YearMonth) -> PotFlows {
         let payoutMonths = interestPayoutMonths(for: pot, through: last)
         guard !payoutMonths.isEmpty else {
@@ -136,6 +149,15 @@ extension FinanceData {
         let interval = max(1, pot.interestPayout.intervalMonths)
         let firstMonth = InterestRules.firstMonth(for: pot, dataStart: startMonth)
         let cal = YearMonth.calendar
+
+        // Tot en met welke maand is er al rente uitbetaald? Opgeslagen rente telt altijd mee, ook van ná `last`.
+        var settled: YearMonth?
+        for e in potEntries where e.potID == pot.id && e.kind == .interest && e.amount > 0 {
+            let covered = InterestRules.lastCoveredMonth(payoutMonth: YearMonth(date: e.date, calendar: cal),
+                                                         day: DayMath.dayNumber(of: e.date, calendar: cal))
+            settled = max(settled ?? covered, covered)
+        }
+
         var payments: [InterestPayment] = []
 
         for month in payoutMonths {
@@ -148,9 +170,16 @@ extension FinanceData {
                 continue
             }
 
+            let end = InterestRules.lastCoveredMonth(payoutMonth: month, day: pot.interestPayoutDay)
+            var begin = settled.map { $0.adding(1) } ?? end.adding(-(interval - 1))
+            if begin < firstMonth { begin = firstMonth }
+            // Alles tot en met `end` is al uitbetaald (of de pot begon er nog niet): niets te betalen.
+            guard begin <= end else { continue }
+            settled = end
+
             var sum = 0
-            var m = max(month.adding(-(interval - 1)), firstMonth)
-            while m <= month {
+            var m = begin
+            while m <= end {
                 let limit = DayMath.nextDayStart(after: m.date(day: 1, calendar: cal), calendar: cal)
                 var balance = ledger.sum(before: limit)
                 for earlier in payments where earlier.date < limit {

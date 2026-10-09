@@ -384,6 +384,17 @@ struct SavingsGoalDraft: Codable, Equatable {
         return plan
     }
 
+    /// Wat het invulveld "Mijn inleg" betekent: leeg of 0 is "zelf niets ingevuld" (dan geldt de benodigde inleg),
+    /// elk ander bedrag is je eigen inleg.
+    static func ownMonthly(fromField value: Double) -> Double? {
+        value.isFinite && value > 0 ? value : nil
+    }
+
+    /// Wist de bewaarde invoer van dit apparaat, bijvoorbeeld bij "Alles wissen" of als een account verdwijnt.
+    static func clearStored(in defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: storageKey)
+    }
+
     /// Als tekst om te bewaren (JSON).
     var json: String {
         guard let data = try? JSONEncoder().encode(self) else { return "" }

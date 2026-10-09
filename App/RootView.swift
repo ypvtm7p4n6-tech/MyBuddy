@@ -26,11 +26,18 @@ struct RootView: View {
         .sheet(isPresented: $router.showSettings) { SettingsView() }
         .sheet(item: $router.orderPage) { page in BlockOrderSheet(page: page) }
         .task { await store.refreshPrices() }
+        // Zolang de app open staat, gaat de klok bij: een nieuwe dag of een betaaldag verandert de "nu"-saldi.
+        .task(id: scenePhase) { await keepClockFresh() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 store.refreshClock()
                 Task { await store.refreshPrices() }
             }
+        }
+        // Begint er een nieuwe maand terwijl de app openstaat, dan schuift de Savings-pagina mee, maar alleen
+        // als je niet zelf naar een andere maand was gebladerd.
+        .onChange(of: store.now) { old, new in
+            if router.focusMonth == old { router.resetFocus(to: new) }
         }
         #if canImport(UIKit)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
@@ -58,6 +65,20 @@ struct RootView: View {
     }
 
     private static let tabTransition: AnyTransition = .opacity.combined(with: .scale(scale: 0.98))
+
+    /// Controleert elke minuut of er een nieuwe dag of maand is (alleen terwijl de app actief is).
+    /// Het eerste moment na het actief worden regelt `onChange(of: scenePhase)`.
+    private func keepClockFresh() async {
+        guard scenePhase == .active else { return }
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+            } catch {
+                return
+            }
+            store.refreshClock()
+        }
+    }
 }
 
 /// Glazen balk met de drie tabs en een indicator die van tab naar tab glijdt.
