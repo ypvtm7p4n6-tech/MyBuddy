@@ -130,3 +130,11 @@ extension LedgerPerfScratchTests {
         }
     }
 }
+
+extension LedgerPerfScratchTests {
+    func testCallgrind() {
+        let (d, current) = LedgerPerfScratchTests.perfData()
+        let today = current.date(day: 10)
+        for _ in 0..<5 { _ = d.monthLedger(current, asOf: today) }
+    }
+}

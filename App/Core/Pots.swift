@@ -32,7 +32,14 @@ struct CentsLedger: Equatable {
     private(set) var prefix: [Int] = [0]
 
     init(items: [(date: Date, cents: Int)] = []) {
-        let sorted = items.sorted { $0.date < $1.date }
+        // Meestal staan de boekingen al op volgorde (maand voor maand): dan hoeft er niet gesorteerd te worden.
+        var inOrder = true
+        var previous = Date.distantPast
+        for item in items {
+            if item.date < previous { inOrder = false; break }
+            previous = item.date
+        }
+        let sorted = inOrder ? items : items.sorted { $0.date < $1.date }
         dates = sorted.map { $0.date }
         var running = 0
         var sums = [0]
@@ -97,40 +104,54 @@ extension FinanceData {
     /// keer doorlopen in plaats van één keer per pot. `managed` per pot (op pot-id) zijn de uitbetalingen die apart meetellen.
     func potLedgers(for targets: [Pot], throughMonth last: YearMonth,
                     excluding managed: [UUID: Set<UUID>] = [:]) -> [UUID: PotLedgers] {
-        var entryItems: [UUID: [(date: Date, cents: Int)]] = [:]
-        var planItems: [UUID: [(date: Date, cents: Int)]] = [:]
-        var wanted = Set<UUID>()
-        for pot in targets { wanted.insert(pot.id) }
-        for e in potEntries where wanted.contains(e.potID) {
+        var entryItems = [[(date: Date, cents: Int)]](repeating: [], count: targets.count)
+        var planItems = [[(date: Date, cents: Int)]](repeating: [], count: targets.count)
+        var indexOfPot: [UUID: Int] = [:]
+        for (i, pot) in targets.enumerated() where indexOfPot[pot.id] == nil { indexOfPot[pot.id] = i }
+        for e in potEntries {
+            guard let i = indexOfPot[e.potID] else { continue }
             if managed[e.potID]?.contains(e.id) == true { continue }
-            entryItems[e.potID, default: []].append((e.date, CentsMath.int(e.amount)))
+            entryItems[i].append((e.date, CentsMath.int(e.amount)))
         }
 
         // Zelfde regels als `allocation(_:in:)` en `transferDay(for:in:)`, maar zonder elke maand alles opnieuw op te zoeken.
         let potKeys = targets.map { $0.id.uuidString }
         let anyShares = months.values.contains { plan in plan.expenses.contains { !$0.potShares.isEmpty } }
-        let stored = StoredPlans(anyShares ? months : [:])
+        var stored: StoredPlans?   // pas nodig voor een maand zonder opgeslagen plan
         let cal = YearMonth.calendar
         var m = startMonth
         var count = 0
         while m <= last && count < 2_400 {
             let storedPlan = months[m.key]
+            let dayCount = m.dayCount
+            var dates = [Date?](repeating: nil, count: 32)   // de datum van elke dag van deze maand, één keer gemaakt
+            func date(day: Int) -> Date {
+                if let known = dates[day] { return known }
+                let made = m.date(day: day, calendar: cal)
+                dates[day] = made
+                return made
+            }
             for (i, pot) in targets.enumerated() {
                 let planned = storedPlan?.allocations[potKeys[i]] ?? (m >= pot.startMonth ? pot.monthlyContribution : 0)
                 let cents = CentsMath.int(planned)
                 if cents != 0 {
-                    let day = min(YearMonth.clampedDay(storedPlan?.transferDay ?? pot.transferDay ?? salary.payDay), m.dayCount)
-                    planItems[pot.id, default: []].append((m.date(day: day, calendar: cal), cents))
+                    let day = min(YearMonth.clampedDay(storedPlan?.transferDay ?? pot.transferDay ?? salary.payDay), dayCount)
+                    planItems[i].append((date(day: day), cents))
                 }
             }
             if anyShares {
                 // Een nog niet vastgelegde maand krijgt de terugkerende uitgaven van het laatst opgeslagen plan.
-                let lines = storedPlan?.expenses ?? (stored.latest(before: m)?.expenses.filter { $0.isRecurring } ?? [])
+                var lines: [MoneyLine]
+                if let storedPlan {
+                    lines = storedPlan.expenses
+                } else {
+                    if stored == nil { stored = StoredPlans(months) }
+                    lines = stored?.latest(before: m)?.expenses.filter { $0.isRecurring } ?? []
+                }
                 for line in lines where !line.potShares.isEmpty {
-                    var date: Date?
-                    for payment in expenseSplit(of: line).pots where wanted.contains(payment.potID) {
-                        if date == nil { date = m.date(day: expenseDay(of: line), calendar: cal) }
-                        planItems[payment.potID, default: []].append((date ?? m.firstDay, -payment.cents))
+                    for payment in expenseSplit(of: line).pots {
+                        guard let i = indexOfPot[payment.potID] else { continue }
+                        planItems[i].append((date(day: min(max(expenseDay(of: line), 1), dayCount)), -payment.cents))
                     }
                 }
             }
@@ -138,9 +159,8 @@ extension FinanceData {
             count += 1
         }
         var result: [UUID: PotLedgers] = [:]
-        for pot in targets {
-            result[pot.id] = PotLedgers(entries: CentsLedger(items: entryItems[pot.id] ?? []),
-                                        plan: CentsLedger(items: planItems[pot.id] ?? []))
+        for (i, pot) in targets.enumerated() {
+            result[pot.id] = PotLedgers(entries: CentsLedger(items: entryItems[i]), plan: CentsLedger(items: planItems[i]))
         }
         return result
     }

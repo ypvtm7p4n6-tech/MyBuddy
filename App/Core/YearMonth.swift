@@ -41,6 +41,20 @@ struct YearMonth: Hashable, Comparable, Codable {
 
     /// Sleutel zoals "2026-10", gebruikt voor opslag.
     var key: String {
+        // Snel pad voor gewone jaren (0000...9999): de zeven tekens rechtstreeks opbouwen.
+        if (0...9_999).contains(year) && (1...12).contains(month) {
+            var bytes: [UInt8] = [48, 48, 48, 48, 45, 48, 48]
+            var y = year
+            var i = 3
+            while y > 0 {
+                bytes[i] = UInt8(48 + y % 10)
+                y /= 10
+                i -= 1
+            }
+            bytes[5] = UInt8(48 + month / 10)
+            bytes[6] = UInt8(48 + month % 10)
+            return String(decoding: bytes, as: UTF8.self)
+        }
         let m = month < 10 ? "0\(month)" : "\(month)"
         var y = "\(year)"
         while y.count < 4 { y = "0" + y }
@@ -48,6 +62,26 @@ struct YearMonth: Hashable, Comparable, Codable {
     }
 
     init?(key: String) {
+        // Snel pad voor de vaste vorm "jjjj-mm" (wat `key` maakt); alles anders gaat via de zorgvuldige weg hieronder.
+        var yearValue = 0
+        var monthValue = 0
+        var length = 0
+        var shaped = true
+        for byte in key.utf8 {
+            if length == 4 {
+                if byte != 45 { shaped = false }
+            } else if byte >= 48 && byte <= 57 {
+                if length < 4 { yearValue = yearValue * 10 + Int(byte - 48) } else { monthValue = monthValue * 10 + Int(byte - 48) }
+            } else {
+                shaped = false
+            }
+            length += 1
+            if !shaped || length > 7 { break }
+        }
+        if shaped, length == 7, (1...12).contains(monthValue) {
+            self.init(year: yearValue, month: monthValue)
+            return
+        }
         let parts = key.split(separator: "-")
         // Jaren buiten 0...9999 komen alleen uit onleesbare of kwaadwillige bestanden; `year * 12` zou daarop crashen.
         guard parts.count == 2, let y = Int(parts[0]), (0...9_999).contains(y),

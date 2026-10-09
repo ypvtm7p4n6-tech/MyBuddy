@@ -30,26 +30,40 @@ enum StableID {
         }
 
         private mutating func absorb(_ text: String) {
-            for byte in text.utf8 {
-                h1 = (h1 ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
-                h2 = (h2 ^ UInt64(byte) ^ 0xa5) &* 0x0000_0100_0000_01b3
-                h2 = (h2 << 13) | (h2 >> 51)
-            }
+            for byte in text.utf8 { absorb(byte: byte) }
+        }
+
+        private mutating func absorb(byte: UInt8) {
+            h1 = (h1 ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+            h2 = (h2 ^ UInt64(byte) ^ 0xa5) &* 0x0000_0100_0000_01b3
+            h2 = (h2 << 13) | (h2 >> 51)
         }
 
         /// Het id van de tekst tot nu toe.
         func uuid() -> UUID {
             let a = StableID.mix(h1)
             let b = StableID.mix(h2 ^ a)
-            var bytes = [UInt8](repeating: 0, count: 16)
-            for i in 0..<8 {
-                bytes[i] = UInt8(truncatingIfNeeded: a >> UInt64(56 - 8 * i))
-                bytes[8 + i] = UInt8(truncatingIfNeeded: b >> UInt64(56 - 8 * i))
-            }
-            bytes[6] = (bytes[6] & 0x0F) | 0x50   // versie 5-achtig
-            bytes[8] = (bytes[8] & 0x3F) | 0x80   // variant
-            return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                               bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+            @inline(__always) func byte(_ x: UInt64, _ i: UInt64) -> UInt8 { UInt8(truncatingIfNeeded: x >> (56 - 8 * i)) }
+            return UUID(uuid: (byte(a, 0), byte(a, 1), byte(a, 2), byte(a, 3), byte(a, 4), byte(a, 5),
+                               (byte(a, 6) & 0x0F) | 0x50,   // versie 5-achtig
+                               byte(a, 7),
+                               (byte(b, 0) & 0x3F) | 0x80,   // variant
+                               byte(b, 1), byte(b, 2), byte(b, 3), byte(b, 4), byte(b, 5), byte(b, 6), byte(b, 7)))
+        }
+
+        /// Het id van de tekst tot nu toe plus de sleutel van `month` ("2026-10"): precies `uuid(adding: month.key)`,
+        /// zonder die tekst eerst te maken.
+        func uuid(addingKeyOf month: YearMonth) -> UUID {
+            guard (0...9_999).contains(month.year), (1...12).contains(month.month) else { return uuid(adding: month.key) }
+            var copy = self
+            copy.absorb(byte: UInt8(48 + month.year / 1_000))
+            copy.absorb(byte: UInt8(48 + month.year / 100 % 10))
+            copy.absorb(byte: UInt8(48 + month.year / 10 % 10))
+            copy.absorb(byte: UInt8(48 + month.year % 10))
+            copy.absorb(byte: 45)
+            copy.absorb(byte: UInt8(48 + month.month / 10))
+            copy.absorb(byte: UInt8(48 + month.month % 10))
+            return copy.uuid()
         }
 
         /// Het id van de tekst tot nu toe plus `suffix`.
@@ -83,7 +97,7 @@ enum InterestRules {
     /// De vaste id's van `months` in één keer (sneller dan `entryID` per maand, met dezelfde uitkomst).
     static func entryIDs(for potID: UUID, months: [YearMonth]) -> [UUID] {
         let prefix = StableID.Prefix("interest|\(potID.uuidString)|")
-        return months.map { prefix.uuid(adding: $0.key) }
+        return months.map { prefix.uuid(addingKeyOf: $0) }
     }
 
     static func paymentID(for potID: UUID, month: YearMonth) -> String {
@@ -106,6 +120,51 @@ enum InterestRules {
     /// Zo betaalt "elk jaar op 1 januari" de rente over januari t/m december van het jaar ervoor.
     static func lastCoveredMonth(payoutMonth: YearMonth, day: Int) -> YearMonth {
         day <= 1 ? payoutMonth.adding(-1) : payoutMonth
+    }
+}
+
+/// Het eind van de eerste dag van een maand (begin van de tweede), onthouden zodat meer potten het niet steeds opnieuw uitrekenen.
+final class FirstDayLimits {
+    private var cache: [Int: Date] = [:]
+    private let calendar = YearMonth.calendar
+
+    func endOfFirstDay(of month: YearMonth) -> Date {
+        if let known = cache[month.index] { return known }
+        let value = DayMath.nextDayStart(after: month.date(day: 1, calendar: calendar), calendar: calendar)
+        cache[month.index] = value
+        return value
+    }
+}
+
+/// De uitbetalingen die al klaar zijn terwijl de volgende wordt uitgerekend, met een lopende som: wat er aan rente
+/// is uitbetaald vóór een moment, zonder elke keer alles langs te lopen.
+private struct RunningPayments {
+    private var dates: [Date] = []
+    private var prefix: [Int] = [0]
+    private var inOrder = true
+
+    mutating func append(date: Date, cents: Int) {
+        if let last = dates.last, date < last { inOrder = false }
+        dates.append(date)
+        prefix.append(CentsMath.add(prefix[prefix.count - 1], cents))
+    }
+
+    /// Som (in hele centen) van de uitbetalingen met een datum vóór `limit`.
+    func sum(before limit: Date) -> Int {
+        if inOrder {
+            var lo = 0
+            var hi = dates.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if dates[mid] < limit { lo = mid + 1 } else { hi = mid }
+            }
+            return prefix[lo]
+        }
+        var total = 0
+        for index in dates.indices where dates[index] < limit {
+            total = CentsMath.add(total, CentsMath.add(prefix[index + 1], -prefix[index]))
+        }
+        return total
     }
 }
 
@@ -134,16 +193,32 @@ struct PotFlows {
     /// Maandverdeling en potdelen van uitgaven, per kalenderdag.
     var plan: CentsLedger
     /// Opgeslagen en verwachte uitbetalingen, oplopend op datum.
-    var payments: [InterestPayment]
+    private(set) var payments: [InterestPayment]
     /// De vaste id's (`InterestRules.entryID`) van de uitbetalingen die hier apart meetellen. Opgeslagen boekingen
     /// met zo'n id zitten in `payments` en dus niet nog eens in `entries`.
     var managedIDs: Set<UUID> = []
+
+    /// Datums en lopende som (in hele centen) van `payments`, om snel het saldo op een moment te vinden.
+    private var paymentDates: [Date] = []
+    private var paymentPrefix: [Int] = [0]
 
     init(ledgers: PotLedgers, payments: [InterestPayment], managedIDs: Set<UUID> = []) {
         self.entries = ledgers.entries
         self.plan = ledgers.plan
         self.payments = payments
         self.managedIDs = managedIDs
+        var running = 0
+        var sums = [0]
+        sums.reserveCapacity(payments.count + 1)
+        var inOrder = true
+        for (index, payment) in payments.enumerated() {
+            running = CentsMath.add(running, CentsMath.int(payment.amount))
+            sums.append(running)
+            if index > 0 && payment.date < payments[index - 1].date { inOrder = false }
+        }
+        // De uitbetalingen staan op datum; zo niet, dan tellen we ze één voor één (zie `cents`).
+        paymentDates = inOrder ? payments.map { $0.date } : []
+        paymentPrefix = sums
     }
 
     /// Saldo in hele centen vóór `limit` (alles op dezelfde grens: het eind van een dag).
@@ -155,8 +230,18 @@ struct PotFlows {
     /// rente vóór `planBefore`.
     func cents(entriesBefore: Date, planBefore: Date) -> Int {
         var total = CentsMath.add(entries.sum(before: entriesBefore), plan.sum(before: planBefore))
-        for payment in payments {
-            if payment.date >= planBefore { break }
+        if payments.isEmpty { return total }
+        if paymentDates.count == payments.count {
+            // Op datum: het aantal uitbetalingen vóór de grens zoeken.
+            var lo = 0
+            var hi = paymentDates.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if paymentDates[mid] < planBefore { lo = mid + 1 } else { hi = mid }
+            }
+            return CentsMath.add(total, paymentPrefix[lo])
+        }
+        for payment in payments where payment.date < planBefore {
             total = CentsMath.add(total, CentsMath.int(payment.amount))
         }
         return total
@@ -210,7 +295,11 @@ extension FinanceData {
     }
 
     /// Zoals `potFlows(_:throughMonth:)` voor meer potten tegelijk, op pot-id.
-    func potFlows(for targets: [Pot], throughMonth last: YearMonth) -> [UUID: PotFlows] {
+    func potFlows(for requested: [Pot], throughMonth last: YearMonth) -> [UUID: PotFlows] {
+        // Een pot telt één keer (zoals `pot(_:)` de eerste met een id pakt).
+        var seen = Set<UUID>()
+        let targets = requested.filter { seen.insert($0.id).inserted }
+        let limits = FirstDayLimits()
         var payoutMonthsByPot: [UUID: [YearMonth]] = [:]
         var idsByPot: [UUID: [UUID]] = [:]
         var managedByPot: [UUID: Set<UUID>] = [:]
@@ -233,7 +322,8 @@ extension FinanceData {
                 result[pot.id] = PotFlows(ledgers: ledger, payments: [])
                 continue
             }
-            let payments = interestPayments(of: pot, payoutMonths: payoutMonths, entryIDs: ids, managedIDs: managed, ledgers: ledger)
+            let payments = interestPayments(of: pot, payoutMonths: payoutMonths, entryIDs: ids, managedIDs: managed,
+                                            ledgers: ledger, limits: limits)
             result[pot.id] = PotFlows(ledgers: ledger, payments: payments, managedIDs: managed)
         }
         return result
@@ -241,7 +331,7 @@ extension FinanceData {
 
     /// De uitbetalingen van één pot: opgeslagen waar die er zijn, anders verwacht (zie `potFlows`).
     private func interestPayments(of pot: Pot, payoutMonths: [YearMonth], entryIDs: [UUID], managedIDs: Set<UUID>,
-                                  ledgers: PotLedgers) -> [InterestPayment] {
+                                  ledgers: PotLedgers, limits: FirstDayLimits) -> [InterestPayment] {
         var stored: [UUID: PotEntry] = [:]
         for e in potEntries where e.potID == pot.id && managedIDs.contains(e.id) && stored[e.id] == nil {
             stored[e.id] = e
@@ -260,6 +350,7 @@ extension FinanceData {
         }
 
         var payments: [InterestPayment] = []
+        var earlier = RunningPayments()
         let paymentPrefix = "interest-\(pot.id.uuidString)-"
 
         for (index, month) in payoutMonths.enumerated() {
@@ -268,6 +359,7 @@ extension FinanceData {
             if let entry = stored[entryIDs[index]] {
                 payments.append(InterestPayment(potID: pot.id, date: entry.date, amount: entry.amount,
                                                 isProjected: false, id: paymentID))
+                earlier.append(date: entry.date, cents: CentsMath.int(entry.amount))
                 continue
             }
 
@@ -281,11 +373,8 @@ extension FinanceData {
             var sum = 0
             var m = begin
             while m <= end {
-                let limit = DayMath.nextDayStart(after: m.date(day: 1, calendar: cal), calendar: cal)
-                var balance = ledgers.cents(before: limit)
-                for earlier in payments where earlier.date < limit {
-                    balance = CentsMath.add(balance, CentsMath.int(earlier.amount))
-                }
+                let limit = limits.endOfFirstDay(of: m)
+                let balance = CentsMath.add(ledgers.cents(before: limit), earlier.sum(before: limit))
                 sum = CentsMath.add(sum, balance)
                 m = m.adding(1)
             }
@@ -295,6 +384,7 @@ extension FinanceData {
             let date = month.date(day: YearMonth.clampedDay(pot.interestPayoutDay), calendar: cal)
             payments.append(InterestPayment(potID: pot.id, date: date, amount: CentsMath.value(cents),
                                             isProjected: true, id: paymentID))
+            earlier.append(date: date, cents: cents)
         }
         payments.sort { $0.date < $1.date }
         return payments

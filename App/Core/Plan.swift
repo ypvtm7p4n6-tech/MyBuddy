@@ -100,13 +100,15 @@ struct StoredPlans {
     private var plans: [MonthPlan] = []
 
     init(_ months: [String: MonthPlan]) {
-        var list: [(month: YearMonth, plan: MonthPlan)] = []
-        for (key, plan) in months {
-            if let m = YearMonth(key: key) { list.append((m, plan)) }
+        // Eerst alleen de sleutels sorteren; de plannen (groot) worden pas daarna op volgorde opgehaald.
+        var list: [(month: YearMonth, key: String)] = []
+        list.reserveCapacity(months.count)
+        for key in months.keys {
+            if let m = YearMonth(key: key) { list.append((m, key)) }
         }
         list.sort { $0.month < $1.month }
         keys = list.map { $0.month }
-        plans = list.map { $0.plan }
+        plans = list.compactMap { months[$0.key] }
     }
 
     /// Het laatst opgeslagen plan vóór `month`.
@@ -124,15 +126,15 @@ struct StoredPlans {
 /// Rekent de cijfers van veel maanden achter elkaar uit, zonder voor elke maand een plan met nieuwe regel-id's op te
 /// bouwen. Geeft dezelfde cijfers als `FinanceData.monthFigures(_:)` (een maand zonder opgeslagen plan krijgt de
 /// terugkerende regels van het laatst opgeslagen plan, de verdeling uit de standaardinleg).
-struct MonthFiguresBuilder {
+final class MonthFiguresBuilder {
     private let data: FinanceData
-    private let stored: StoredPlans
     private let potKeys: [String]
     private let holdingKeys: [String]
+    /// Pas opgebouwd bij de eerste maand zonder opgeslagen plan.
+    private var stored: StoredPlans?
 
     fileprivate init(_ data: FinanceData) {
         self.data = data
-        self.stored = StoredPlans(data.months)
         self.potKeys = data.pots.map { $0.id.uuidString }
         self.holdingKeys = data.holdings.map { $0.id.uuidString }
     }
@@ -141,10 +143,13 @@ struct MonthFiguresBuilder {
         guard month >= data.startMonth else { return MonthFigures() }
         let storedPlan = data.months[month.key]
         var plan = storedPlan ?? MonthPlan()
-        if storedPlan == nil, let previous = stored.latest(before: month) {
-            // Alleen de terugkerende regels; de id's blijven zoals ze waren (voor de bedragen maken ze niet uit).
-            plan.extraIncome = previous.extraIncome.filter { $0.isRecurring }
-            plan.expenses = previous.expenses.filter { $0.isRecurring }
+        if storedPlan == nil {
+            if stored == nil { stored = StoredPlans(data.months) }
+            if let previous = stored?.latest(before: month) {
+                // Alleen de terugkerende regels; de id's blijven zoals ze waren (voor de bedragen maken ze niet uit).
+                plan.extraIncome = previous.extraIncome.filter { $0.isRecurring }
+                plan.expenses = previous.expenses.filter { $0.isRecurring }
+            }
         }
         return data.monthFigures(of: plan, in: month, storedPlan: storedPlan, potKeys: potKeys, holdingKeys: holdingKeys)
     }
@@ -352,10 +357,18 @@ extension FinanceData {
     fileprivate func monthFigures(of p: MonthPlan, in month: YearMonth, storedPlan: MonthPlan?,
                                   potKeys: [String], holdingKeys: [String]) -> MonthFigures {
         var f = MonthFigures()
-        f.income = CentsMath.add(CentsMath.int(salaryAmount(in: month, plan: p)),
-                                 CentsMath.sum(p.extraIncome.map { CentsMath.int($0.amount) }))
-        f.expenses = CentsMath.sum(p.expenses.map { CentsMath.int($0.amount) })
-        f.fromPots = CentsMath.sum(p.expenses.map { expenseSplit(of: $0).potsCents })
+        var extra = 0
+        for line in p.extraIncome { extra = CentsMath.add(extra, CentsMath.int(line.amount)) }
+        f.income = CentsMath.add(CentsMath.int(salaryAmount(in: month, plan: p)), extra)
+        var expenses = 0
+        var fromPots = 0
+        for line in p.expenses {
+            expenses = CentsMath.add(expenses, CentsMath.int(line.amount))
+            // Een uitgave zonder delen uit een pot komt helemaal van de bank (spaart een `expenseSplit`).
+            if !line.potShares.isEmpty { fromPots = CentsMath.add(fromPots, expenseSplit(of: line).potsCents) }
+        }
+        f.expenses = expenses
+        f.fromPots = fromPots
         var saved = 0
         for (i, pot) in pots.enumerated() {
             let a = storedPlan?.allocations[potKeys[i]] ?? (month >= pot.startMonth ? pot.monthlyContribution : 0)

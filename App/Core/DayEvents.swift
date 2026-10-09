@@ -153,25 +153,36 @@ extension FinanceData {
             count += 1
         }
 
+        // Alleen uitbetalingen binnen de gevraagde maanden worden een gebeurtenis (de rest valt toch buiten `place`).
+        let lowerBound = first.firstDay
+        let upperBound = last.endExclusive
+
         func place(_ event: DayEvent) {
             let month = YearMonth(date: event.date, calendar: cal)
             guard month >= first && month <= last else { return }
             result[month, default: []].append(event)
         }
 
+        // Alleen een pot met rente heeft uitbetalingen; de rest hoeft zijn saldoverloop hier niet op te bouwen.
+        var flowsByPot = given ?? [:]
+        if given == nil {
+            let interestPots = pots.filter { InterestRules.isActive($0) }
+            if !interestPots.isEmpty { flowsByPot = potFlows(for: interestPots, throughMonth: last) }
+        }
+
         for pot in pots {
-            // Alleen een pot met rente heeft uitbetalingen; de rest hoeft zijn saldoverloop hier niet op te bouwen.
-            let flows: PotFlows? = InterestRules.isActive(pot) ? (given?[pot.id] ?? potFlows(pot, throughMonth: last)) : nil
+            let flows: PotFlows? = InterestRules.isActive(pot) ? (flowsByPot[pot.id] ?? potFlows(pot, throughMonth: last)) : nil
             let managed = flows?.managedIDs ?? []
             if let flows {
-                for payment in flows.payments {
+                for payment in flows.payments where payment.date >= lowerBound && payment.date < upperBound {
                     place(DayEvent(id: payment.id, date: payment.date, day: DayMath.dayNumber(of: payment.date, calendar: cal),
                                    title: "Rente \(pot.name)", kind: .interest, bankAmount: 0, potAmount: payment.amount,
                                    potID: pot.id, holdingID: nil, lineID: nil, isPlanned: false))
                 }
             }
             // Rente-boekingen die niet bij het rooster horen (handmatig of van een eerdere instelling).
-            for e in potEntries where e.potID == pot.id && e.kind == .interest && !managed.contains(e.id) {
+            for e in potEntries where e.potID == pot.id && e.kind == .interest && !managed.contains(e.id)
+                && e.date >= lowerBound && e.date < upperBound {
                 place(DayEvent(id: "potentry-\(e.id.uuidString)", date: e.date, day: DayMath.dayNumber(of: e.date, calendar: cal),
                                title: "Rente \(pot.name)", kind: .interest, bankAmount: 0, potAmount: e.amount,
                                potID: pot.id, holdingID: nil, lineID: nil, isPlanned: false))
