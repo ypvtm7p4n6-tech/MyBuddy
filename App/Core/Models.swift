@@ -232,6 +232,9 @@ struct PotEntry: Identifiable, Codable, Equatable {
     var amount: Double
     var kind: PotEntryKind
     var note: String = ""
+    /// Hoort bij een overboeking: de twee kanten (pot en bank, of pot en pot) delen dit id,
+    /// zodat ze samen worden verwijderd en er nooit geld uit het niets ontstaat.
+    var pairID: UUID?
 }
 
 // MARK: - Bankrekening
@@ -267,6 +270,8 @@ struct BankEntry: Identifiable, Codable, Equatable {
     var note: String = ""
     /// Bij overboekingen naar of van een spaarpot.
     var potID: UUID?
+    /// Gedeeld met de bijbehorende `PotEntry` van dezelfde overboeking.
+    var pairID: UUID?
 }
 
 // MARK: - Beleggingen

@@ -67,8 +67,23 @@ final class AppStore {
         onDataChanged?(copy)
     }
 
+    /// Teller die oploopt zodra er iets verandert dat "nu"-bedragen beinvloedt: een nieuwe dag of het moment (12:00)
+    /// waarop geplande boekingen vallen. Views die `today` lezen tekenen daardoor vanzelf opnieuw.
+    private(set) var clockTick = 0
+    @ObservationIgnored private var clockBucket = AppStore.bucket(for: Date())
+
     /// Vandaag, op de seconde nauwkeurig. Dagbedragen (saldo van nu) rekenen hiermee.
-    var today: Date { Date() }
+    var today: Date {
+        _ = clockTick
+        return Date()
+    }
+
+    /// Dag en "voor of na 12:00": tussen twee emmers veranderen de "nu"-bedragen.
+    private static func bucket(for date: Date) -> Int {
+        let c = YearMonth.calendar.dateComponents([.year, .month, .day, .hour], from: date)
+        let day = ((c.year ?? 0) * 12 + (c.month ?? 0)) * 32 + (c.day ?? 0)
+        return day * 2 + ((c.hour ?? 0) >= 12 ? 1 : 0)
+    }
 
     /// Neemt gegevens van een ander apparaat over zonder ze meteen weer terug te sturen.
     func applyRemote(_ remote: FinanceData) {
@@ -90,6 +105,11 @@ final class AppStore {
 
     /// Controleert of er een nieuwe maand is begonnen.
     func refreshClock() {
+        let bucket = AppStore.bucket(for: Date())
+        if bucket != clockBucket {
+            clockBucket = bucket
+            clockTick += 1
+        }
         let today = YearMonth.current()
         guard today != now else {
             bookDueInterest()
@@ -175,25 +195,31 @@ final class AppStore {
     func loadSampleData() {
         var sample = FinanceData.sample()
         sample.materialize(upTo: now)
+        sample.modifiedAt = Date()
         data = sample
         persist()
         lastPriceRefresh = nil
+        onDataChanged?(sample)
     }
 
     /// Vervangt alle gegevens, bijvoorbeeld bij het importeren van een back-up.
     func replaceData(_ newData: FinanceData) {
         var restored = newData
         restored.materialize(upTo: now)
+        restored.modifiedAt = Date()
         data = restored
         persist()
         lastPriceRefresh = nil
+        onDataChanged?(restored)
     }
 
     func eraseEverything() {
         var fresh = FinanceData(startMonth: now)
         fresh.materialize(upTo: now)
+        fresh.modifiedAt = Date()
         data = fresh
         persist()
         lastPriceRefresh = nil
+        onDataChanged?(fresh)
     }
 }
