@@ -265,7 +265,8 @@ struct FirebaseDatabaseClient {
         let body = try JSONEncoder().encode(envelope)
         if body.count > Self.maxBytes { throw FirebaseDatabaseError.tooLarge(bytes: body.count) }
 
-        var request = URLRequest(url: try financeURL(uid: uid, idToken: idToken, silent: true))
+        // Let op: 'print=silent' mag niet samen met 'if-match' (Firebase geeft dan een 400), dus hier geen 'silent'.
+        var request = URLRequest(url: try financeURL(uid: uid, idToken: idToken, silent: false))
         request.httpMethod = "PUT"
         request.httpBody = body
         request.timeoutInterval = 60

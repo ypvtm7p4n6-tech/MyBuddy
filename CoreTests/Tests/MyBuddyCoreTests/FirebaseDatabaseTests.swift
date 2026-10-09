@@ -174,7 +174,7 @@ final class FirebaseDatabaseTests: XCTestCase {
         let entry = try XCTUnwrap(db.log.first)
         XCTAssertEqual(entry.method, "PUT")
         XCTAssertEqual(entry.path, "/users/uid123/finance.json")
-        XCTAssertEqual(entry.query["print"], "silent")
+        XCTAssertNil(entry.query["print"], "print=silent samen met if-match geeft bij Firebase een 400")
         XCTAssertEqual(entry.headers["if-match"], "null_etag")
         XCTAssertEqual(entry.headers["content-type"], "application/json")
 
