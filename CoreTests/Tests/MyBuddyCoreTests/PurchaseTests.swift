@@ -327,9 +327,9 @@ final class PurchaseTests: XCTestCase {
         for category in PurchaseCategory.allCases {
             let worth = PurchaseCalc.evaluate(purInput(100, willing: 8, category: category))
             XCTAssertTrue(purTexts(worth.feedback).contains(category.needLevel.toneWhenWorth), category.title)
-            XCTAssertFalse(purTexts(worth.feedback).contains(category.needLevel.toneWhenNotWorth), category.title)
+            XCTAssertFalse(purTexts(worth.feedback).contains(category.toneWhenNotWorth), category.title)
             let notWorth = PurchaseCalc.evaluate(purInput(100, willing: 2, category: category))
-            XCTAssertTrue(purTexts(notWorth.feedback).contains(category.needLevel.toneWhenNotWorth), category.title)
+            XCTAssertTrue(purTexts(notWorth.feedback).contains(category.toneWhenNotWorth), category.title)
             XCTAssertFalse(purTexts(notWorth.feedback).contains(category.needLevel.toneWhenWorth), category.title)
         }
         // De drie niveaus hebben elk een eigen toon.
