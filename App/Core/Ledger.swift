@@ -47,11 +47,12 @@ struct DayTotals: Identifiable, Equatable {
     var remainingSoFar: Double
     /// Alle gebeurtenissen van de dag, gesorteerd.
     var events: [DayEvent]
-    /// De dag ligt na vandaag.
+    /// De dag ligt na vandaag (per kalenderdag: de hele dag van vandaag telt als gebeurd).
     var isPlanned: Bool
     /// Het is vandaag.
     var isToday: Bool
-    /// Er gebeurt iets op deze dag: een gebeurtenis, een handmatige potboeking of een saldocorrectie.
+    /// Er gebeurt iets op deze dag: een gebeurtenis, een handmatige potboeking, een ingevuld banksaldo of een
+    /// saldocorrectie.
     var hasActivity: Bool
 
     // MARK: Opbouw (geplande en handmatige delen apart)
@@ -74,6 +75,10 @@ struct DayTotals: Identifiable, Equatable {
     /// Verschil tussen het ingevulde banksaldo van die dag en wat de app zelf had uitgerekend. 0 zonder ingevuld
     /// saldo op die dag (en op de eerste dag waarvoor een saldo bekend is).
     var bankCorrection: Double = 0
+    /// Het saldo dat je zelf op deze dag invulde (`BankSnapshot`; bij meer metingen op één dag de laatste). nil als
+    /// er die dag niets is ingevuld. Het is het saldo aan het EIND van de dag (voor de geplande boekingen van die dag);
+    /// handmatige boekingen die later op de dag vallen dan de meting komen er nog bij in `bankBalance`.
+    var measuredBalance: Double?
     /// Saldo van de bankrekening aan het begin van de dag (eind van de vorige dag). nil als dat nog niet bekend was.
     var openingBank: Double?
     /// Totaal van de spaarpotten aan het begin van de dag.
@@ -355,7 +360,7 @@ extension FinanceData {
                 events: dayEvents,
                 isPlanned: isPlanned,
                 isToday: isToday,
-                hasActivity: !dayEvents.isEmpty || potNet[d] != 0 || correction != 0,
+                hasActivity: !dayEvents.isEmpty || potNet[d] != 0 || correction != 0 || snapshotOfDay[d] != nil,
                 planInflow: CentsMath.value(planIn[d]),
                 manualInflow: CentsMath.value(manIn[d]),
                 planOutflow: CentsMath.value(planOut[d]),
@@ -364,6 +369,7 @@ extension FinanceData {
                 manualToPots: CentsMath.value(manPots[d]),
                 potEntriesNet: CentsMath.value(potNet[d]),
                 bankCorrection: CentsMath.value(correction),
+                measuredBalance: snapshotOfDay[d].map { CentsMath.value(CentsMath.int(snapshots[$0].balance)) },
                 openingBank: previousBank.map { CentsMath.value($0) },
                 openingPots: CentsMath.value(previousPots),
                 bankReconciles: bankOK,

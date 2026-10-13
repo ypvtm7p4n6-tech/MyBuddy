@@ -13,6 +13,8 @@ struct LedgerScenario {
     var months: [YearMonth]
     var seed: UInt64
     var start: YearMonth
+    /// Welke lastige ingrepen deze dataset heeft (om te controleren dat de reeks ze echt bevat).
+    var features: Set<String> = []
 }
 
 /// Een herhaalbare dataset uit een zaadwaarde: startmaand (ook vóór korte maanden en schrikkeljaar), salaris met een
@@ -147,7 +149,77 @@ func ledgerScenario(seed: UInt64) -> LedgerScenario {
     if r.chance(50) { d.applyDueInterest(upTo: moment(start.adding(r.int(0...span)))) }
 
     let today = moment(start.adding(r.int(-1...span + 1)))
-    return LedgerScenario(data: d, today: today, months: start.adding(-2).range(count: span + 5), seed: seed, start: start)
+
+    // Een tweede, onafhankelijke reeks ingrepen (andere zaadwaarde, zodat de dataset hierboven voor elke zaadwaarde gelijk
+    // blijft). Dit zijn de lastige gevallen: meer inkomsten op één dag (meer uitbetalingen per maand), boekingen op de
+    // randen van een dag, een saldo precies om 12:00, een pot die verdwijnt, een pot die al voor de start bestond en de
+    // hulpjes die het plan in één keer veranderen.
+    var x = EngRandom(seed: seed &+ 7_000)
+    var features = Set<String>()
+    func edgeMoment(_ month: YearMonth) -> Date {
+        let dayNumber = x.int(1...month.dayCount)
+        switch x.int(0...3) {
+        case 0: return engTime(month, dayNumber, hour: 0)
+        case 1: return engTime(month, dayNumber, hour: 23.99)
+        case 2: return engTime(month, dayNumber, hour: 12)
+        default: return engTime(month, dayNumber, hour: Double(x.int(0...2_359)) / 100)
+        }
+    }
+    func extraID(_ kind: String) -> UUID {
+        counter += 1
+        return StableID.uuid("ledger-test-extra|\(seed)|\(kind)|\(counter)")
+    }
+    if x.chance(30) {
+        features.insert("meer uitbetalingen")
+        // Meer uitbetalingen per maand: inkomsten op eigen dagen, soms twee op dezelfde dag.
+        d.editPlan(start) { plan in
+            for _ in 0..<x.int(1...4) {
+                var line = MoneyLine(name: "Uitbetaling", amount: x.amount(20, 900), isRecurring: x.chance(75),
+                                     kind: .fixed, day: x.int(1...31))
+                line.id = extraID("payout")
+                plan.extraIncome.append(line)
+            }
+        }
+    }
+    if x.chance(25), let first = d.pots.first {
+        features.insert("pot van voor de start")
+        var older = first
+        older.startMonth = start.adding(-x.int(1...2))
+        d.pots[0] = older
+    }
+    if x.chance(40) {
+        features.insert("boekingen op de randen van een dag")
+        for _ in 0..<x.int(1...3) {
+            let when = edgeMoment(start.adding(x.int(-1...span)))
+            d.addBankEntry(amount: x.chance(50) ? x.amount(5, 300) : -x.amount(5, 300), note: "Rand", date: when)
+        }
+    }
+    if x.chance(25) {
+        features.insert("saldo op de rand van een dag")
+        d.addBankSnapshot(balance: x.amount(-300, 3_000), note: "Rand", date: edgeMoment(start.adding(x.int(-2...span + 1))))
+    }
+    if x.chance(20), let pot = d.pots.last {
+        features.insert("potsaldo gezet")
+        d.setPotBalance(pot.id, to: x.amount(0, 1_500), current: start.adding(x.int(0...span)), note: "Gezet",
+                        date: edgeMoment(start.adding(x.int(0...span))))
+    }
+    if x.chance(15) {
+        features.insert("plan in één keer veranderd")
+        let month = start.adding(x.int(0...span))
+        switch x.int(0...3) {
+        case 0: d.applyDefaultAllocations(in: month)
+        case 1: d.clearAllocations(in: month)
+        case 2: d.spreadRemainingOverPots(in: month)
+        default:
+            if let line = d.plan(for: month).expenses.first { d.deleteLine(id: line.id, kind: .expense, in: month) }
+        }
+    }
+    if x.chance(12), let pot = d.pots.last {
+        features.insert("pot verwijderd")
+        d.deletePot(pot.id, returningBalanceToBank: x.chance(60), current: YearMonth(date: today), today: today)
+    }
+    return LedgerScenario(data: d, today: today, months: start.adding(-2).range(count: span + 5), seed: seed, start: start,
+                          features: features)
 }
 
 // MARK: - Onafhankelijke berekening van het banksaldo
@@ -197,17 +269,22 @@ func referenceBankBalanceCents(_ d: FinanceData, endOfDay date: Date, events eve
 // MARK: - Grote dataset voor de snelheidsmeting
 
 /// Vijf jaar met 10 potten (de helft met maandelijkse rente), 8 beleggingen, 30 uitgaven (één deels uit een pot),
-/// een toeslag, een beginsaldo en 20 handmatige boekingen. Alle maanden zijn vastgelegd (`materialize`).
+/// twee uitbetalingen per week (negen inkomstenregels per maand, elk op een eigen dag), een beginsaldo en 20
+/// handmatige boekingen. Alle maanden zijn vastgelegd (`materialize`).
 func ledgerPerformanceData() -> (data: FinanceData, current: YearMonth) {
     let start = YearMonth(year: 2021, month: 11)
     var d = FinanceData(startMonth: start)
-    d.salary = SalarySettings(mode: .fixed, fixedMonthly: 3_200, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+    d.salary = SalarySettings(mode: .fixed, fixedMonthly: 0, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
     var plan = MonthPlan()
     for i in 0..<30 {
         plan.expenses.append(MoneyLine(name: "Uitgave \(i)", amount: Double(10 + i * 7), isRecurring: true,
                                        kind: i % 2 == 0 ? .fixed : .variable, day: 1 + (i * 3) % 28))
     }
-    plan.extraIncome = [MoneyLine(name: "Toeslag", amount: 120, isRecurring: true, day: 20)]
+    // Twee uitbetalingen per week: negen per maand, verspreid over de dagen (het salaris zelf komt later als schema).
+    let payoutDays = [1, 4, 8, 11, 15, 18, 22, 25, 29]
+    plan.extraIncome = payoutDays.enumerated().map { index, payoutDay in
+        MoneyLine(name: "Uitbetaling \(index + 1)", amount: 355, isRecurring: true, day: payoutDay)
+    }
     d.months[start.key] = plan
     var firstPot: UUID?
     for i in 0..<10 {

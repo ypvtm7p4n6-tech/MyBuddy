@@ -114,41 +114,58 @@ extension FinanceData {
             entryItems[i].append((e.date, CentsMath.int(e.amount)))
         }
 
-        // Zelfde regels als `allocation(_:in:)` en `transferDay(for:in:)`, maar zonder elke maand alles opnieuw op te zoeken.
+        // Wat het plan met de potten doet komt uit DEZELFDE functies als de maandcijfers en de gebeurtenissen van de dagen
+        // (`monthFigures`, `planEvents`): de inleg uit `allocationCents` (vast bedrag of percentage van het inkomen van die
+        // maand), de overschrijfdag uit `transferDay(for:in:)` en de uitgaven met delen uit een pot uit `completedPlan`
+        // (opgeslagen regels plus de terugkerende reeksen). Een tweede, eigen afleiding zou bij elke wijziging van het
+        // plan kunnen afwijken: dan verschilt het saldo van een spaarpot van het dagboek. `LedgerConsistencyTests`
+        // controleert dat die wegen gelijk blijven.
+        let stored = storedPlans
         let potKeys = targets.map { $0.id.uuidString }
         let anyShares = months.values.contains { plan in plan.expenses.contains { !$0.potShares.isEmpty } }
-        var stored: StoredPlans?   // pas nodig voor een maand zonder opgeslagen plan
+        // Een regel met delen uit een pot staat altijd in een opgeslagen maand. Heeft geen enkele reeks zo'n regel, dan
+        // brengt het aanvullen met reeksen (`completedPlan`) hier niets bij en is het opgeslagen plan genoeg.
+        let seriesPayFromPots = anyShares && stored.series.expense.values.contains { series in
+            series.occurrences.contains { !$0.line.potShares.isEmpty }
+        }
         let cal = YearMonth.calendar
         var m = startMonth
         var count = 0
         while m <= last && count < 2_400 {
-            let storedPlan = months[m.key]
-            let dayCount = m.dayCount
+            let month = m
+            let storedPlan = stored.plan(at: month)
+            let dayCount = month.dayCount
             var dates = [Date?](repeating: nil, count: 32)   // de datum van elke dag van deze maand, één keer gemaakt
             func date(day: Int) -> Date {
                 if let known = dates[day] { return known }
-                let made = m.date(day: day, calendar: cal)
+                let made = month.date(day: day, calendar: cal)
                 dates[day] = made
                 return made
             }
+            // Het plan van de maand met zijn reeksen: één keer per maand, en alleen als het nodig is (voor het inkomen
+            // bij een percentage, of voor uitgaven met delen uit een pot). Zonder nieuwe regel-id's: die doen er niet toe.
+            var completed: MonthPlan?
+            func monthPlan() -> MonthPlan {
+                if let known = completed { return known }
+                let made = completedPlan(storedPlan ?? MonthPlan(), in: month, using: stored, deriveIDs: false)
+                completed = made
+                return made
+            }
+            var bases: IncomeBases?
+            func incomeOfMonth() -> IncomeBases {
+                if let known = bases { return known }
+                let made = incomeBases(of: monthPlan(), in: month)
+                bases = made
+                return made
+            }
             for (i, pot) in targets.enumerated() {
-                let planned = storedPlan?.allocations[potKeys[i]] ?? (m >= pot.startMonth ? pot.monthlyContribution : 0)
-                let cents = CentsMath.int(planned)
+                let cents = allocationCents(pot, key: potKeys[i], in: month, storedPlan: storedPlan, basesFor: incomeOfMonth)
                 if cents != 0 {
-                    let day = min(YearMonth.clampedDay(storedPlan?.transferDay ?? pot.transferDay ?? salary.payDay), dayCount)
-                    planItems[i].append((date(day: day), cents))
+                    planItems[i].append((date(day: min(transferDay(for: pot.id, in: month), dayCount)), cents))
                 }
             }
             if anyShares {
-                // Een nog niet vastgelegde maand krijgt de terugkerende uitgaven van het laatst opgeslagen plan.
-                var lines: [MoneyLine]
-                if let storedPlan {
-                    lines = storedPlan.expenses
-                } else {
-                    if stored == nil { stored = StoredPlans(months) }
-                    lines = stored?.latest(before: m)?.expenses.filter { $0.isRecurring } ?? []
-                }
-                for line in lines where !line.potShares.isEmpty {
+                for line in (seriesPayFromPots ? monthPlan().expenses : storedPlan?.expenses ?? []) where !line.potShares.isEmpty {
                     for payment in expenseSplit(of: line).pots {
                         guard let i = indexOfPot[payment.potID] else { continue }
                         planItems[i].append((date(day: min(max(expenseDay(of: line), 1), dayCount)), -payment.cents))

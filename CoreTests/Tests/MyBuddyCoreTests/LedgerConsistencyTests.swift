@@ -19,6 +19,8 @@ final class LedgerConsistencyTests: XCTestCase {
         var shortMonths = 0
         var monthsWithSnapshotInside = 0
         var todayChecks = 0
+        var daysWithSeveralInflows = 0
+        var scenariosWithFeature: [String: Int] = [:]
     }
 
     private func cents(_ value: Double) -> Int { CentsMath.int(value) }
@@ -28,7 +30,9 @@ final class LedgerConsistencyTests: XCTestCase {
     func testRandomDatasetsReconcileOnEveryDay() {
         var coverage = Coverage()
         for seed in 1...200 {
-            verify(ledgerScenario(seed: UInt64(seed)), exhaustive: seed % 11 == 0, coverage: &coverage)
+            let scenario = ledgerScenario(seed: UInt64(seed))
+            for feature in scenario.features { coverage.scenariosWithFeature[feature, default: 0] += 1 }
+            verify(scenario, exhaustive: seed % 11 == 0, coverage: &coverage)
         }
         // De datasets raken alles waar het om gaat.
         XCTAssertGreaterThan(coverage.days, 15_000)
@@ -43,6 +47,11 @@ final class LedgerConsistencyTests: XCTestCase {
         XCTAssertGreaterThan(coverage.shortMonths, 300, "maanden van 28, 29 of 30 dagen")
         XCTAssertGreaterThan(coverage.monthsWithSnapshotInside, 100, "maanden met een ingevuld saldo erin")
         XCTAssertGreaterThan(coverage.todayChecks, 150, "controles van de saldi van nu")
+        XCTAssertGreaterThan(coverage.daysWithSeveralInflows, 40, "dagen met meer dan één inkomst")
+        for feature in ["meer uitbetalingen", "pot van voor de start", "boekingen op de randen van een dag",
+                        "saldo op de rand van een dag", "potsaldo gezet", "plan in één keer veranderd", "pot verwijderd"] {
+            XCTAssertGreaterThan(coverage.scenariosWithFeature[feature] ?? 0, 8, "datasets met: \(feature)")
+        }
     }
 
     /// Verzamelt mislukte vergelijkingen zonder per vergelijking de XCTest-machinerie aan te roepen (dat is in een
@@ -232,6 +241,7 @@ final class LedgerConsistencyTests: XCTestCase {
                 if day.toPots < 0 { coverage.negativeToPots += 1 }
                 if day.potEntriesNet != 0 { coverage.potEntries += 1 }
                 if day.toHoldings != 0 { coverage.holdings += 1 }
+                if day.events.filter({ $0.kind == .salary || $0.kind == .income }).count > 1 { coverage.daysWithSeveralInflows += 1 }
                 if day.bankCorrection != 0 || snapshotDays.contains(dayStart) {
                     snapshotInside = true
                 }

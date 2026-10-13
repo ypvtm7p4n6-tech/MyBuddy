@@ -79,11 +79,12 @@ final class AppStore {
         return Date()
     }
 
-    /// Dag en "voor of na 12:00": tussen twee emmers veranderen de "nu"-bedragen.
+    /// De kalenderdag van `date`: tussen twee emmers veranderen de "nu"-bedragen. De rekenmotor werkt per KALENDERDAG
+    /// (een geplande boeking op dag D telt mee zodra D <= vandaag, de hele dag), dus er is geen splitsing meer op 12:00:
+    /// alleen een nieuwe dag verandert de bedragen van nu.
     private static func bucket(for date: Date) -> Int {
-        let c = YearMonth.calendar.dateComponents([.year, .month, .day, .hour], from: date)
-        let day = ((c.year ?? 0) * 12 + (c.month ?? 0)) * 32 + (c.day ?? 0)
-        return day * 2 + ((c.hour ?? 0) >= 12 ? 1 : 0)
+        let c = YearMonth.calendar.dateComponents([.year, .month, .day], from: date)
+        return ((c.year ?? 0) * 12 + (c.month ?? 0)) * 32 + (c.day ?? 0)
     }
 
     /// Neemt gegevens van een ander apparaat over zonder ze meteen weer terug te sturen.

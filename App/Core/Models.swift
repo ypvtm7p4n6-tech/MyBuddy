@@ -80,8 +80,15 @@ struct MoneyLine: Identifiable, Codable, Equatable {
     var day: Int?
     /// Uitgaven: welk deel uit welke spaarpot komt. Wat overblijft gaat van de bankrekening.
     var potShares: [PotShare] = []
+    /// Reeks-id van een terugkerende regel: alle maanden van dezelfde terugkerende regel delen dit id (zie
+    /// `RecurringSeries.swift`). nil bij eenmalige regels. Oude bestanden hebben dit niet; de rekenmotor leidt het dan af
+    /// uit de keten van afgeleide regel-id's.
+    var seriesID: UUID?
+    /// Deze regel wijkt alleen in deze maand af van de reeks ("alleen deze maand" bewerkt). Zo'n regel bepaalt de
+    /// volgende maanden niet.
+    var isException: Bool = false
 
-    enum CodingKeys: String, CodingKey { case id, name, amount, isRecurring, kind, day, potShares }
+    enum CodingKeys: String, CodingKey { case id, name, amount, isRecurring, kind, day, potShares, seriesID, isException }
 }
 
 extension MoneyLine {
@@ -105,7 +112,24 @@ extension MoneyLine {
                   isRecurring: try c.decodeIfPresent(Bool.self, forKey: .isRecurring) ?? false,
                   kind: try c.decodeIfPresent(ExpenseKind.self, forKey: .kind) ?? .fixed,
                   day: try c.decodeIfPresent(Int.self, forKey: .day),
-                  potShares: try c.decodeIfPresent([PotShare].self, forKey: .potShares) ?? [])
+                  potShares: try c.decodeIfPresent([PotShare].self, forKey: .potShares) ?? [],
+                  seriesID: try c.decodeIfPresent(UUID.self, forKey: .seriesID),
+                  isException: try c.decodeIfPresent(Bool.self, forKey: .isException) ?? false)
+    }
+
+    /// De nieuwe velden worden alleen geschreven als ze iets zeggen: een bestand zonder reeksen blijft byte voor byte
+    /// zoals het was (compact, en gelijk voor cloud, back-up en vergelijken).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(amount, forKey: .amount)
+        try c.encode(isRecurring, forKey: .isRecurring)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(day, forKey: .day)
+        try c.encode(potShares, forKey: .potShares)
+        try c.encodeIfPresent(seriesID, forKey: .seriesID)
+        if isException { try c.encode(isException, forKey: .isException) }
     }
 }
 
@@ -128,6 +152,50 @@ struct MonthPlan: Codable, Equatable {
     /// Dag van de maand waarop de verdeling over spaarpotten en beleggingen wordt overgeboekt.
     /// nil = de dag van de pot of belegging zelf, anders de salarisdag.
     var transferDay: Int?
+    /// Verdeling als percentage van het inkomen van deze maand: id van spaarpot of belegging → regel. Gaat voor op
+    /// `allocations`; het bedrag wordt bij het lezen uitgerekend (zie `Allocation.swift`).
+    var percentAllocations: [String: PercentRule] = [:]
+    /// Reeksen (terugkerende regels) die in deze maand zijn overgeslagen: de regel komt in deze maand niet voor,
+    /// in de maanden erna wel. Zie `RecurringSeries.swift`.
+    var skippedSeries: [UUID] = []
+    /// Reeksen die vanaf deze maand zijn gestopt: de regel komt in deze en alle volgende maanden niet meer terug.
+    var endedSeries: [UUID] = []
+
+    enum CodingKeys: String, CodingKey {
+        case salaryOverride, hoursOverride, extraIncome, expenses, allocations, transferDay
+        case percentAllocations, skippedSeries, endedSeries
+    }
+}
+
+// decodeIfPresent: oude opslagbestanden zonder percentages en reeksen blijven laden. De nieuwe velden worden alleen
+// geschreven als ze iets zeggen, zodat een bestand zonder die functies byte voor byte gelijk blijft.
+extension MonthPlan {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        salaryOverride = try c.decodeIfPresent(Double.self, forKey: .salaryOverride)
+        hoursOverride = try c.decodeIfPresent(Double.self, forKey: .hoursOverride)
+        extraIncome = try c.decodeIfPresent([MoneyLine].self, forKey: .extraIncome) ?? []
+        expenses = try c.decodeIfPresent([MoneyLine].self, forKey: .expenses) ?? []
+        allocations = try c.decodeIfPresent([String: Double].self, forKey: .allocations) ?? [:]
+        transferDay = try c.decodeIfPresent(Int.self, forKey: .transferDay)
+        percentAllocations = try c.decodeIfPresent([String: PercentRule].self, forKey: .percentAllocations) ?? [:]
+        skippedSeries = try c.decodeIfPresent([UUID].self, forKey: .skippedSeries) ?? []
+        endedSeries = try c.decodeIfPresent([UUID].self, forKey: .endedSeries) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(salaryOverride, forKey: .salaryOverride)
+        try c.encodeIfPresent(hoursOverride, forKey: .hoursOverride)
+        try c.encode(extraIncome, forKey: .extraIncome)
+        try c.encode(expenses, forKey: .expenses)
+        try c.encode(allocations, forKey: .allocations)
+        try c.encodeIfPresent(transferDay, forKey: .transferDay)
+        if !percentAllocations.isEmpty { try c.encode(percentAllocations, forKey: .percentAllocations) }
+        if !skippedSeries.isEmpty { try c.encode(skippedSeries, forKey: .skippedSeries) }
+        if !endedSeries.isEmpty { try c.encode(endedSeries, forKey: .endedSeries) }
+    }
 }
 
 // MARK: - Spaarpotten
@@ -196,10 +264,17 @@ struct Pot: Identifiable, Codable, Equatable {
     var interestPayoutMonth: Int = 1
     /// Dag van de maand waarop de maandelijkse inleg wordt overgeboekt. nil = salarisdag.
     var transferDay: Int?
+    /// Inlegwijze: een vast bedrag (`monthlyContribution`) of een percentage van het inkomen van die maand.
+    var contributionMode: ContributionMode = .fixed
+    /// Het percentage van het inkomen (0...100, maximaal twee decimalen) bij `contributionMode == .percentage`.
+    var contributionPercent: Double = 0
+    /// Waarover het percentage wordt berekend: alleen salaris of alle inkomsten van die maand.
+    var contributionBasis: IncomeBasis = .salary
 
     enum CodingKeys: String, CodingKey {
         case id, name, symbol, colorIndex, goalAmount, goalDate, monthlyContribution, startMonth, createdAt
         case interestRate, interestPayout, interestPayoutDay, interestPayoutMonth, transferDay
+        case contributionMode, contributionPercent, contributionBasis
     }
 }
 
@@ -220,7 +295,33 @@ extension Pot {
                   interestPayout: try c.decodeIfPresent(InterestPayout.self, forKey: .interestPayout) ?? .yearly,
                   interestPayoutDay: try c.decodeIfPresent(Int.self, forKey: .interestPayoutDay) ?? 1,
                   interestPayoutMonth: try c.decodeIfPresent(Int.self, forKey: .interestPayoutMonth) ?? 1,
-                  transferDay: try c.decodeIfPresent(Int.self, forKey: .transferDay))
+                  transferDay: try c.decodeIfPresent(Int.self, forKey: .transferDay),
+                  contributionMode: try c.decodeIfPresent(ContributionMode.self, forKey: .contributionMode) ?? .fixed,
+                  contributionPercent: try c.decodeIfPresent(Double.self, forKey: .contributionPercent) ?? 0,
+                  contributionBasis: try c.decodeIfPresent(IncomeBasis.self, forKey: .contributionBasis) ?? .salary)
+    }
+
+    /// De velden van de inlegwijze worden alleen geschreven als ze afwijken van een vast bedrag: een bestand zonder
+    /// percentages blijft gelijk aan vroeger.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(symbol, forKey: .symbol)
+        try c.encode(colorIndex, forKey: .colorIndex)
+        try c.encodeIfPresent(goalAmount, forKey: .goalAmount)
+        try c.encodeIfPresent(goalDate, forKey: .goalDate)
+        try c.encode(monthlyContribution, forKey: .monthlyContribution)
+        try c.encode(startMonth, forKey: .startMonth)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(interestRate, forKey: .interestRate)
+        try c.encode(interestPayout, forKey: .interestPayout)
+        try c.encode(interestPayoutDay, forKey: .interestPayoutDay)
+        try c.encode(interestPayoutMonth, forKey: .interestPayoutMonth)
+        try c.encodeIfPresent(transferDay, forKey: .transferDay)
+        if contributionMode != .fixed { try c.encode(contributionMode, forKey: .contributionMode) }
+        if contributionPercent != 0 { try c.encode(contributionPercent, forKey: .contributionPercent) }
+        if contributionBasis != .salary { try c.encode(contributionBasis, forKey: .contributionBasis) }
     }
 }
 
@@ -366,6 +467,18 @@ struct Holding: Identifiable, Codable, Equatable {
     var lastPrice: Double?
     var lastPriceDate: Date?
     var priceCurrency: String?
+    /// Inlegwijze: een vast bedrag (`monthlyContribution`) of een percentage van het inkomen van die maand.
+    var contributionMode: ContributionMode = .fixed
+    /// Het percentage van het inkomen (0...100, maximaal twee decimalen) bij `contributionMode == .percentage`.
+    var contributionPercent: Double = 0
+    /// Waarover het percentage wordt berekend: alleen salaris of alle inkomsten van die maand.
+    var contributionBasis: IncomeBasis = .salary
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, kind, ticker, units, investedTotal, expectedReturn, annualCost, monthlyContribution, startMonth
+        case transferDay, snapshots, lastPrice, lastPriceDate, priceCurrency
+        case contributionMode, contributionPercent, contributionBasis
+    }
 
     /// Heeft een ticker: de koers kan van internet gehaald worden.
     var hasTicker: Bool {
@@ -381,6 +494,55 @@ struct Holding: Identifiable, Codable, Equatable {
 
     /// Rendement na kosten per jaar.
     var netReturn: Double { expectedReturn - annualCost }
+}
+
+// De velden die er al waren blijven verplicht (zoals de automatische codering ze las); alleen de velden van de
+// inlegwijze zijn optioneel, zodat oude opslagbestanden blijven laden. Die velden worden ook alleen geschreven als ze
+// afwijken van een vast bedrag, zodat een bestand zonder percentages gelijk blijft aan vroeger.
+extension Holding {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id),
+                  name: try c.decode(String.self, forKey: .name),
+                  kind: try c.decode(HoldingKind.self, forKey: .kind),
+                  ticker: try c.decodeIfPresent(String.self, forKey: .ticker),
+                  units: try c.decodeIfPresent(Double.self, forKey: .units),
+                  investedTotal: try c.decode(Double.self, forKey: .investedTotal),
+                  expectedReturn: try c.decode(Double.self, forKey: .expectedReturn),
+                  annualCost: try c.decode(Double.self, forKey: .annualCost),
+                  monthlyContribution: try c.decode(Double.self, forKey: .monthlyContribution),
+                  startMonth: try c.decode(YearMonth.self, forKey: .startMonth),
+                  transferDay: try c.decodeIfPresent(Int.self, forKey: .transferDay),
+                  snapshots: try c.decode([ValueSnapshot].self, forKey: .snapshots),
+                  lastPrice: try c.decodeIfPresent(Double.self, forKey: .lastPrice),
+                  lastPriceDate: try c.decodeIfPresent(Date.self, forKey: .lastPriceDate),
+                  priceCurrency: try c.decodeIfPresent(String.self, forKey: .priceCurrency),
+                  contributionMode: try c.decodeIfPresent(ContributionMode.self, forKey: .contributionMode) ?? .fixed,
+                  contributionPercent: try c.decodeIfPresent(Double.self, forKey: .contributionPercent) ?? 0,
+                  contributionBasis: try c.decodeIfPresent(IncomeBasis.self, forKey: .contributionBasis) ?? .salary)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(ticker, forKey: .ticker)
+        try c.encodeIfPresent(units, forKey: .units)
+        try c.encode(investedTotal, forKey: .investedTotal)
+        try c.encode(expectedReturn, forKey: .expectedReturn)
+        try c.encode(annualCost, forKey: .annualCost)
+        try c.encode(monthlyContribution, forKey: .monthlyContribution)
+        try c.encode(startMonth, forKey: .startMonth)
+        try c.encodeIfPresent(transferDay, forKey: .transferDay)
+        try c.encode(snapshots, forKey: .snapshots)
+        try c.encodeIfPresent(lastPrice, forKey: .lastPrice)
+        try c.encodeIfPresent(lastPriceDate, forKey: .lastPriceDate)
+        try c.encodeIfPresent(priceCurrency, forKey: .priceCurrency)
+        if contributionMode != .fixed { try c.encode(contributionMode, forKey: .contributionMode) }
+        if contributionPercent != 0 { try c.encode(contributionPercent, forKey: .contributionPercent) }
+        if contributionBasis != .salary { try c.encode(contributionBasis, forKey: .contributionBasis) }
+    }
 }
 
 // MARK: - Doelen
@@ -511,7 +673,14 @@ struct FinanceData: Codable, Equatable {
     var version: Int = 1
     var startMonth: YearMonth
     var salary = SalarySettings()
-    var months: [String: MonthPlan] = [:]
+    var months: [String: MonthPlan] = [:] {
+        // De tussenopslag hoort bij precies deze maandplannen: bij elke wijziging begint een nieuwe, lege opslag. Een kopie
+        // van de gegevens deelt de opslag zolang de maandplannen gelijk zijn.
+        didSet { derivedPlans = DerivedPlans() }
+    }
+    /// Tussenopslag van de opgeslagen plannen en reeksen (`StoredPlans`), alleen voor de snelheid. Wordt niet
+    /// opgeslagen, telt niet mee bij `==` en wordt leeg zodra `months` verandert.
+    var derivedPlans = DerivedPlans()
     var pots: [Pot] = []
     var potEntries: [PotEntry] = []
     var holdings: [Holding] = []

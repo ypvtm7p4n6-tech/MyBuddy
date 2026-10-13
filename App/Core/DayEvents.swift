@@ -26,6 +26,15 @@ struct DayEvent: Identifiable, Equatable {
     var isPlanned: Bool
 }
 
+/// Eén uitbetaling van het salaris.
+struct SalaryPayout: Equatable {
+    /// Vast id van deze uitbetaling (hetzelfde op elk apparaat en bij elke berekening).
+    var id: String
+    /// Dag van de maand (1...31; de lengte van de maand wordt bij het plaatsen toegepast).
+    var day: Int
+    var cents: Int
+}
+
 /// Het saldo van de bankrekening aan het eind van een dag, met wat er die dag gebeurde.
 struct BankDayPoint: Identifiable, Equatable {
     var date: Date
@@ -71,9 +80,10 @@ extension FinanceData {
                                 potID: potID, holdingID: holdingID, lineID: lineID, isPlanned: false))
         }
 
-        let salaryCents = CentsMath.int(salaryAmount(in: month, plan: plan))
-        if salaryCents != 0 {
-            add(id: "salary-\(month.key)", day: salaryDay(), title: "Salaris", kind: .salary, bank: salaryCents)
+        // Elke uitbetaling is een eigen gebeurtenis op haar eigen dag. Het dagboek (`monthLedger`) telt ze allemaal mee;
+        // het maakt dus niet uit hoeveel er in een maand zijn.
+        for payout in salaryPayouts(in: month, plan: plan) where payout.cents != 0 {
+            add(id: payout.id, day: payout.day, title: "Salaris", kind: .salary, bank: payout.cents)
         }
 
         for line in plan.extraIncome {
@@ -112,6 +122,14 @@ extension FinanceData {
                 title: "Naar \(holding.name)", kind: .toHolding, bank: -cents, holdingID: holding.id)
         }
         return out
+    }
+
+    /// De uitbetalingen van het salaris in `month`: dag van de maand, bedrag in hele centen en een vast id per
+    /// uitbetaling. Nu is dat één uitbetaling per maand op de salarisdag; een salarisschema met meer (of geen)
+    /// uitbetalingen per maand vult alleen deze lijst anders. De som van de bedragen moet gelijk blijven aan het
+    /// salaris in `monthFigures` (dat controleert `MonthLedger.overviewReconciles`).
+    func salaryPayouts(in month: YearMonth, plan: MonthPlan) -> [SalaryPayout] {
+        [SalaryPayout(id: "salary-\(month.key)", day: salaryDay(), cents: CentsMath.int(salaryAmount(in: month, plan: plan)))]
     }
 
     /// Handmatige boekingen op de bankrekening in een maand. Een overboeking naar of van een spaarpot heeft

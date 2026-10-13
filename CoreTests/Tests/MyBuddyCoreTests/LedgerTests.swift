@@ -423,15 +423,110 @@ final class LedgerTests: XCTestCase {
         XCTAssertGreaterThan(ledger.paidFromPots, 0, "de tandarts komt deels uit de buffer")
     }
 
+    // MARK: Meer uitbetalingen per maand
+
+    /// Negen uitbetalingen van 350 (twee per week) en een bonus van 50 op de dag van de achtste, huur 900 op de 1e en een
+    /// saldo van 1000 aan het eind van oktober (de maand vóór de start). Elke uitbetaling komt op haar eigen dag.
+    private func payoutData() -> FinanceData {
+        var d = FinanceData(startMonth: engNov2026)
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 0, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+        for (index, payoutDay) in [1, 4, 8, 11, 15, 18, 22, 25, 29].enumerated() {
+            d.upsertLine(MoneyLine(name: "Uitbetaling \(index + 1)", amount: 350, isRecurring: true, day: payoutDay),
+                         kind: .income, in: engNov2026)
+        }
+        d.upsertLine(MoneyLine(name: "Bonus", amount: 50, isRecurring: true, day: 25), kind: .income, in: engNov2026)
+        d.upsertLine(MoneyLine(name: "Huur", amount: 900, isRecurring: true, day: 1), kind: .expense, in: engNov2026)
+        d.addBankSnapshot(balance: 1_000, note: "Eind oktober", date: engTime(oct2026, 31, hour: 20))
+        return d
+    }
+
+    func testSeveralPayoutsInOneMonthEachLandOnTheirOwnDay() {
+        let d = payoutData()
+        let ledger = d.monthLedger(engNov2026, asOf: engTime(engNov2026, 30, hour: 20))
+        // 1000 + 350 - 900 = 450 (1e), daarna elke uitbetaling erbij; te verdelen: -550, -200, 150, 500, 850, 1200, 1550, 1950, 2300.
+        assertDay(ledger, 1, in: 350, out: 900, bank: 450, pots: 0, remaining: -550)
+        for number in 2...3 { assertDay(ledger, number, bank: 450, pots: 0, remaining: -550) }
+        assertDay(ledger, 4, in: 350, bank: 800, pots: 0, remaining: -200)
+        for number in 5...7 { assertDay(ledger, number, bank: 800, pots: 0, remaining: -200) }
+        assertDay(ledger, 8, in: 350, bank: 1_150, pots: 0, remaining: 150)
+        for number in 9...10 { assertDay(ledger, number, bank: 1_150, pots: 0, remaining: 150) }
+        assertDay(ledger, 11, in: 350, bank: 1_500, pots: 0, remaining: 500)
+        for number in 12...14 { assertDay(ledger, number, bank: 1_500, pots: 0, remaining: 500) }
+        assertDay(ledger, 15, in: 350, bank: 1_850, pots: 0, remaining: 850)
+        for number in 16...17 { assertDay(ledger, number, bank: 1_850, pots: 0, remaining: 850) }
+        assertDay(ledger, 18, in: 350, bank: 2_200, pots: 0, remaining: 1_200)
+        for number in 19...21 { assertDay(ledger, number, bank: 2_200, pots: 0, remaining: 1_200) }
+        assertDay(ledger, 22, in: 350, bank: 2_550, pots: 0, remaining: 1_550)
+        for number in 23...24 { assertDay(ledger, number, bank: 2_550, pots: 0, remaining: 1_550) }
+        // Twee inkomsten op dezelfde dag worden bij elkaar opgeteld, en blijven twee gebeurtenissen.
+        assertDay(ledger, 25, in: 400, bank: 2_950, pots: 0, remaining: 1_950)
+        XCTAssertEqual(ledger.days[24].events.count, 2)
+        for number in 26...28 { assertDay(ledger, number, bank: 2_950, pots: 0, remaining: 1_950) }
+        assertDay(ledger, 29, in: 350, bank: 3_300, pots: 0, remaining: 2_300)
+        assertDay(ledger, 30, bank: 3_300, pots: 0, remaining: 2_300)
+        XCTAssertEqual(ledger.income, 3_200)
+        XCTAssertEqual(ledger.inflow, 3_200)
+        XCTAssertEqual(ledger.expensesTotal, 900)
+        XCTAssertEqual(ledger.remaining, 2_300)
+        XCTAssertEqual(ledger.openingBank, 1_000)
+        XCTAssertEqual(ledger.closingBank, 3_300)
+        XCTAssertTrue(ledger.allReconciles)
+        XCTAssertEqual(d.income(in: engNov2026), 3_200)
+        XCTAssertEqual(d.remaining(in: engNov2026), 2_300)
+        XCTAssertEqual(d.bankBalance(at: engNov2026), 3_300)
+        XCTAssertEqual(d.bankBalance(on: day(engNov2026, 18)), 2_200)
+        // De maand erna: dezelfde uitbetalingen komen terug (december heeft alle dagen), alles sluit.
+        let december = d.monthLedger(engDec2026, asOf: engTime(engNov2026, 30, hour: 20))
+        XCTAssertEqual(december.income, 3_200)
+        XCTAssertEqual(december.days.filter { $0.inflow > 0 }.map(\.day), [1, 4, 8, 11, 15, 18, 22, 25, 29])
+        XCTAssertEqual(december.openingBank, 3_300)
+        XCTAssertEqual(december.closingBank, 3_300 + 3_200 - 900)
+        XCTAssertTrue(december.allReconciles)
+        // Een korte maand: de 29e bestaat in februari 2027 niet en valt op de laatste dag.
+        let february = d.monthLedger(engFeb2027, asOf: engTime(engNov2026, 30, hour: 20))
+        XCTAssertEqual(february.days.count, 28)
+        XCTAssertEqual(february.days[27].inflow, 350)
+        XCTAssertEqual(february.income, 3_200)
+        XCTAssertTrue(february.allReconciles)
+    }
+
+    // MARK: Een ingevuld saldo
+
+    func testMeasuredBalanceIsShownOnItsDayAndCountsAsActivity() {
+        var d = FinanceData(startMonth: engNov2026)
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 0, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+        d.addBankSnapshot(balance: 500, note: "Eerste", date: engTime(engNov2026, 10, hour: 10))
+        d.addBankSnapshot(balance: 520, note: "Later", date: engTime(engNov2026, 10, hour: 19))
+        d.addBankSnapshot(balance: 400, note: "Volgende", date: engTime(engNov2026, 20, hour: 9))
+        let ledger = d.monthLedger(engNov2026, asOf: day(engNov2026, 15))
+        // Het laatste saldo van de dag geldt. Het eerste saldo is de start, dus daar is geen correctie.
+        XCTAssertEqual(ledger.days[9].measuredBalance, 520)
+        XCTAssertEqual(ledger.days[9].bankBalance, 520)
+        XCTAssertTrue(ledger.days[9].hasActivity, "een ingevuld saldo is activiteit")
+        XCTAssertEqual(ledger.days[19].measuredBalance, 400)
+        XCTAssertEqual(ledger.days[19].bankBalance, 400)
+        XCTAssertEqual(cents(ledger.days[19].bankCorrection), -12_000, "de app verwachtte 520")
+        XCTAssertTrue(ledger.days[19].hasActivity)
+        XCTAssertEqual(ledger.days.filter { $0.measuredBalance != nil }.map(\.day), [10, 20])
+        XCTAssertEqual(ledger.days.filter { $0.hasActivity }.map(\.day), [10, 20])
+        XCTAssertTrue(ledger.days[..<9].allSatisfy { $0.bankBalance == nil })
+        XCTAssertNil(ledger.openingBank)
+        XCTAssertEqual(ledger.closingBank, 400)
+        XCTAssertTrue(ledger.allReconciles)
+    }
+
     // MARK: Snelheid
 
-    /// Vijf jaar, 10 potten (de helft met maandelijkse rente), 8 beleggingen, 30 uitgaven: één maand duurt in een
-    /// debug-build ongeveer 10 ms. De grens is ruim (een vlotte machine zit er ver onder): hij moet alleen een
-    /// kwadratische herberekening per dag (zoals `bankBalance(on:)` per dag) of per maand geschiedenis betrappen.
+    /// Vijf jaar, 10 potten (de helft met maandelijkse rente), 8 beleggingen, 30 uitgaven en negen uitbetalingen per
+    /// maand (twee per week): één maand duurt in een debug-build ongeveer 5 tot 10 ms. De grens is ruim (vier keer de
+    /// richtwaarde van 15 ms, en de mediaan van vijf metingen na een warme start, zodat een druk moment op de machine de
+    /// test niet laat falen): hij moet alleen een kwadratische herberekening per dag (zoals `bankBalance(on:)` per dag)
+    /// of per maand geschiedenis betrappen.
     func testMonthLedgerStaysFastOverFiveYears() {
         let (d, current) = ledgerPerformanceData()
         let today = current.date(day: 10)
         let months = [current, current.adding(-30), current.adding(-58), current.adding(3)]
+        _ = d.monthLedger(current, asOf: today)   // warme start
         var worst = 0.0
         for month in months {
             var times: [Double] = []
@@ -445,6 +540,8 @@ final class LedgerTests: XCTestCase {
             worst = max(worst, times[2])
             XCTAssertEqual(ledger?.days.count, month.dayCount)
             XCTAssertEqual(ledger?.allReconciles, true, month.key)
+            XCTAssertEqual(ledger?.days.filter { $0.planInflow > 0 }.count, 9,
+                           "negen uitbetalingen op negen dagen (de 29e valt in een korte maand op de laatste dag)")
         }
         XCTAssertLessThan(worst, 0.060, "mediaan van 5 keer, per maand (richtwaarde 15 ms op een gewone machine)")
         // Een heel jaar achter elkaar.

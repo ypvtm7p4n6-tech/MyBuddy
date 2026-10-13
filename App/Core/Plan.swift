@@ -56,6 +56,13 @@ struct MonthSummary: Identifiable, Equatable {
         let bankExpenses = CentsMath.int(expenses) - CentsMath.int(fromPots)
         return CentsMath.value(CentsMath.int(income) - bankExpenses - CentsMath.int(saved) - CentsMath.int(invested))
     }
+
+    /// Hoeveel er meer wordt verdeeld dan er te verdelen is (0 als het past). Zie `MonthFigures.overAllocated`.
+    var overAllocated: Double {
+        CentsMath.value(MonthFigures(income: CentsMath.int(income), expenses: CentsMath.int(expenses),
+                                     fromPots: CentsMath.int(fromPots), saved: CentsMath.int(saved),
+                                     invested: CentsMath.int(invested)).overAllocated)
+    }
 }
 
 struct PeriodSummary: Equatable {
@@ -91,66 +98,41 @@ struct MonthFigures: Equatable {
 
     /// inkomen − uitgaven van de bank − verdeeld over potten − belegd.
     var remaining: Int { income - (expenses - fromPots) - saved - invested }
-}
 
-/// De opgeslagen maandplannen oplopend op maand. Voor lussen over veel maanden: zo hoeft het laatste plan vóór een
-/// maand niet bij elke maand opnieuw te worden gezocht.
-struct StoredPlans {
-    private var keys: [YearMonth] = []
-    private var plans: [MonthPlan] = []
+    /// Wat er te verdelen is voordat er iets is verdeeld: inkomen − uitgaven van de bank (kan negatief zijn).
+    var available: Int { income - (expenses - fromPots) }
 
-    init(_ months: [String: MonthPlan]) {
-        // Eerst alleen de sleutels sorteren; de plannen (groot) worden pas daarna op volgorde opgehaald.
-        var list: [(month: YearMonth, key: String)] = []
-        list.reserveCapacity(months.count)
-        for key in months.keys {
-            if let m = YearMonth(key: key) { list.append((m, key)) }
-        }
-        list.sort { $0.month < $1.month }
-        keys = list.map { $0.month }
-        plans = list.compactMap { months[$0.key] }
-    }
-
-    /// Het laatst opgeslagen plan vóór `month`.
-    func latest(before month: YearMonth) -> MonthPlan? {
-        var lo = 0
-        var hi = keys.count
-        while lo < hi {
-            let mid = (lo + hi) / 2
-            if keys[mid] < month { lo = mid + 1 } else { hi = mid }
-        }
-        return lo == 0 ? nil : plans[lo - 1]
+    /// Hoeveel er meer wordt verdeeld (potten en beleggingen) dan er te verdelen is. 0 als het past of als er niets
+    /// wordt verdeeld. Voor de waarschuwing bij een verdeling die groter is dan het inkomen.
+    var overAllocated: Int {
+        let allocated = saved + invested
+        guard allocated > 0 else { return 0 }
+        return max(0, allocated - max(0, available))
     }
 }
 
 /// Rekent de cijfers van veel maanden achter elkaar uit, zonder voor elke maand een plan met nieuwe regel-id's op te
-/// bouwen. Geeft dezelfde cijfers als `FinanceData.monthFigures(_:)` (een maand zonder opgeslagen plan krijgt de
-/// terugkerende regels van het laatst opgeslagen plan, de verdeling uit de standaardinleg).
+/// bouwen. Geeft dezelfde cijfers als `FinanceData.monthFigures(_:)`: de regels van een maand komen uit dezelfde plek
+/// (de opgeslagen regels plus de terugkerende reeksen, zie `SeriesIndex.completed`), de verdeling uit het opgeslagen
+/// plan of de standaardinleg.
 final class MonthFiguresBuilder {
     private let data: FinanceData
     private let potKeys: [String]
     private let holdingKeys: [String]
-    /// Pas opgebouwd bij de eerste maand zonder opgeslagen plan.
-    private var stored: StoredPlans?
+    private let stored: StoredPlans
 
     fileprivate init(_ data: FinanceData) {
         self.data = data
         self.potKeys = data.pots.map { $0.id.uuidString }
         self.holdingKeys = data.holdings.map { $0.id.uuidString }
+        self.stored = data.storedPlans
     }
 
     func figures(_ month: YearMonth) -> MonthFigures {
         guard month >= data.startMonth else { return MonthFigures() }
-        let storedPlan = data.months[month.key]
-        var plan = storedPlan ?? MonthPlan()
-        if storedPlan == nil {
-            if stored == nil { stored = StoredPlans(data.months) }
-            if let previous = stored?.latest(before: month) {
-                // Alleen de terugkerende regels; de id's blijven zoals ze waren (voor de bedragen maken ze niet uit).
-                plan.extraIncome = previous.extraIncome.filter { $0.isRecurring }
-                plan.expenses = previous.expenses.filter { $0.isRecurring }
-            }
-        }
+        let storedPlan = stored.plan(at: month)
+        // De id's van aangevulde regels doen voor de bedragen niet ter zake: ze worden niet afgeleid.
+        let plan = data.completedPlan(storedPlan ?? MonthPlan(), in: month, using: stored, deriveIDs: false)
         return data.monthFigures(of: plan, in: month, storedPlan: storedPlan, potKeys: potKeys, holdingKeys: holdingKeys)
     }
 }
@@ -175,98 +157,79 @@ struct ExpenseSplit: Equatable {
 extension FinanceData {
     // MARK: Maandplannen
 
-    /// Het laatst opgeslagen plan vóór `month`.
-    private func latestStoredPlan(before month: YearMonth) -> MonthPlan? {
-        var best: (YearMonth, MonthPlan)?
-        for (key, plan) in months {
-            guard let m = YearMonth(key: key), m < month else { continue }
-            if best == nil || m > best!.0 { best = (m, plan) }
-        }
-        return best?.1
-    }
-
-    /// Kopieert de terugkerende regels naar `month`. De nieuwe id is afgeleid van de oude regel en de maand,
-    /// zodat een verwachte regel van een nog niet vastgelegde maand elke keer dezelfde id heeft.
-    private func copiedRecurring(_ lines: [MoneyLine], into month: YearMonth) -> [MoneyLine] {
-        lines.filter { $0.isRecurring }.map { line in
-            var copy = line
-            copy.id = StableID.uuid("line|\(line.id.uuidString)|\(month.key)")
-            return copy
-        }
-    }
-
-    /// Standaardverdeling van een maand uit de instellingen van potten en beleggingen.
+    /// Standaardverdeling van een maand uit de instellingen van potten en beleggingen: het vaste bedrag, of bij een
+    /// percentage het bedrag dat daar in die maand uit volgt.
     func defaultAllocation(_ id: UUID, in month: YearMonth) -> Double {
-        if let pot = pots.first(where: { $0.id == id }) {
-            return month >= pot.startMonth ? pot.monthlyContribution : 0
-        }
-        if let h = holdings.first(where: { $0.id == id }) {
-            return month >= h.startMonth ? h.monthlyContribution : 0
-        }
-        return 0
+        guard let rule = defaultAllocationRule(id, in: month) else { return 0 }
+        return amount(of: rule, in: month)
     }
 
-    /// Plan afgeleid uit standaarden (voor maanden die nog niet zijn vastgelegd).
+    /// Plan afgeleid uit standaarden (voor maanden die nog niet zijn vastgelegd): de standaardverdeling en de
+    /// terugkerende reeksen die in die maand lopen (zie `RecurringSeries.swift`), zonder rekening te houden met wat er
+    /// in het opgeslagen plan van die maand staat.
     /// `transferDay` blijft nil: de overschrijfdag volgt dan de pot, belegging of salarisdag.
     func synthesizedPlan(for month: YearMonth) -> MonthPlan {
-        synthesizedPlan(for: month, previous: latestStoredPlan(before: month))
+        synthesizedPlan(for: month, using: storedPlans)
     }
 
-    /// Zoals `synthesizedPlan(for:)`, met een vooraf gesorteerde lijst van opgeslagen plannen (sneller in lussen).
+    /// Zoals `synthesizedPlan(for:)`, met vooraf bepaalde opgeslagen plannen en reeksen (sneller in lussen).
     func synthesizedPlan(for month: YearMonth, using stored: StoredPlans) -> MonthPlan {
-        synthesizedPlan(for: month, previous: stored.latest(before: month))
-    }
-
-    private func synthesizedPlan(for month: YearMonth, previous prev: MonthPlan?) -> MonthPlan {
         var plan = MonthPlan()
-        if let prev = prev {
-            plan.extraIncome = copiedRecurring(prev.extraIncome, into: month)
-            plan.expenses = copiedRecurring(prev.expenses, into: month)
-        }
-        for pot in pots where month >= pot.startMonth {
-            plan.allocations[pot.id.uuidString] = pot.monthlyContribution
-        }
-        for h in holdings where month >= h.startMonth {
-            plan.allocations[h.id.uuidString] = h.monthlyContribution
-        }
-        return plan
+        for pot in pots where month >= pot.startMonth { putDefault(pot, in: month, into: &plan) }
+        for h in holdings where month >= h.startMonth { putDefault(h, in: month, into: &plan) }
+        return completedPlan(plan, in: month, using: stored)
     }
 
-    /// Opgeslagen plan, of een afgeleid plan.
+    /// Het plan van een maand: het opgeslagen plan, aangevuld met de terugkerende regels die in die maand lopen maar niet
+    /// zijn opgeslagen (een maand die vastgelegd is vóór de regel werd toegevoegd, krijgt hem dus ook), of een afgeleid
+    /// plan als de maand niet is opgeslagen. Eén bron van waarheid voor "welke regels heeft maand X".
     func plan(for month: YearMonth) -> MonthPlan {
-        months[month.key] ?? synthesizedPlan(for: month)
+        plan(for: month, using: storedPlans)
     }
 
-    /// Zoals `plan(for:)`, met een vooraf gesorteerde lijst van opgeslagen plannen (sneller in lussen).
+    /// Zoals `plan(for:)`, met vooraf bepaalde opgeslagen plannen en reeksen (sneller in lussen).
     func plan(for month: YearMonth, using stored: StoredPlans) -> MonthPlan {
-        months[month.key] ?? synthesizedPlan(for: month, using: stored)
+        guard let base = stored.plan(at: month) else { return synthesizedPlan(for: month, using: stored) }
+        return completedPlan(base, in: month, using: stored)
     }
 
     /// Past een maandplan aan en slaat het op.
+    ///
+    /// Het plan waarmee `body` werkt is het plan zoals de maand het heeft (`plan(for:)`). Daarna: een nieuwe terugkerende
+    /// regel krijgt een reeks, en een regel van een reeks die `body` weghaalt wordt voor deze maand overgeslagen (zodat hij
+    /// er niet ongemerkt terugkomt). Stoppen vanaf een maand en alleen-deze-maand-bewerken staan in
+    /// `removeLine(id:kind:in:scope:)` en `updateLine(_:kind:in:scope:)`.
     mutating func editPlan(_ month: YearMonth, _ body: (inout MonthPlan) -> Void) {
-        var p = plan(for: month)
+        let before = plan(for: month)
+        var p = before
         body(&p)
+        FinanceData.settleSeries(in: &p, before: before)
         months[month.key] = p
     }
 
     /// Legt alle maanden t/m `current` vast, zodat latere wijzigingen van standaarden het verleden niet veranderen.
+    /// Schrijft ook de reeks-id's van oude data weg (`migrateRecurringSeries`).
     mutating func materialize(upTo current: YearMonth) {
+        migrateRecurringSeries()
+        // Voor de reeksen maakt het niet uit welke maanden we onderweg vastleggen: een nieuw vastgelegde maand krijgt
+        // precies de regels die hij toch al had.
+        let stored = storedPlans
         var m = startMonth
         var guardCount = 0
         while m <= current && guardCount < 1200 {
             if var existing = months[m.key] {
                 var changed = false
-                for pot in pots where m >= pot.startMonth && existing.allocations[pot.id.uuidString] == nil {
-                    existing.allocations[pot.id.uuidString] = pot.monthlyContribution
+                for pot in pots where m >= pot.startMonth && !hasAllocation(pot.id, in: existing) {
+                    putDefault(pot, in: m, into: &existing)
                     changed = true
                 }
-                for h in holdings where m >= h.startMonth && existing.allocations[h.id.uuidString] == nil {
-                    existing.allocations[h.id.uuidString] = h.monthlyContribution
+                for h in holdings where m >= h.startMonth && !hasAllocation(h.id, in: existing) {
+                    putDefault(h, in: m, into: &existing)
                     changed = true
                 }
                 if changed { months[m.key] = existing }
             } else {
-                months[m.key] = synthesizedPlan(for: m)
+                months[m.key] = synthesizedPlan(for: m, using: stored)
             }
             m = m.adding(1)
             guardCount += 1
@@ -347,19 +310,25 @@ extension FinanceData {
     /// Alle cijfers van een maand in hele centen, uit één keer het plan opzoeken.
     func monthFigures(_ month: YearMonth) -> MonthFigures {
         guard month >= startMonth else { return MonthFigures() }
-        return monthFigures(of: plan(for: month), in: month, storedPlan: months[month.key],
+        let stored = storedPlans
+        return monthFigures(of: plan(for: month, using: stored), in: month, storedPlan: months[month.key],
                             potKeys: pots.map { $0.id.uuidString }, holdingKeys: holdings.map { $0.id.uuidString })
     }
 
     /// De cijfers van `month` uit een plan. `storedPlan` is het opgeslagen plan van de maand (of nil): alleen de
     /// verdeling daaruit telt, zoals bij `allocation(_:in:)`. `potKeys` en `holdingKeys` zijn de id's van de potten en
     /// beleggingen als tekst, in de volgorde van `pots` en `holdings`.
+    ///
+    /// Het inkomen komt eerst en hangt nooit van de verdeling af; een verdeling als percentage rekent daar overheen
+    /// (`allocationCents`), dezelfde som als overal.
     fileprivate func monthFigures(of p: MonthPlan, in month: YearMonth, storedPlan: MonthPlan?,
                                   potKeys: [String], holdingKeys: [String]) -> MonthFigures {
         var f = MonthFigures()
         var extra = 0
         for line in p.extraIncome { extra = CentsMath.add(extra, CentsMath.int(line.amount)) }
-        f.income = CentsMath.add(CentsMath.int(salaryAmount(in: month, plan: p)), extra)
+        let salaryCents = CentsMath.int(salaryAmount(in: month, plan: p))
+        f.income = CentsMath.add(salaryCents, extra)
+        let bases = IncomeBases(salary: salaryCents, all: f.income)
         var expenses = 0
         var fromPots = 0
         for line in p.expenses {
@@ -371,14 +340,12 @@ extension FinanceData {
         f.fromPots = fromPots
         var saved = 0
         for (i, pot) in pots.enumerated() {
-            let a = storedPlan?.allocations[potKeys[i]] ?? (month >= pot.startMonth ? pot.monthlyContribution : 0)
-            saved = CentsMath.add(saved, CentsMath.int(a))
+            saved = CentsMath.add(saved, allocationCents(pot, key: potKeys[i], in: month, storedPlan: storedPlan, bases: bases))
         }
         f.saved = saved
         var invested = 0
         for (i, holding) in holdings.enumerated() {
-            let a = storedPlan?.allocations[holdingKeys[i]] ?? (month >= holding.startMonth ? holding.monthlyContribution : 0)
-            invested = CentsMath.add(invested, CentsMath.int(a))
+            invested = CentsMath.add(invested, allocationCents(holding, key: holdingKeys[i], in: month, storedPlan: storedPlan, bases: bases))
         }
         f.invested = invested
         return f
@@ -389,14 +356,21 @@ extension FinanceData {
         MonthFiguresBuilder(self)
     }
 
-    /// Verdeling voor één pot of belegging in een maand.
+    /// Verdeling voor één pot of belegging in een maand, in euro's. Bij een percentage van het inkomen is dit het bedrag
+    /// dat daar in deze maand uit volgt (zie `allocationCents`). Overal waar de app een verdeling leest, komt dit getal.
     func allocation(_ id: UUID, in month: YearMonth) -> Double {
-        if let stored = months[month.key], let v = stored.allocations[id.uuidString] { return v }
-        return defaultAllocation(id, in: month)
+        switch allocationRule(id, in: month) {
+        case .amount(let value): return value
+        case .percent(let rule): return CentsMath.value(AllocationMath.cents(of: rule, bases: incomeBases(in: month)))
+        }
     }
 
+    /// Zet de verdeling van een maand op een vast bedrag (een eventuele overschrijving met een percentage vervalt).
     mutating func setAllocation(_ id: UUID, in month: YearMonth, amount: Double) {
-        editPlan(month) { $0.allocations[id.uuidString] = amount.cents }
+        editPlan(month) {
+            $0.allocations[id.uuidString] = amount.cents
+            $0.percentAllocations.removeValue(forKey: id.uuidString)
+        }
     }
 
     func salaryAmount(in month: YearMonth, plan p: MonthPlan) -> Double {
@@ -460,40 +434,40 @@ extension FinanceData {
 
     enum LineKind { case income, expense }
 
-    mutating func upsertLine(_ line: MoneyLine, kind: LineKind, in month: YearMonth) {
-        editPlan(month) { plan in
-            switch kind {
-            case .income:
-                if let i = plan.extraIncome.firstIndex(where: { $0.id == line.id }) { plan.extraIncome[i] = line } else { plan.extraIncome.append(line) }
-            case .expense:
-                if let i = plan.expenses.firstIndex(where: { $0.id == line.id }) { plan.expenses[i] = line } else { plan.expenses.append(line) }
-            }
-        }
+    /// Slaat een regel op in een maand: een nieuwe regel wordt toegevoegd, een bestaande (zelfde id) vervangen.
+    /// Een terugkerende regel geldt vanaf deze maand voor alle volgende maanden (`.thisAndFollowing`), ook voor maanden
+    /// die al zijn opgeslagen. Voor de keuze "alleen deze maand" zie `updateLine(_:kind:in:scope:)`.
+    mutating func upsertLine(_ line: MoneyLine, kind: LineKind, in month: YearMonth, scope: SeriesScope = .thisAndFollowing) {
+        updateLine(line, kind: kind, in: month, scope: scope)
     }
 
-    mutating func deleteLine(id: UUID, kind: LineKind, in month: YearMonth) {
-        editPlan(month) { plan in
-            switch kind {
-            case .income: plan.extraIncome.removeAll { $0.id == id }
-            case .expense: plan.expenses.removeAll { $0.id == id }
-            }
-        }
+    /// Haalt een regel weg. Een terugkerende regel stopt daarmee vanaf deze maand (`.thisAndFollowing`); voor de keuze
+    /// "alleen deze maand" zie `removeLine(id:kind:in:scope:)`.
+    mutating func deleteLine(id: UUID, kind: LineKind, in month: YearMonth, scope: SeriesScope = .thisAndFollowing) {
+        removeLine(id: id, kind: kind, in: month, scope: scope)
     }
 
     // MARK: Verdeelhulpjes
 
-    /// Zet de verdeling van een maand terug naar de standaardinleg.
+    /// Zet de verdeling van een maand terug naar de standaardinleg (een vast bedrag of een percentage, per pot en belegging).
     mutating func applyDefaultAllocations(in month: YearMonth) {
-        var fresh: [String: Double] = [:]
-        for pot in pots { fresh[pot.id.uuidString] = month >= pot.startMonth ? pot.monthlyContribution : 0 }
-        for h in holdings { fresh[h.id.uuidString] = month >= h.startMonth ? h.monthlyContribution : 0 }
-        editPlan(month) { $0.allocations = fresh }
+        var fresh = MonthPlan()
+        for pot in pots { putDefault(pot, in: month, into: &fresh, zeroBeforeStart: true) }
+        for h in holdings { putDefault(h, in: month, into: &fresh, zeroBeforeStart: true) }
+        editPlan(month) {
+            $0.allocations = fresh.allocations
+            $0.percentAllocations = fresh.percentAllocations
+        }
     }
 
+    /// Zet de verdeling van een maand op nul (ook een percentage: de overschrijving wordt een bedrag van nul).
     mutating func clearAllocations(in month: YearMonth) {
         let ids = pots.map(\.id) + holdings.map(\.id)
         editPlan(month) { plan in
-            for id in ids { plan.allocations[id.uuidString] = 0 }
+            for id in ids {
+                plan.allocations[id.uuidString] = 0
+                plan.percentAllocations.removeValue(forKey: id.uuidString)
+            }
         }
     }
 
