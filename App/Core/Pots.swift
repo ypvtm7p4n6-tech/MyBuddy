@@ -304,18 +304,24 @@ extension FinanceData {
         }
 
         let cal = YearMonth.calendar
-        let stored = StoredPlans(months)
+        let stored = storedPlans
+        let key = potID.uuidString
         var m = startMonth
         var count = 0
         while m <= current && count < 2_400 {
-            let a = allocation(potID, in: m)
-            if CentsMath.int(a) != 0 {
+            // Het plan van de maand één keer: voor het inkomen (bij een percentage) en voor de uitgaven uit deze pot. De
+            // inleg komt uit dezelfde som als overal (`allocationCents`).
+            let monthPlan = plan(for: m, using: stored)
+            let month = m
+            let cents = allocationCents(pot, key: key, in: m, storedPlan: stored.plan(at: m),
+                                        basesFor: { incomeBases(of: monthPlan, in: month) })
+            if cents != 0 {
                 items.append(PotTimelineItem(id: "alloc-\(m.key)",
                                              date: m.date(day: transferDay(for: potID, in: m), calendar: cal),
                                              title: "Maandverdeling \(Fmt.month(m))", note: "",
-                                             amount: CentsMath.value(CentsMath.int(a)), isMonthlyAllocation: true, kind: .allocation))
+                                             amount: CentsMath.value(cents), isMonthlyAllocation: true, kind: .allocation))
             }
-            for line in plan(for: m, using: stored).expenses where !line.potShares.isEmpty {
+            for line in monthPlan.expenses where !line.potShares.isEmpty {
                 for payment in expenseSplit(of: line).pots where payment.potID == potID {
                     items.append(PotTimelineItem(id: "expense-\(line.id.uuidString)-\(payment.shareID.uuidString)-\(m.key)",
                                                  date: m.date(day: expenseDay(of: line), calendar: cal),
@@ -348,10 +354,11 @@ extension FinanceData {
         guard let i = pots.firstIndex(where: { $0.id == updated.id }) else { return }
         let old = pots[i]
         pots[i] = updated
-        // Een nieuwe standaardinleg geldt ook meteen voor de lopende maand.
-        if old.monthlyContribution != updated.monthlyContribution, current >= updated.startMonth {
-            setAllocation(updated.id, in: current, amount: updated.monthlyContribution)
-        }
+        // Een nieuwe standaardinleg geldt ook meteen voor de lopende maand: een ander vast bedrag, maar ook een andere
+        // inlegwijze (vast bedrag of percentage), een ander percentage of een andere grondslag. De lopende maand is
+        // meestal al vastgelegd (`materialize`) en zou anders bij het oude bedrag blijven. Een wijziging die de inleg
+        // niet raakt (naam, doel, rente) laat de lopende maand met rust, ook als die een eigen bedrag heeft.
+        syncCurrentMonth(updated.id, with: old.contributionRule, current: current)
     }
 
     /// Verwijdert een spaarpot. Met `returningBalanceToBank` boekt hij eerst het saldo van nu naar de bankrekening
@@ -396,6 +403,8 @@ extension FinanceData {
         potEntries.removeAll { $0.potID == id }
         for key in Array(months.keys) {
             months[key]?.allocations.removeValue(forKey: id.uuidString)
+            // Ook een eigen percentage van een maand (variabel percentage) hoort bij de pot en verdwijnt met hem.
+            months[key]?.percentAllocations.removeValue(forKey: id.uuidString)
             // Uitgaven die deels uit deze pot kwamen: de bank betaalt dat deel dan zelf.
             if let plan = months[key], plan.expenses.contains(where: { $0.potShares.contains { $0.potID == id } }) {
                 months[key]?.expenses = plan.expenses.map { line in

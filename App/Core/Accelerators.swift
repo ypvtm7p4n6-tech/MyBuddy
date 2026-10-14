@@ -171,8 +171,9 @@ extension FinanceData {
 
         var candidates: [(id: String, title: String, detail: String, symbol: String, change: ScenarioChange)] = []
 
-        // 1. Vrije ruimte van deze maand
-        let free = remaining(in: current)
+        // 1. Vrije ruimte van deze maand. Een schatting voor elke maand: bij een salaris om de zoveel weken of dagen is dat
+        // een gemiddelde maand (`estimatedRemaining`), anders precies `remaining(in:)`.
+        let free = estimatedRemaining(in: current)
         if free >= 10 {
             candidates.append(("free", "Zet je vrije ruimte in",
                                "Deze maand heb je \(Fmt.euro(free)) nog niet verdeeld. Elke maand extra inleggen versnelt je doel.",
@@ -180,8 +181,8 @@ extension FinanceData {
                                ScenarioChange(extraMonthly: free)))
         }
 
-        // 2. 5% van het inkomen
-        let monthlyIncome = income(in: current)
+        // 2. 5% van het inkomen (van een gemiddelde maand: `estimatedMonthlyIncome`, bij het maandelijkse schema `income(in:)`)
+        let monthlyIncome = estimatedMonthlyIncome(in: current)
         let fivePercent = (monthlyIncome * 0.05).cents
         if monthlyIncome > 0, fivePercent >= 10 {
             candidates.append(("income5", "Leg 5% van je inkomen extra in",
@@ -252,7 +253,9 @@ extension FinanceData {
 
         // 8. Meer uren werken (bij uurloon)
         if salary.mode == .hourly, salary.hourlyRate > 0 {
-            let extra = (salary.hourlyRate * 2 * 52 / 12).cents
+            // 2 uur per week, omgerekend naar een gemiddelde maand (52 / 12 weken, of 365,25 / 7 / 12 bij een salaris om de
+            // zoveel weken of dagen; zie `SalarySettings.averageMonthly(perWeek:)`).
+            let extra = salary.averageMonthly(perWeek: salary.hourlyRate * 2).cents
             if extra >= 10 {
                 candidates.append(("hours", "Werk 2 uur extra per week",
                                    "Bij je uurloon van \(Fmt.euroExact(salary.hourlyRate)) levert dat ongeveer \(Fmt.euro(extra)) extra per maand op.",
@@ -376,7 +379,9 @@ fileprivate enum AcceleratorIDs {
         entry(record, "snap|\(holding.uuidString)")
     }
 
-    /// Dezelfde afleiding als `FinanceData.copiedRecurring`: de kopie van een terugkerende regel in een volgende maand.
+    /// Het afgeleide id van de oude rekenmotor: de kopie van een terugkerende regel in een volgende maand was
+    /// `line|<vorig id>|<maand>`. Alleen nog nodig om bewaarde toestanden van toepassingen van vóór de reeksen te lezen; een
+    /// reeks (`MoneyLine.seriesLineID`) gebruikt dezelfde afleiding vanaf het id van de reeks zelf.
     static func line(after previous: UUID, in monthKey: String) -> UUID {
         StableID.uuid("line|\(previous.uuidString)|\(monthKey)")
     }
@@ -434,7 +439,12 @@ fileprivate extension GoalFunding {
 
 fileprivate extension Pot {
     mutating func restoreAcceleratorFields(_ fields: AcceleratorFields, from old: Pot) {
-        if fields.contains(.contribution) { monthlyContribution = old.monthlyContribution }
+        if fields.contains(.contribution) {
+            monthlyContribution = old.monthlyContribution
+            contributionMode = old.contributionMode
+            contributionPercent = old.contributionPercent
+            contributionBasis = old.contributionBasis
+        }
     }
 }
 
@@ -451,7 +461,12 @@ fileprivate extension Holding {
     }
 
     mutating func restoreAcceleratorFields(_ fields: AcceleratorFields, from old: Holding, removingSnapshot snapshotID: UUID) {
-        if fields.contains(.contribution) { monthlyContribution = old.monthlyContribution }
+        if fields.contains(.contribution) {
+            monthlyContribution = old.monthlyContribution
+            contributionMode = old.contributionMode
+            contributionPercent = old.contributionPercent
+            contributionBasis = old.contributionBasis
+        }
         if fields.contains(.cost) { annualCost = old.annualCost }
         if fields.contains(.value) {
             units = old.units
@@ -463,11 +478,13 @@ fileprivate extension Holding {
 
 fileprivate extension MonthPlan {
     /// De kopie van een maandplan die we bewaren om te herstellen. `AcceleratorMath.restoreSlots` leest daaruit alleen de
-    /// verdelingen van de aangepaste potten en beleggingen (`allocationIDs`) en het bedrag van de verlaagde uitgaveregel
-    /// (`keepExpenses`). Al het andere (inkomsten, overige uitgaven, dagen) blijft weg.
+    /// verdelingen van de aangepaste potten en beleggingen (`allocationIDs`, een vast bedrag of een percentage) en het
+    /// bedrag van de verlaagde uitgaveregel (`keepExpenses`). Al het andere (inkomsten, overige uitgaven, dagen,
+    /// overgeslagen en gestopte reeksen) blijft weg.
     func acceleratorBackupCopy(allocationIDs: Set<String>, keepExpenses: [MoneyLine]) -> MonthPlan {
         var copy = MonthPlan()
         copy.allocations = allocations.filter { allocationIDs.contains($0.key) }
+        copy.percentAllocations = percentAllocations.filter { allocationIDs.contains($0.key) }
         copy.expenses = keepExpenses
         return copy
     }
@@ -490,10 +507,32 @@ fileprivate struct AcceleratorRevert {
     var applyMonth: YearMonth
     /// Maanden die de toepassing zelf aanraakte (die worden apart teruggezet).
     var recordedKeys: Set<String>
-    /// Per pot of belegging: de vaste inleg vóór en na het terugzetten.
-    var allocation: [String: (pre: Double, post: Double)]
+    /// Per pot of belegging: de standaardinleg (een vast bedrag of een percentage) vóór en na het terugzetten.
+    var allocation: [String: (pre: AllocationRule, post: AllocationRule)]
     /// Bedrag van de verlaagde uitgaveregel vóór en na het terugzetten.
     var expenseAmount: (pre: Double, post: Double)?
+}
+
+fileprivate extension MonthPlan {
+    /// Staat in dit plan precies deze regel als verdeling van `key`?
+    func holds(_ rule: AllocationRule, key: String) -> Bool {
+        switch rule {
+        case .amount(let value): return allocations[key] == value && percentAllocations[key] == nil
+        case .percent(let percent): return percentAllocations[key] == percent
+        }
+    }
+
+    /// Zet de verdeling van `key` op deze regel (een bedrag en een percentage bestaan nooit naast elkaar).
+    mutating func put(_ rule: AllocationRule, key: String) {
+        switch rule {
+        case .amount(let value):
+            allocations[key] = value
+            percentAllocations.removeValue(forKey: key)
+        case .percent(let percent):
+            percentAllocations[key] = percent
+            allocations.removeValue(forKey: key)
+        }
+    }
 }
 
 fileprivate enum AcceleratorMath {
@@ -532,11 +571,17 @@ fileprivate enum AcceleratorMath {
         return shares
     }
 
-    /// De regels die bij elkaar horen: de regel `first` en alle afgeleide kopieën in latere maanden.
-    /// Een kopie herken je aan zijn id (zie `AcceleratorIDs.line`); in welke volgorde de maanden zijn vastgelegd maakt niet uit.
-    static func lineIDs(plans: [String: MonthPlan], first: UUID, lines: KeyPath<MonthPlan, [MoneyLine]>) -> [String: UUID] {
+    /// De regels die bij elkaar horen: de regel `first` en dezelfde regel in andere maanden, per maand het id.
+    ///
+    /// Een terugkerende regel is een reeks (`RecurringSeries.swift`): alle opgeslagen regels met hetzelfde reeks-id horen
+    /// bij elkaar, ook in oude gegevens zonder reeks-id (de reeks wordt dan afgeleid, zie `SeriesIndex`). Daarnaast volgt
+    /// dit de keten van afgeleide id's van de oude rekenmotor (`AcceleratorIDs.line`), voor bewaarde toestanden van
+    /// toepassingen van vóór de reeksen: daar is de plek waar de keten door een maand ontbreekt soms niet te raden.
+    /// In welke volgorde de maanden zijn vastgelegd maakt niet uit.
+    static func lineIDs(plans: [String: MonthPlan], first: UUID, income: Bool) -> [String: UUID] {
+        var result = seriesLineIDs(plans: plans, containing: first, income: income)
+        let lines: KeyPath<MonthPlan, [MoneyLine]> = income ? \.extraIncome : \.expenses
         var members: [UUID] = []
-        var result: [String: UUID] = [:]
         for month in plans.keys.compactMap({ YearMonth(key: $0) }).sorted() {
             guard let plan = plans[month.key] else { continue }
             var found: UUID?
@@ -548,17 +593,33 @@ fileprivate enum AcceleratorMath {
             }
             if let id = found {
                 members.append(id)
-                result[month.key] = id
+                if result[month.key] == nil { result[month.key] = id }
             }
         }
         return result
     }
 
-    /// Dezelfde uitgave? Een terugkerende regel krijgt elke maand een nieuw id; dit volgt die keten (in beide richtingen).
+    /// Per maand het id van de regel die bij dezelfde reeks hoort als regel `lineID` (ook die regel zelf), uit de
+    /// opgeslagen plannen. Leeg als de regel in geen enkele reeks voorkomt (een eenmalige regel).
+    static func seriesLineIDs(plans: [String: MonthPlan], containing lineID: UUID, income: Bool) -> [String: UUID] {
+        let stored = StoredPlans(plans)
+        let all = income ? stored.series.income : stored.series.expense
+        guard let series = all.values.first(where: { series in series.occurrences.contains { $0.line.id == lineID } }) else {
+            return [:]
+        }
+        var result: [String: UUID] = [:]
+        for occurrence in series.occurrences where result[occurrence.month.key] == nil {
+            result[occurrence.month.key] = occurrence.line.id
+        }
+        return result
+    }
+
+    /// Dezelfde uitgave? Een terugkerende regel heeft elke maand een eigen id; dit zoekt de reeks erachter (in beide
+    /// richtingen, ook voor een regel van een oude toepassing).
     static func sameLine(_ a: UUID, _ b: UUID, plans: [String: MonthPlan]) -> Bool {
         if a == b { return true }
-        return lineIDs(plans: plans, first: a, lines: \.expenses).values.contains(b)
-            || lineIDs(plans: plans, first: b, lines: \.expenses).values.contains(a)
+        return lineIDs(plans: plans, first: a, income: false).values.contains(b)
+            || lineIDs(plans: plans, first: b, income: false).values.contains(a)
     }
 
     /// Zet de plekken in een maandplan terug die een versneller aanpast; de rest van het plan blijft zoals het is.
@@ -569,6 +630,11 @@ fileprivate enum AcceleratorMath {
                 plan.allocations[key] = value
             } else {
                 plan.allocations.removeValue(forKey: key)
+            }
+            if let percent = base.percentAllocations[key] {
+                plan.percentAllocations[key] = percent
+            } else {
+                plan.percentAllocations.removeValue(forKey: key)
             }
         }
         if let id = expenseLineID,
@@ -586,15 +652,15 @@ fileprivate enum AcceleratorMath {
     /// toegevoegde inkomstenregel. Maanden die de toepassing zelf aanraakte laat deze functie met rust.
     fileprivate static func revertDerived(in plans: inout [String: MonthPlan], revert: AcceleratorRevert,
                                           expenseLines: [String: UUID], incomeLines: [String: UUID],
-                                          allocationPre: [String: Double]) {
+                                          allocationPre: [String: AllocationRule]) {
         for key in Array(plans.keys) {
             guard let month = YearMonth(key: key), month > revert.applyMonth, !revert.recordedKeys.contains(key),
                   var plan = plans[key] else { continue }
             var changed = false
             for (id, values) in revert.allocation {
                 let pre = allocationPre[id] ?? values.pre
-                if let value = plan.allocations[id], value == pre {
-                    plan.allocations[id] = values.post
+                if plan.holds(pre, key: id) {
+                    plan.put(values.post, key: id)
                     changed = true
                 }
             }
@@ -887,25 +953,39 @@ extension FinanceData {
         months.keys.compactMap { YearMonth(key: $0) }.filter { $0 > current }.sorted()
     }
 
-    /// Legt de verdeling van maanden vóór `current` vast die nog op de standaardinleg terugvalt,
-    /// zodat een nieuwe standaardinleg het verleden niet verandert.
-    private mutating func freezePastAllocations(_ id: UUID, contribution: Double, start: YearMonth, before current: YearMonth) {
+    /// Legt de verdeling van maanden vóór `current` vast die nog op de standaardinleg terugvalt, zodat een nieuwe
+    /// standaardinleg het verleden niet verandert. `rule` is de standaardinleg van vóór de wijziging: een vast bedrag of
+    /// een percentage van het inkomen van die maand.
+    private mutating func freezePastAllocations(_ id: UUID, rule: AllocationRule, start: YearMonth, before current: YearMonth) {
         let key = id.uuidString
         for k in Array(months.keys) {
-            guard let m = YearMonth(key: k), m < current, m >= start, months[k]?.allocations[key] == nil else { continue }
-            months[k]?.allocations[key] = contribution
+            guard let m = YearMonth(key: k), m < current, m >= start,
+                  months[k]?.allocations[key] == nil, months[k]?.percentAllocations[key] == nil else { continue }
+            months[k]?.put(rule, key: key)
         }
     }
 
     /// Verhoogt de verdeling van een pot of belegging in de huidige maand en in alle al vastgelegde latere maanden.
+    /// Een verdeling met een percentage van het inkomen wordt daarbij een vast bedrag: wat het percentage in die maand
+    /// opleverde plus de verhoging. Zo klopt de verhoging op de cent, ook als het inkomen per maand verschilt.
     private mutating func raiseAllocation(_ id: UUID, from old: Double, by delta: Double, current: YearMonth) {
         setAllocation(id, in: current, amount: old + delta)
         let key = id.uuidString
         for m in storedMonths(after: current) {
-            if let value = months[m.key]?.allocations[key] {
+            guard let plan = months[m.key] else { continue }
+            if plan.percentAllocations[key] != nil {
+                let cents = allocationCents(id, in: m)
+                months[m.key]?.put(.amount(CentsMath.value(CentsMath.add(cents, CentsMath.int(delta)))), key: key)
+            } else if let value = plan.allocations[key] {
                 months[m.key]?.allocations[key] = (value + delta).cents
             }
         }
+    }
+
+    /// Een versneller verhoogt een vast bedrag per maand. Staat de inleg als percentage van je inkomen, dan wordt het
+    /// daarom een vast bedrag; de bevestiging zegt dat erbij (en herstellen zet het percentage terug).
+    private func percentageBecomesFixedNote(_ name: String) -> String {
+        "De inleg van \(name) was een percentage van je inkomen en wordt hierdoor een vast bedrag per maand. Herstel je dit later, dan is het percentage er weer."
     }
 
     private func contributionText(_ name: String, old: Double, new: Double, current: YearMonth) -> (detail: String, sentence: String) {
@@ -924,8 +1004,16 @@ extension FinanceData {
         case .pot(let id):
             guard let i = pots.firstIndex(where: { $0.id == id }) else { return }
             let old = allocation(id, in: current)
-            freezePastAllocations(id, contribution: pots[i].monthlyContribution, start: pots[i].startMonth, before: current)
-            pots[i].monthlyContribution = (pots[i].monthlyContribution + delta).cents
+            freezePastAllocations(id, rule: pots[i].contributionRule, start: pots[i].startMonth, before: current)
+            if pots[i].contributionMode == .percentage {
+                // Het vaste bedrag dat blijft is voor elke maand: bij een salaris om de zoveel weken of dagen gaat dat uit van
+                // een gemiddelde maand (`estimatedDefaultAllocation`), anders van deze maand.
+                pots[i].monthlyContribution = (estimatedDefaultAllocation(id, in: current) + delta).cents
+                pots[i].contributionMode = .fixed
+                run.notes.append(percentageBecomesFixedNote(pots[i].name))
+            } else {
+                pots[i].monthlyContribution = (pots[i].monthlyContribution + delta).cents
+            }
             raiseAllocation(id, from: old, by: delta, current: current)
             let new = (old + delta).cents
             let text = contributionText(pots[i].name, old: old, new: new, current: current)
@@ -945,8 +1033,14 @@ extension FinanceData {
                 let share = CentsMath.value(shares[n])
                 let id = holdings[i].id
                 let old = allocation(id, in: current)
-                freezePastAllocations(id, contribution: holdings[i].monthlyContribution, start: holdings[i].startMonth, before: current)
-                holdings[i].monthlyContribution = (holdings[i].monthlyContribution + share).cents
+                freezePastAllocations(id, rule: holdings[i].contributionRule, start: holdings[i].startMonth, before: current)
+                if holdings[i].contributionMode == .percentage {
+                    holdings[i].monthlyContribution = (estimatedDefaultAllocation(id, in: current) + share).cents
+                    holdings[i].contributionMode = .fixed
+                    run.notes.append(percentageBecomesFixedNote(holdings[i].name))
+                } else {
+                    holdings[i].monthlyContribution = (holdings[i].monthlyContribution + share).cents
+                }
                 raiseAllocation(id, from: old, by: share, current: current)
                 let new = (old + share).cents
                 let text = contributionText(holdings[i].name, old: old, new: new, current: current)
@@ -967,14 +1061,14 @@ extension FinanceData {
 
     // MARK: Uitgave 10% omlaag
 
-    /// De maanden vanaf `current` waarin dezelfde regel staat: de huidige maand en elke al vastgelegde maand daarna
-    /// met een afgeleide kopie. Maanden die nog niet zijn vastgelegd volgen vanzelf.
-    private func lineChain(from firstID: UUID, current: YearMonth,
-                           lines: KeyPath<MonthPlan, [MoneyLine]>) -> [(month: YearMonth, lineID: UUID)] {
+    /// De maanden vanaf `current` waarin dezelfde terugkerende regel staat (dezelfde reeks): de huidige maand en elke al
+    /// vastgelegde maand daarna waarin de reeks een eigen regel heeft. Maanden die nog niet zijn vastgelegd volgen
+    /// vanzelf de laatste regel van de reeks.
+    private func lineChain(from firstID: UUID, current: YearMonth, income: Bool) -> [(month: YearMonth, lineID: UUID)] {
         var plans = months
         plans[current.key] = plan(for: current)
         var chain: [(month: YearMonth, lineID: UUID)] = []
-        for (key, id) in AcceleratorMath.lineIDs(plans: plans, first: firstID, lines: lines) {
+        for (key, id) in AcceleratorMath.lineIDs(plans: plans, first: firstID, income: income) {
             if let m = YearMonth(key: key), m >= current { chain.append((month: m, lineID: id)) }
         }
         return chain.sorted { $0.month < $1.month }
@@ -1011,7 +1105,7 @@ extension FinanceData {
             return
         }
 
-        for link in lineChain(from: lineID, current: current, lines: \.expenses) {
+        for link in lineChain(from: lineID, current: current, income: false) {
             editPlan(link.month) { plan in
                 guard let i = plan.expenses.firstIndex(where: { $0.id == link.lineID }) else { return }
                 let amount = plan.expenses[i].amount
@@ -1037,19 +1131,25 @@ extension FinanceData {
             run.message = problem
             return
         }
-        // Een terugkerende inkomstenregel: de maanden daarna nemen hem vanzelf over. Het verleden blijft zoals het was.
+        // Eerst de inleg verhogen, dan pas de inkomsten erbij zetten: staat de inleg als percentage van je inkomen, dan
+        // telt het extra inkomen niet mee in het bedrag waar de verhoging op wordt gebaseerd (anders loopt het budget
+        // door het percentage over de extra uren scheef).
+        var contribution = AcceleratorRun()
+        raiseContribution(by: amount, goal: g, current: current, run: &contribution)
+        // Een terugkerende inkomstenregel (een reeks): de maanden daarna nemen hem vanzelf over, ook de al vastgelegde.
+        // Het verleden blijft zoals het was.
         let name = "Extra uren (2 uur per week)"
-        var previous: UUID?
-        for m in [current] + storedMonths(after: current) {
-            let id = previous.map { AcceleratorIDs.line(after: $0, in: m.key) } ?? AcceleratorIDs.entry(recordID, "hours")
-            editPlan(m) { $0.extraIncome.append(MoneyLine(id: id, name: name, amount: amount, isRecurring: true)) }
-            previous = id
-        }
+        addRecurringLine(MoneyLine(id: AcceleratorIDs.entry(recordID, "hours"), name: name, amount: amount, isRecurring: true),
+                         kind: .income, in: current)
         let detail = "per maand erbij, vanaf \(Fmt.month(current))"
         let rate = salary.mode == .hourly && salary.hourlyRate > 0 ? " Bij een uurloon van \(Fmt.euroExact(salary.hourlyRate))." : ""
         run.add(symbol: "clock.badge.plus", title: "Extra inkomsten", old: nil, new: Fmt.euro(amount), detail: detail,
                 sentence: "Extra inkomsten van \(Fmt.euro(amount)) \(detail), als \"\(name)\".\(rate)")
-        raiseContribution(by: amount, goal: g, current: current, run: &run)
+        for line in contribution.lines {
+            run.add(symbol: line.symbol, title: line.title, old: line.oldValue, new: line.newValue, detail: line.detail,
+                    sentence: line.sentence)
+        }
+        run.notes.append(contentsOf: contribution.notes)
         run.notes.append("Dit is een verwachting. Haal de regel \"\(name)\" weg bij je inkomsten als je de extra uren niet werkt.")
     }
 
@@ -1517,21 +1617,16 @@ extension FinanceData {
         return copy.restoreAccelerators(for: goalID)
     }
 
-    /// De vaste maandinleg van een pot of belegging.
-    private func contribution(ofEntity id: UUID) -> Double? {
-        pot(id)?.monthlyContribution ?? holding(id)?.monthlyContribution
-    }
-
     private mutating func restoreData(of record: AppliedAccelerator) -> AcceleratorRevert? {
         let fields = AcceleratorFields(kind: AcceleratorKind(id: record.acceleratorID))
         let backup = record.before
         // De inleg zoals hij nu is: maanden die daarna zijn ontstaan hebben die als eigen waarde.
-        var contributionBefore: [String: Double] = [:]
+        var contributionBefore: [String: AllocationRule] = [:]
         for old in backup.pots {
-            if let value = contribution(ofEntity: old.id) { contributionBefore[old.id.uuidString] = value }
+            if let value = contributionRule(of: old.id) { contributionBefore[old.id.uuidString] = value }
         }
         for old in backup.holdings {
-            if let value = contribution(ofEntity: old.id) { contributionBefore[old.id.uuidString] = value }
+            if let value = contributionRule(of: old.id) { contributionBefore[old.id.uuidString] = value }
         }
 
         for old in backup.pots {
@@ -1566,17 +1661,17 @@ extension FinanceData {
         -> (expense: [String: UUID], income: [String: UUID]) {
         switch AcceleratorKind(id: record.acceleratorID) {
         case .expense(let lineID):
-            return (AcceleratorMath.lineIDs(plans: plans, first: lineID, lines: \.expenses), [:])
+            return (AcceleratorMath.lineIDs(plans: plans, first: lineID, income: false), [:])
         case .hours:
             return ([:], AcceleratorMath.lineIDs(plans: plans, first: AcceleratorIDs.entry(record.id, "hours"),
-                                                 lines: \.extraIncome))
+                                                 income: true))
         default:
             return ([:], [:])
         }
     }
 
     private mutating func restorePlans(of record: AppliedAccelerator, fields: AcceleratorFields,
-                                       contributionBefore: [String: Double]) -> AcceleratorRevert? {
+                                       contributionBefore: [String: AllocationRule]) -> AcceleratorRevert? {
         guard fields.contains(.plans) else { return nil }
         let keys = Self.touchedKeys(of: record.before)
         // Alleen verdelingen van potten en beleggingen die er nog zijn (een verwijderde pot krijgt geen verdeling terug).
@@ -1588,7 +1683,7 @@ extension FinanceData {
                                        allocation: [:], expenseAmount: nil)
         for idString in allocationIDs {
             if let id = UUID(uuidString: idString), let before = contributionBefore[idString],
-               let after = contribution(ofEntity: id), before != after {
+               let after = contributionRule(of: id), before != after {
                 revert.allocation[idString] = (before, after)
             }
         }
@@ -1621,9 +1716,9 @@ extension FinanceData {
     private static func rebase(_ later: inout AcceleratorBackup, onto record: AppliedAccelerator, revert: AcceleratorRevert?) {
         let fields = AcceleratorFields(kind: AcceleratorKind(id: record.acceleratorID))
         let backup = record.before
-        var contributionBefore: [String: Double] = [:]
-        for pot in later.pots { contributionBefore[pot.id.uuidString] = pot.monthlyContribution }
-        for holding in later.holdings { contributionBefore[holding.id.uuidString] = holding.monthlyContribution }
+        var contributionBefore: [String: AllocationRule] = [:]
+        for pot in later.pots { contributionBefore[pot.id.uuidString] = pot.contributionRule }
+        for holding in later.holdings { contributionBefore[holding.id.uuidString] = holding.contributionRule }
 
         for old in backup.pots {
             if let i = later.pots.firstIndex(where: { $0.id == old.id }) { later.pots[i].restoreAcceleratorFields(fields, from: old) }

@@ -218,6 +218,105 @@ func ledgerScenario(seed: UInt64) -> LedgerScenario {
         features.insert("pot verwijderd")
         d.deletePot(pot.id, returningBalanceToBank: x.chance(60), current: YearMonth(date: today), today: today)
     }
+
+    // Een derde reeks ingrepen (weer een eigen zaadwaarde): inleg als percentage van het inkomen (vast en per maand
+    // anders, met allebei de grondslagen, ook samen boven de 100%) en terugkerende regels die worden overgeslagen,
+    // gestopt, bewerkt of later toegevoegd. Het dagboek moet ook dan op elke dag sluiten met het maandoverzicht.
+    var y = EngRandom(seed: seed &+ 13_000)
+    func percent() -> Double {
+        // Soms een rond getal, soms een percentage met twee decimalen dat op halve centen uitkomt (33,33%).
+        y.chance(40) ? Double(y.int(0...20)) * 5 : Double(y.int(0...10_000)) / 100
+    }
+    func basis() -> IncomeBasis { y.chance(50) ? .salary : .allIncome }
+    if y.chance(40) {
+        let ids = d.pots.map(\.id) + d.holdings.map(\.id)
+        if !ids.isEmpty {
+            features.insert("percentage-inleg")
+            for _ in 0..<y.int(1...min(3, ids.count)) {
+                d.setContributionPercent(ids[y.int(0...ids.count - 1)], percent: percent(), basis: basis(),
+                                         current: start.adding(y.int(0...span)))
+            }
+        }
+    }
+    if y.chance(30) {
+        let ids = d.pots.map(\.id) + d.holdings.map(\.id)
+        if !ids.isEmpty {
+            features.insert("percentage per maand")
+            for _ in 0..<y.int(1...3) {
+                let id = ids[y.int(0...ids.count - 1)]
+                let month = start.adding(y.int(0...span))
+                switch y.int(0...2) {
+                case 0: d.setAllocationPercent(id, in: month, percent: percent(), basis: basis())
+                case 1: d.setAllocationPercent(id, in: month, percent: percent())
+                default: d.clearAllocationOverride(id, in: month)
+                }
+            }
+        }
+    }
+    if y.chance(35) {
+        let month = start.adding(y.int(0...span))
+        let kind: FinanceData.LineKind = y.chance(70) ? .expense : .income
+        let plan = d.plan(for: month)
+        let recurring = (kind == .expense ? plan.expenses : plan.extraIncome).filter { $0.isRecurring }
+        if let line = recurring.isEmpty ? nil : recurring[y.int(0...recurring.count - 1)] {
+            switch y.int(0...3) {
+            case 0:
+                features.insert("reeks overgeslagen")
+                d.removeLine(id: line.id, kind: kind, in: month, scope: .thisMonth)
+            case 1:
+                features.insert("reeks gestopt")
+                d.removeLine(id: line.id, kind: kind, in: month, scope: .thisAndFollowing)
+            default:
+                features.insert("reeks bewerkt")
+                var changed = line
+                changed.amount = y.amount(5, 900)
+                if y.chance(40) { changed.day = y.int(1...31) }
+                d.updateLine(changed, kind: kind, in: month, scope: y.chance(50) ? .thisMonth : .thisAndFollowing)
+            }
+        }
+    }
+    if y.chance(30) {
+        features.insert("reeks later toegevoegd")
+        var line = MoneyLine(name: "Abonnement", amount: y.amount(5, 200), isRecurring: true, kind: .fixed,
+                             day: y.chance(80) ? y.int(1...31) : nil)
+        line.id = StableID.uuid("ledger-test-series|\(seed)")
+        d.addRecurringLine(line, kind: y.chance(80) ? .expense : .income, in: start.adding(y.int(0...span)))
+    }
+
+    // Een vierde reeks ingrepen (weer een eigen zaadwaarde): het salaris komt niet elke maand maar om de zoveel weken of dagen
+    // binnen (elke 4, 2 of 1 week, elke 10 dagen, elke 31 dagen, een willekeurige cyclus, ook zo lang dat sommige maanden
+    // geen uitbetaling hebben), met een ankerdatum in het verleden of de toekomst, of zonder (dan telt de salarisdag van de
+    // startmaand). Soms heeft een maand een eigen salaris of eigen uren. Overal moeten de uitbetalingen op hun eigen dag
+    // vallen en bank, potten en overzicht blijven sluiten.
+    var z = EngRandom(seed: seed &+ 21_000)
+    if z.chance(45) {
+        let choice = z.int(0...7)
+        var anchor: CalendarDay?
+        if z.chance(80) {
+            anchor = CalendarDay(date: engTime(start, 15, hour: 12).addingTimeInterval(Double(z.int(-400...400)) * 86_400))
+        }
+        switch choice {
+        case 0: d.salary.setSchedule(.weeks, interval: 4, anchor: anchor)
+        case 1: d.salary.setSchedule(.weeks, interval: 2, anchor: anchor)
+        case 2: d.salary.setSchedule(.weeks, interval: 1, anchor: anchor)
+        case 3: d.salary.setSchedule(.days, interval: 10, anchor: anchor)
+        case 4: d.salary.setSchedule(.days, interval: z.int(1...60), anchor: anchor)
+        case 5: d.salary.setSchedule(.weeks, interval: z.int(5...9), anchor: anchor)
+        case 6: d.salary.setSchedule(.days, interval: 31, anchor: anchor)
+        default: d.salary.setSchedule(.days, interval: z.int(61...366), anchor: anchor)
+        }
+        features.insert("salaris om de zoveel weken of dagen")
+        if z.chance(40) {
+            let month = start.adding(z.int(0...span))
+            let useSalary = z.chance(50)
+            let salaryValue = z.amount(0, 3_000)
+            let hoursValue = Double(z.int(0...160))
+            features.insert("salarisoverschrijving")
+            d.editPlan(month) { plan in
+                if useSalary { plan.salaryOverride = salaryValue } else { plan.hoursOverride = hoursValue }
+            }
+        }
+    }
     return LedgerScenario(data: d, today: today, months: start.adding(-2).range(count: span + 5), seed: seed, start: start,
                           features: features)
 }
@@ -270,8 +369,9 @@ func referenceBankBalanceCents(_ d: FinanceData, endOfDay date: Date, events eve
 
 /// Vijf jaar met 10 potten (de helft met maandelijkse rente), 8 beleggingen, 30 uitgaven (één deels uit een pot),
 /// twee uitbetalingen per week (negen inkomstenregels per maand, elk op een eigen dag), een beginsaldo en 20
-/// handmatige boekingen. Alle maanden zijn vastgelegd (`materialize`).
-func ledgerPerformanceData() -> (data: FinanceData, current: YearMonth) {
+/// handmatige boekingen. Alle maanden zijn vastgelegd (`materialize`). Met `percentages` leggen alle potten en
+/// beleggingen in als 2,5% van alle inkomsten (het bedrag wordt dan elke maand uit het inkomen uitgerekend).
+func ledgerPerformanceData(percentages: Bool = false) -> (data: FinanceData, current: YearMonth) {
     let start = YearMonth(year: 2021, month: 11)
     var d = FinanceData(startMonth: start)
     d.salary = SalarySettings(mode: .fixed, fixedMonthly: 0, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
@@ -307,6 +407,11 @@ func ledgerPerformanceData() -> (data: FinanceData, current: YearMonth) {
     }
     d.addBankSnapshot(balance: 2_500, note: "Begin", date: start.firstDay.addingTimeInterval(7_200))
     let current = start.adding(59)
+    if percentages {
+        for id in d.pots.map(\.id) + d.holdings.map(\.id) {
+            d.setContributionPercent(id, percent: 2.5, basis: .allIncome, current: start)
+        }
+    }
     d.materialize(upTo: current)
     d.applyDueInterest(upTo: current.firstDay)
     for i in 0..<20 {

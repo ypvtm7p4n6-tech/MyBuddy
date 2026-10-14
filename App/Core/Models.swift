@@ -15,31 +15,64 @@ enum SalaryMode: String, Codable, CaseIterable, Identifiable {
     var title: String { self == .fixed ? "Vast bedrag" : "Uurloon" }
 }
 
-struct SalarySettings: Codable, Equatable {
-    var mode: SalaryMode = .fixed
-    /// Netto bedrag per maand bij `.fixed`.
-    var fixedMonthly: Double = 0
-    /// Netto uurloon bij `.hourly`.
-    var hourlyRate: Double = 0
-    var hoursPerWeek: Double = 0
-    /// Dag van de maand waarop het salaris binnenkomt (1...31; korte maanden gebruiken de laatste dag).
-    var payDay: Int = 25
+/// Hoe vaak het salaris binnenkomt. Zie `SalarySchedule.swift` voor het rekenen met het schema.
+enum SalarySchedule: String, Codable, CaseIterable, Identifiable {
+    /// Elke maand op een vaste dag van de maand (`SalarySettings.payDay`). Het standaardschema.
+    case monthly
+    /// Elke N weken, vanaf een bekende uitbetaaldatum (N = 1...52). Bijvoorbeeld om de 4 weken: 13 keer per jaar.
+    case weeks
+    /// Elke N dagen, vanaf een bekende uitbetaaldatum (N = 1...366).
+    case days
 
-    enum CodingKeys: String, CodingKey { case mode, fixedMonthly, hourlyRate, hoursPerWeek, payDay }
+    var id: String { rawValue }
 
-    /// Gemiddeld aantal uren per maand: uren per week × 52 / 12.
-    var defaultMonthlyHours: Double { hoursPerWeek * 52 / 12 }
-
-    /// Maandsalaris. Bij uurloon: uurloon × (uren dit maand, of het gemiddelde).
-    func monthlyAmount(hoursOverride: Double? = nil) -> Double {
-        switch mode {
-        case .fixed: return fixedMonthly.cents
-        case .hourly: return (hourlyRate * (hoursOverride ?? defaultMonthlyHours)).cents
+    var title: String {
+        switch self {
+        case .monthly: return "Elke maand"
+        case .weeks: return "Om de zoveel weken"
+        case .days: return "Om de zoveel dagen"
         }
     }
 }
 
-// decodeIfPresent: oude opslagbestanden zonder `payDay` blijven laden.
+struct SalarySettings: Codable, Equatable {
+    var mode: SalaryMode = .fixed
+    /// Netto bedrag per UITBETALING bij `.fixed`. Bij het maandelijkse schema is dat per maand (zoals altijd); bij een
+    /// schema om de zoveel weken of dagen is het wat er elke keer binnenkomt. De naam is gebleven voor oude bestanden.
+    var fixedMonthly: Double = 0
+    /// Netto uurloon bij `.hourly`.
+    var hourlyRate: Double = 0
+    var hoursPerWeek: Double = 0
+    /// Dag van de maand waarop het salaris binnenkomt (1...31; korte maanden gebruiken de laatste dag). Bij een schema om
+    /// de zoveel weken of dagen is dit de terugval voor "op de salarisdag" als er in een maand geen uitbetaling valt.
+    var payDay: Int = 25
+    /// Hoe vaak het salaris binnenkomt. Standaard elke maand op `payDay`.
+    var schedule: SalarySchedule = .monthly
+    /// Om de hoeveel weken (`.weeks`, 1...52) of dagen (`.days`, 1...366) het salaris binnenkomt. Bij `.monthly` niet van
+    /// belang (1). Lees het geklemd via `cycleInterval`.
+    var interval: Int = 1
+    /// Een bekende uitbetaaldatum (in het verleden of de toekomst): de uitbetalingen vallen om de `interval` weken of
+    /// dagen voor en na deze dag. nil = de `payDay` van de startmaand van de gegevens (`FinanceData.salaryAnchor()`).
+    /// Alleen van belang voor `.weeks` en `.days`.
+    var anchor: CalendarDay?
+
+    enum CodingKeys: String, CodingKey { case mode, fixedMonthly, hourlyRate, hoursPerWeek, payDay, schedule, interval, anchor }
+
+    /// Gemiddeld aantal uren per maand: uren per week × 52 / 12 bij het maandelijkse schema, anders × 365,25 / 7 / 12 (een
+    /// maand is gemiddeld 365,25 / 12 dagen). Zie `averageMonthly(perWeek:)`: het is een GEMIDDELDE voor schattingen, niet
+    /// het aantal uren dat een bepaalde maand betaalt (zie `FinanceData.salaryHours(in:)`).
+    var defaultMonthlyHours: Double { averageMonthly(perWeek: hoursPerWeek) }
+
+    /// Salaris per maand voor SCHATTINGEN (toekomstschatting, aankoopcheck, doelen): bij het maandelijkse schema het
+    /// maandsalaris, anders het gemiddelde per maand (`averageMonthlyAmount`). Bij uurloon: uurloon × (uren in die maand, of
+    /// het gemiddelde). Het salaris van een bepaalde maand is `FinanceData.salaryAmount(in:)`: de som van de uitbetalingen.
+    func monthlyAmount(hoursOverride: Double? = nil) -> Double {
+        averageMonthlyAmount(hoursOverride: hoursOverride)
+    }
+}
+
+// decodeIfPresent: oude opslagbestanden zonder `payDay` of schema blijven laden. Een onbekend schema (van een nieuwere
+// versie) of een kapotte ankerdatum geeft de standaardwaarde in plaats van een bestand dat niet meer laadt.
 extension SalarySettings {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -49,6 +82,23 @@ extension SalarySettings {
         hourlyRate = try c.decodeIfPresent(Double.self, forKey: .hourlyRate) ?? hourlyRate
         hoursPerWeek = try c.decodeIfPresent(Double.self, forKey: .hoursPerWeek) ?? hoursPerWeek
         payDay = try c.decodeIfPresent(Int.self, forKey: .payDay) ?? payDay
+        schedule = (try? c.decodeIfPresent(SalarySchedule.self, forKey: .schedule)) ?? schedule
+        interval = (try? c.decodeIfPresent(Int.self, forKey: .interval)) ?? interval
+        anchor = try? c.decodeIfPresent(CalendarDay.self, forKey: .anchor)
+    }
+
+    /// De vijf oude velden staan er altijd in; schema, interval en ankerdatum alleen als ze iets zeggen. Een bestand met
+    /// het maandelijkse schema blijft zo byte voor byte zoals het was (compact, en gelijk voor cloud, back-up en vergelijken).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(mode, forKey: .mode)
+        try c.encode(fixedMonthly, forKey: .fixedMonthly)
+        try c.encode(hourlyRate, forKey: .hourlyRate)
+        try c.encode(hoursPerWeek, forKey: .hoursPerWeek)
+        try c.encode(payDay, forKey: .payDay)
+        if schedule != .monthly { try c.encode(schedule, forKey: .schedule) }
+        if interval != 1 { try c.encode(interval, forKey: .interval) }
+        try c.encodeIfPresent(anchor, forKey: .anchor)
     }
 }
 
@@ -71,7 +121,8 @@ struct MoneyLine: Identifiable, Codable, Equatable {
     var id = UUID()
     var name: String
     var amount: Double
-    /// Terugkerende regels worden automatisch naar volgende maanden gekopieerd.
+    /// Een terugkerende regel is een reeks: hij komt elke volgende maand terug op zijn eigen dag, tot hij wordt gestopt
+    /// (zie `RecurringSeries.swift`).
     var isRecurring: Bool = false
     /// Alleen van belang voor uitgaven.
     var kind: ExpenseKind = .fixed
@@ -141,13 +192,16 @@ extension Array where Element == MoneyLine {
 }
 
 struct MonthPlan: Codable, Equatable {
-    /// Afwijkend maandsalaris (vast bedrag) voor deze maand.
+    /// Afwijkend salaris voor deze maand: het TOTAAL van de maand (vast bedrag). Komt het salaris vaker dan één keer per
+    /// maand binnen, dan wordt het gelijk over de uitbetalingen van de maand verdeeld (zie `FinanceData.salaryPayouts`).
     var salaryOverride: Double?
-    /// Gewerkte uren deze maand (bij uurloon).
+    /// Gewerkte uren deze maand (bij uurloon): het TOTAAL van de maand. Bij meer uitbetalingen in de maand worden de uren
+    /// gelijk over de uitbetalingen verdeeld (zie `FinanceData.salaryPayouts`).
     var hoursOverride: Double?
     var extraIncome: [MoneyLine] = []
     var expenses: [MoneyLine] = []
-    /// Verdeling: id van spaarpot of belegging → bedrag deze maand.
+    /// Verdeling met een vast bedrag: id van spaarpot of belegging → bedrag deze maand. Heeft een pot of belegging in
+    /// `percentAllocations` ook een regel, dan gaat het percentage voor.
     var allocations: [String: Double] = [:]
     /// Dag van de maand waarop de verdeling over spaarpotten en beleggingen wordt overgeboekt.
     /// nil = de dag van de pot of belegging zelf, anders de salarisdag.

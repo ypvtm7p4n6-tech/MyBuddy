@@ -28,9 +28,10 @@ struct DayEvent: Identifiable, Equatable {
 
 /// Eén uitbetaling van het salaris.
 struct SalaryPayout: Equatable {
-    /// Vast id van deze uitbetaling (hetzelfde op elk apparaat en bij elke berekening).
+    /// Vast id van deze uitbetaling (hetzelfde op elk apparaat en bij elke berekening): per maand bij het maandelijkse
+    /// schema, per datum bij een schema om de zoveel weken of dagen.
     var id: String
-    /// Dag van de maand (1...31; de lengte van de maand wordt bij het plaatsen toegepast).
+    /// Dag van de maand (1...dagen in de maand).
     var day: Int
     var cents: Int
 }
@@ -89,7 +90,7 @@ extension FinanceData {
         for line in plan.extraIncome {
             let cents = CentsMath.int(line.amount)
             guard cents != 0 else { continue }
-            add(id: "income-\(line.id.uuidString)-\(month.key)", day: incomeDay(of: line),
+            add(id: "income-\(line.id.uuidString)-\(month.key)", day: incomeDay(of: line, in: month),
                 title: line.name.isEmpty ? "Inkomsten" : line.name, kind: .income, bank: cents, lineID: line.id)
         }
 
@@ -109,14 +110,26 @@ extension FinanceData {
             }
         }
 
+        // De inleg komt uit DEZELFDE som als de maandcijfers en de spaarpotten (`allocationCents`: een vast bedrag, of een
+        // percentage van het inkomen van deze maand). Het inkomen wordt hooguit één keer per maand uitgerekend, en alleen
+        // als er een percentage is; een eigen aanroep per pot zou het plan van de maand steeds opnieuw opbouwen.
+        let storedPlan = months[month.key]
+        var bases: IncomeBases?
+        func incomeOfMonth() -> IncomeBases {
+            if let known = bases { return known }
+            let made = incomeBases(of: plan, in: month)
+            bases = made
+            return made
+        }
         for pot in pots {
-            let cents = CentsMath.int(allocation(pot.id, in: month))
+            let cents = allocationCents(pot, key: pot.id.uuidString, in: month, storedPlan: storedPlan, basesFor: incomeOfMonth)
             guard cents != 0 else { continue }
             add(id: "toPot-\(pot.id.uuidString)-\(month.key)", day: transferDay(for: pot.id, in: month),
                 title: "Naar \(pot.name)", kind: .toPot, bank: -cents, pot: cents, potID: pot.id)
         }
         for holding in holdings {
-            let cents = CentsMath.int(allocation(holding.id, in: month))
+            let cents = allocationCents(holding, key: holding.id.uuidString, in: month, storedPlan: storedPlan,
+                                        basesFor: incomeOfMonth)
             guard cents != 0 else { continue }
             add(id: "toHolding-\(holding.id.uuidString)-\(month.key)", day: transferDay(for: holding.id, in: month),
                 title: "Naar \(holding.name)", kind: .toHolding, bank: -cents, holdingID: holding.id)
@@ -124,12 +137,17 @@ extension FinanceData {
         return out
     }
 
-    /// De uitbetalingen van het salaris in `month`: dag van de maand, bedrag in hele centen en een vast id per
-    /// uitbetaling. Nu is dat één uitbetaling per maand op de salarisdag; een salarisschema met meer (of geen)
-    /// uitbetalingen per maand vult alleen deze lijst anders. De som van de bedragen moet gelijk blijven aan het
-    /// salaris in `monthFigures` (dat controleert `MonthLedger.overviewReconciles`).
+    /// De uitbetalingen van het salaris in `month`: dag van de maand, bedrag in hele centen en een vast id per uitbetaling.
+    /// Bij het maandelijkse schema is dat één uitbetaling per maand op de salarisdag (id `salary-2026-10`); bij een schema
+    /// om de zoveel weken of dagen 0, 1, 2 of meer, elk op zijn eigen dag met het id van die datum (`salary-2026-10-23`).
+    /// De som van de bedragen is het salaris in `monthFigures` (`salaryCents(in:plan:)`): dat controleert
+    /// `MonthLedger.overviewReconciles`.
     func salaryPayouts(in month: YearMonth, plan: MonthPlan) -> [SalaryPayout] {
-        [SalaryPayout(id: "salary-\(month.key)", day: salaryDay(), cents: CentsMath.int(salaryAmount(in: month, plan: plan)))]
+        let monthly = salary.isMonthly
+        return salaryPayoutCents(in: month, plan: plan).map { payout in
+            let id = monthly ? "salary-\(month.key)" : "salary-\(CalendarDay(month: month, day: payout.day).key)"
+            return SalaryPayout(id: id, day: payout.day, cents: payout.cents)
+        }
     }
 
     /// Handmatige boekingen op de bankrekening in een maand. Een overboeking naar of van een spaarpot heeft

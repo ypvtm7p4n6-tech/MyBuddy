@@ -515,6 +515,180 @@ final class LedgerTests: XCTestCase {
         XCTAssertTrue(ledger.allReconciles)
     }
 
+    // MARK: Inleg als percentage van het inkomen
+
+    /// Start november 2026, salaris 3000 op de 25e, een bonus van 500 op de 20e (alleen november), huur 900 op de 1e
+    /// (terugkerend). Pot Vakantie legt 10% van het salaris in, belegging Wereld 5% van alle inkomsten, allebei op de 26e.
+    /// Saldo 1000 aan het eind van oktober.
+    private func percentData() -> (data: FinanceData, pot: Pot, holding: Holding) {
+        var d = FinanceData(startMonth: engNov2026)
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 3_000, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+        var pot = Pot(name: "Vakantie", monthlyContribution: 0, startMonth: engNov2026)
+        pot.transferDay = 26
+        var holding = Holding(name: "Wereld", kind: .etf, monthlyContribution: 0, startMonth: engNov2026)
+        holding.transferDay = 26
+        d.addPot(pot, openingBalance: 0, now: engTime(engNov2026, 1, hour: 8))
+        d.holdings.append(holding)
+        d.setContributionPercent(pot.id, percent: 10, basis: .salary, current: engNov2026)
+        d.setContributionPercent(holding.id, percent: 5, basis: .allIncome, current: engNov2026)
+        d.upsertLine(MoneyLine(name: "Huur", amount: 900, isRecurring: true, day: 1), kind: .expense, in: engNov2026)
+        d.upsertLine(MoneyLine(name: "Bonus", amount: 500, day: 20), kind: .income, in: engNov2026)
+        d.addBankSnapshot(balance: 1_000, note: "Eind oktober", date: engTime(oct2026, 31, hour: 20))
+        return (d, pot, holding)
+    }
+
+    func testPercentageContributionsLandOnTheTransferDayWithTheSameAmountEverywhere() {
+        let (d, pot, holding) = percentData()
+        let today = engTime(engNov2026, 30, hour: 20)
+        // November: inkomen 3500. Vakantie 10% van het salaris (3000) = 300, Wereld 5% van 3500 = 175.
+        // Bank: 1000 -> huur 100 (1e) -> bonus 600 (20e) -> salaris 3600 (25e) -> 300 en 175 weg op de 26e = 3125.
+        // Te verdelen: 3500 - 900 - 300 - 175 = 2125.
+        let nov = d.monthLedger(engNov2026, asOf: today)
+        assertDay(nov, 1, out: 900, bank: 100, pots: 0, remaining: -900)
+        assertDay(nov, 20, in: 500, bank: 600, pots: 0, remaining: -400)
+        assertDay(nov, 25, in: 3_000, bank: 3_600, pots: 0, remaining: 2_600)
+        assertDay(nov, 26, toPots: 300, toHoldings: 175, bank: 3_125, pots: 300, remaining: 2_125)
+        XCTAssertEqual(nov.income, 3_500)
+        XCTAssertEqual(nov.planToPots, 300)
+        XCTAssertEqual(nov.toHoldings, 175)
+        XCTAssertEqual(nov.remaining, 2_125)
+        XCTAssertEqual(nov.closingBank, 3_125)
+        XCTAssertEqual(nov.closingPots, 300)
+        XCTAssertTrue(nov.allReconciles)
+        // Dezelfde bedragen in de rest van de motor.
+        XCTAssertEqual(d.allocation(pot.id, in: engNov2026), 300)
+        XCTAssertEqual(d.allocation(holding.id, in: engNov2026), 175)
+        XCTAssertEqual(d.savedTotal(in: engNov2026), 300)
+        XCTAssertEqual(d.investedTotal(in: engNov2026), 175)
+        XCTAssertEqual(d.remaining(in: engNov2026), 2_125)
+        XCTAssertEqual(d.potBalance(pot.id, at: engNov2026), 300)
+        XCTAssertEqual(d.potBalance(pot.id, asOf: day(engNov2026, 25)), 0, "voor de overschrijfdag staat er nog niets in de pot")
+        XCTAssertEqual(nov.days[25].events.map(\.kind), [.toPot, .toHolding])
+
+        // December: de bonus was eenmalig, dus het inkomen is 3000. Vakantie 300, Wereld 5% van 3000 = 150.
+        // Bank: 3125 -> huur 2225 -> salaris 5225 -> 450 weg = 4775. Te verdelen: 3000 - 900 - 300 - 150 = 1650.
+        let dec = d.monthLedger(engDec2026, asOf: today)
+        XCTAssertEqual(dec.income, 3_000)
+        XCTAssertEqual(dec.planToPots, 300)
+        XCTAssertEqual(dec.toHoldings, 150)
+        XCTAssertEqual(dec.remaining, 1_650)
+        XCTAssertEqual(dec.closingBank, 4_775)
+        XCTAssertEqual(dec.closingPots, 600)
+        XCTAssertTrue(dec.allReconciles)
+
+        // Een eigen percentage voor december (variabel percentage): 12,5% van het salaris = 375.
+        var changed = d
+        changed.setAllocationPercent(pot.id, in: engDec2026, percent: 12.5)
+        let decChanged = changed.monthLedger(engDec2026, asOf: today)
+        XCTAssertEqual(decChanged.planToPots, 375)
+        XCTAssertEqual(decChanged.remaining, 1_575)
+        XCTAssertEqual(decChanged.closingBank, 4_700)
+        XCTAssertEqual(decChanged.closingPots, 675)
+        XCTAssertEqual(decChanged.days[25].toPots, 375)
+        XCTAssertTrue(decChanged.allReconciles)
+        XCTAssertEqual(changed.monthLedger(engNov2026, asOf: today), nov, "november verandert niet")
+        XCTAssertEqual(changed.monthLedger(engJan2027, asOf: today).planToPots, 300, "januari volgt weer de vaste 10%")
+
+        // Een hoger salaris in januari gaat vanzelf mee: 10% van 3500 = 350 en 5% van 3500 = 175.
+        changed.editPlan(engJan2027) { $0.salaryOverride = 3_500 }
+        let jan = changed.monthLedger(engJan2027, asOf: today)
+        XCTAssertEqual(jan.planToPots, 350)
+        XCTAssertEqual(jan.toHoldings, 175)
+        XCTAssertEqual(jan.days[25].toPots, 350)
+        XCTAssertEqual(jan.days[25].toHoldings, 175)
+        XCTAssertTrue(jan.allReconciles)
+    }
+
+    func testPercentageAmountsRoundToWholeCentsHalfUp() {
+        // 10,05 x 50% = 5,025 wordt 5,03; 1000,01 x 12,5% = 125,00125 wordt 125,00; 1234,56 x 10,01% = 123,584456 wordt 123,58.
+        for (salary, percent, expected) in [(10.05, 50.0, 5.03), (1_000.01, 12.5, 125.00), (1_234.56, 10.01, 123.58)] {
+            var d = FinanceData(startMonth: engNov2026)
+            d.salary = SalarySettings(mode: .fixed, fixedMonthly: salary, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+            let pot = Pot(name: "Pot", monthlyContribution: 0, startMonth: engNov2026)
+            d.addPot(pot, openingBalance: 0, now: engTime(engNov2026, 1, hour: 8))
+            d.setContributionPercent(pot.id, percent: percent, basis: .salary, current: engNov2026)
+            let ledger = d.monthLedger(engNov2026, asOf: engTime(engNov2026, 30, hour: 20))
+            XCTAssertEqual(cents(ledger.planToPots), cents(expected), "\(salary) x \(percent)%")
+            XCTAssertEqual(cents(d.allocation(pot.id, in: engNov2026)), cents(expected))
+            XCTAssertEqual(ledger.days[24].inflow, salary)
+            XCTAssertTrue(ledger.allReconciles)
+        }
+    }
+
+    func testPercentagesOverOneHundredPercentWarnButNeverCrash() {
+        var (d, pot, holding) = percentData()
+        // 80% en 50% van het salaris (3000) is 2400 en 1500: samen 130%.
+        d.setContributionPercent(pot.id, percent: 80, basis: .salary, current: engNov2026)
+        d.setContributionPercent(holding.id, percent: 50, basis: .salary, current: engNov2026)
+        let today = engTime(engNov2026, 30, hour: 20)
+        let ledger = d.monthLedger(engNov2026, asOf: today)
+        XCTAssertEqual(ledger.planToPots, 2_400)
+        XCTAssertEqual(ledger.toHoldings, 1_500)
+        // Inkomen 3500 - huur 900 - 2400 - 1500 = -1300: duidelijk te veel verdeeld, het dagboek sluit gewoon.
+        XCTAssertEqual(ledger.remaining, -1_300)
+        XCTAssertTrue(ledger.allReconciles)
+        XCTAssertEqual(ledger.days[29].remainingSoFar, -1_300)
+        let warnings = d.allocationWarnings(in: engNov2026)
+        XCTAssertTrue(warnings.contains(.percentagesOver100(total: 130)), "\(warnings)")
+        XCTAssertNotNil(d.allocationWarning(in: engNov2026))
+        // Een percentage boven 100 of onder 0 wordt begrensd, nooit een negatieve inleg.
+        d.setContributionPercent(pot.id, percent: 250, basis: .salary, current: engNov2026)
+        XCTAssertEqual(d.allocation(pot.id, in: engNov2026), 3_000)
+        d.setContributionPercent(pot.id, percent: -20, basis: .salary, current: engNov2026)
+        XCTAssertEqual(d.allocation(pot.id, in: engNov2026), 0)
+        XCTAssertTrue(d.monthLedger(engNov2026, asOf: today).allReconciles)
+    }
+
+    // MARK: Terugkerende uitgave komt elke maand terug op zijn dag
+
+    func testRecurringExpenseReturnsOnItsOwnDayInStoredAndEditedMonthsAndFarAhead() {
+        var d = FinanceData(startMonth: engNov2026)
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 2_000, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+        d.addBankSnapshot(balance: 1_000, note: "Eind oktober", date: engTime(oct2026, 31, hour: 20))
+        // December is al vastgelegd en januari is bewerkt, vóór de terugkerende uitgave bestaat.
+        d.materialize(upTo: engDec2026)
+        d.editPlan(engJan2027) { $0.salaryOverride = 2_500 }
+        d.addRecurringLine(MoneyLine(name: "Abonnement", amount: 15, day: 31), kind: .expense, in: engNov2026)
+        let today = engTime(engNov2026, 15, hour: 10)
+
+        func charged(_ ledger: MonthLedger) -> [Int] { ledger.days.filter { $0.outflow > 0 }.map(\.day) }
+        // De 31e valt in november op de 30e, en in februari op de 28e.
+        XCTAssertEqual(charged(d.monthLedger(engNov2026, asOf: today)), [30])
+        XCTAssertEqual(charged(d.monthLedger(engDec2026, asOf: today)), [31], "vastgelegde maand")
+        XCTAssertEqual(charged(d.monthLedger(engJan2027, asOf: today)), [31], "bewerkte maand")
+        XCTAssertEqual(charged(d.monthLedger(engFeb2027, asOf: today)), [28])
+        XCTAssertEqual(charged(d.monthLedger(YearMonth(year: 2031, month: 11), asOf: today)), [30], "ver in de toekomst")
+        XCTAssertEqual(charged(d.monthLedger(YearMonth(year: 2032, month: 2), asOf: today)), [29], "schrikkeljaar")
+        XCTAssertEqual(d.expensesTotal(in: YearMonth(year: 2031, month: 11)), 15)
+
+        // Bank: 1000 + 2000 - 15 = 2985 (november) -> 4970 (december) -> 7455 (januari, salaris 2500) -> 9440 (februari).
+        XCTAssertEqual(d.bankBalance(at: engNov2026), 2_985)
+        XCTAssertEqual(d.bankBalance(at: engDec2026), 4_970)
+        XCTAssertEqual(d.bankBalance(at: engJan2027), 7_455)
+        XCTAssertEqual(d.bankBalance(at: engFeb2027), 9_440)
+
+        // Alleen december overslaan en vanaf maart stoppen.
+        let december = d.plan(for: engDec2026).expenses.first { $0.name == "Abonnement" }
+        d.removeLine(id: december?.id ?? UUID(), kind: .expense, in: engDec2026, scope: .thisMonth)
+        let march = d.plan(for: engMar2027).expenses.first { $0.name == "Abonnement" }
+        XCTAssertNotNil(march)
+        d.removeLine(id: march?.id ?? UUID(), kind: .expense, in: engMar2027, scope: .thisAndFollowing)
+        XCTAssertEqual(charged(d.monthLedger(engNov2026, asOf: today)), [30])
+        XCTAssertEqual(charged(d.monthLedger(engDec2026, asOf: today)), [], "overgeslagen")
+        XCTAssertEqual(charged(d.monthLedger(engJan2027, asOf: today)), [31], "de reeks loopt na een overgeslagen maand door")
+        XCTAssertEqual(charged(d.monthLedger(engFeb2027, asOf: today)), [28])
+        XCTAssertEqual(charged(d.monthLedger(engMar2027, asOf: today)), [], "gestopt")
+        XCTAssertEqual(charged(d.monthLedger(YearMonth(year: 2031, month: 11), asOf: today)), [], "en ook later niet meer")
+        // 2985 -> 4985 (december, geen abonnement) -> 7470 (januari) -> 9455 (februari) -> 11455 (maart, gestopt).
+        XCTAssertEqual(d.bankBalance(at: engDec2026), 4_985)
+        XCTAssertEqual(d.bankBalance(at: engJan2027), 7_470)
+        XCTAssertEqual(d.bankBalance(at: engFeb2027), 9_455)
+        XCTAssertEqual(d.bankBalance(at: engMar2027), 11_455)
+        for month in engNov2026.range(count: 6) {
+            XCTAssertTrue(d.monthLedger(month, asOf: today).allReconciles, month.key)
+        }
+    }
+
     // MARK: Snelheid
 
     /// Vijf jaar, 10 potten (de helft met maandelijkse rente), 8 beleggingen, 30 uitgaven en negen uitbetalingen per
@@ -523,7 +697,48 @@ final class LedgerTests: XCTestCase {
     /// test niet laat falen): hij moet alleen een kwadratische herberekening per dag (zoals `bankBalance(on:)` per dag)
     /// of per maand geschiedenis betrappen.
     func testMonthLedgerStaysFastOverFiveYears() {
-        let (d, current) = ledgerPerformanceData()
+        for percentages in [false, true] {
+            let (d, current) = ledgerPerformanceData(percentages: percentages)
+            let what = percentages ? "met percentages" : "met vaste bedragen"
+            let today = current.date(day: 10)
+            // Ook een maand ver in de toekomst (niet vastgelegd: het plan wordt afgeleid) en een in het verleden.
+            let months = [current, current.adding(-30), current.adding(-58), current.adding(3)]
+            _ = d.monthLedger(current, asOf: today)   // warme start
+            var worst = 0.0
+            for month in months {
+                var times: [Double] = []
+                var ledger: MonthLedger?
+                for _ in 0..<5 {
+                    let start = Date()
+                    ledger = d.monthLedger(month, asOf: today)
+                    times.append(Date().timeIntervalSince(start))
+                }
+                times.sort()
+                worst = max(worst, times[2])
+                XCTAssertEqual(ledger?.days.count, month.dayCount, what)
+                XCTAssertEqual(ledger?.allReconciles, true, "\(month.key) \(what)")
+                XCTAssertEqual(ledger?.days.filter { $0.planInflow > 0 }.count, 9,
+                               "negen uitbetalingen op negen dagen (de 29e valt in een korte maand op de laatste dag)")
+                if percentages, let ledger {
+                    // 2,5% van alle inkomsten (9 x 355 = 3195) is 79,875 en dus 79,88 per pot of belegging: 18 stuks.
+                    XCTAssertEqual(ledger.planToPots, 10 * 79.88, accuracy: 0.001)
+                    XCTAssertEqual(ledger.toHoldings, 8 * 79.88, accuracy: 0.001)
+                }
+            }
+            XCTAssertLessThan(worst, 0.060, "mediaan van 5 keer, per maand, \(what) (richtwaarde 15 ms op een gewone machine)")
+            // Een heel jaar achter elkaar.
+            let start = Date()
+            for month in current.adding(-11).range(count: 12) { _ = d.monthLedger(month, asOf: today) }
+            XCTAssertLessThan(Date().timeIntervalSince(start), 1.0, what)
+        }
+    }
+
+    /// Hetzelfde met een salaris dat elke week binnenkomt (naast de negen inkomstenregels): vier of vijf uitbetalingen per
+    /// maand, elk een eigen gebeurtenis. De maand mag niet merkbaar trager worden en alles sluit.
+    func testMonthLedgerStaysFastWithAWeeklySalary() {
+        var (d, current) = ledgerPerformanceData(percentages: true)
+        d.salary.fixedMonthly = 400   // per uitbetaling
+        d.salary.setSchedule(.weeks, interval: 1, anchor: CalendarDay(year: 2021, month: 11, day: 5))
         let today = current.date(day: 10)
         let months = [current, current.adding(-30), current.adding(-58), current.adding(3)]
         _ = d.monthLedger(current, asOf: today)   // warme start
@@ -538,15 +753,15 @@ final class LedgerTests: XCTestCase {
             }
             times.sort()
             worst = max(worst, times[2])
-            XCTAssertEqual(ledger?.days.count, month.dayCount)
+            let paydays = d.salaryPayDays(in: month)
+            XCTAssertTrue(paydays.count == 4 || paydays.count == 5, "vier of vijf uitbetalingen per maand")
             XCTAssertEqual(ledger?.allReconciles, true, month.key)
-            XCTAssertEqual(ledger?.days.filter { $0.planInflow > 0 }.count, 9,
-                           "negen uitbetalingen op negen dagen (de 29e valt in een korte maand op de laatste dag)")
+            XCTAssertEqual(ledger?.income, Double(paydays.count) * 400 + 9 * 355, month.key)
+            XCTAssertEqual(ledger?.days.filter { $0.events.contains { $0.kind == .salary } }.map(\.day), paydays, month.key)
         }
-        XCTAssertLessThan(worst, 0.060, "mediaan van 5 keer, per maand (richtwaarde 15 ms op een gewone machine)")
-        // Een heel jaar achter elkaar.
+        XCTAssertLessThan(worst, 0.080, "mediaan van 5 keer, per maand (richtwaarde 15 ms op een gewone machine)")
         let start = Date()
         for month in current.adding(-11).range(count: 12) { _ = d.monthLedger(month, asOf: today) }
-        XCTAssertLessThan(Date().timeIntervalSince(start), 1.0)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1.2)
     }
 }

@@ -18,8 +18,14 @@ extension FinanceData {
         buffer.interestPayout = .yearly
         buffer.interestPayoutDay = 1
         buffer.interestPayoutMonth = 1
-        let holiday = Pot(name: "Vakantie", symbol: "airplane", colorIndex: 3,
+        // De vakantiepot legt een percentage van je salaris in in plaats van een vast bedrag: 3,5% van het salaris van
+        // die maand (bij het uurloon hieronder ongeveer 117 euro). `monthlyContribution` is het vaste bedrag waar hij op
+        // terugvalt als je weer een vast bedrag kiest.
+        var holiday = Pot(name: "Vakantie", symbol: "airplane", colorIndex: 3,
                           goalAmount: 2_400, goalDate: current.adding(8).firstDay, monthlyContribution: 120, startMonth: start)
+        holiday.contributionMode = .percentage
+        holiday.contributionPercent = 3.5
+        holiday.contributionBasis = .salary
         // De laptop-pot wordt op de 1e overgeschreven in plaats van op de salarisdag.
         var laptop = Pot(name: "Nieuwe laptop", symbol: "laptopcomputer", colorIndex: 4,
                          goalAmount: 1_500, goalDate: nil, monthlyContribution: 75, startMonth: start)

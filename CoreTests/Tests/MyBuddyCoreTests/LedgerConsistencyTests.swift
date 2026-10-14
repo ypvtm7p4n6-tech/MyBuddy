@@ -21,6 +21,12 @@ final class LedgerConsistencyTests: XCTestCase {
         var todayChecks = 0
         var daysWithSeveralInflows = 0
         var scenariosWithFeature: [String: Int] = [:]
+        var percentMonths = 0
+        var percentMonthsWithBothBases = 0
+        var scheduleMonths = 0
+        var monthsWithSeveralPayouts = 0
+        var monthsWithoutPayout = 0
+        var overriddenSalaryMonths = 0
     }
 
     private func cents(_ value: Double) -> Int { CentsMath.int(value) }
@@ -29,7 +35,9 @@ final class LedgerConsistencyTests: XCTestCase {
 
     func testRandomDatasetsReconcileOnEveryDay() {
         var coverage = Coverage()
-        for seed in 1...200 {
+        // Voor een grotere speurtocht naar fouten: LEDGER_SEEDS=1500 swift test --filter LedgerConsistencyTests.
+        let seeds = max(200, Int(ProcessInfo.processInfo.environment["LEDGER_SEEDS"] ?? "") ?? 200)
+        for seed in 1...seeds {
             let scenario = ledgerScenario(seed: UInt64(seed))
             for feature in scenario.features { coverage.scenariosWithFeature[feature, default: 0] += 1 }
             verify(scenario, exhaustive: seed % 11 == 0, coverage: &coverage)
@@ -49,9 +57,17 @@ final class LedgerConsistencyTests: XCTestCase {
         XCTAssertGreaterThan(coverage.todayChecks, 150, "controles van de saldi van nu")
         XCTAssertGreaterThan(coverage.daysWithSeveralInflows, 40, "dagen met meer dan één inkomst")
         for feature in ["meer uitbetalingen", "pot van voor de start", "boekingen op de randen van een dag",
-                        "saldo op de rand van een dag", "potsaldo gezet", "plan in één keer veranderd", "pot verwijderd"] {
+                        "saldo op de rand van een dag", "potsaldo gezet", "plan in één keer veranderd", "pot verwijderd",
+                        "percentage-inleg", "percentage per maand", "reeks overgeslagen", "reeks gestopt", "reeks bewerkt",
+                        "reeks later toegevoegd", "salaris om de zoveel weken of dagen", "salarisoverschrijving"] {
             XCTAssertGreaterThan(coverage.scenariosWithFeature[feature] ?? 0, 8, "datasets met: \(feature)")
         }
+        XCTAssertGreaterThan(coverage.scheduleMonths, 600, "maanden met een salaris om de zoveel weken of dagen")
+        XCTAssertGreaterThan(coverage.monthsWithSeveralPayouts, 150, "maanden met meer dan één uitbetaling van het salaris")
+        XCTAssertGreaterThan(coverage.monthsWithoutPayout, 30, "maanden zonder uitbetaling van het salaris (bij een schema)")
+        XCTAssertGreaterThan(coverage.overriddenSalaryMonths, 20, "schemamaanden met een eigen salaris of eigen uren")
+        XCTAssertGreaterThan(coverage.percentMonths, 300, "pot- of beleggingsmaanden met een inleg als percentage")
+        XCTAssertGreaterThan(coverage.percentMonthsWithBothBases, 20, "maanden met extra inkomsten naast een percentage")
     }
 
     /// Verzamelt mislukte vergelijkingen zonder per vergelijking de XCTest-machinerie aan te roepen (dat is in een
@@ -147,7 +163,14 @@ final class LedgerConsistencyTests: XCTestCase {
             f.eq(d.expensesFromPots(in: month), ledger.paidFromPots, what)
             f.eq(d.savedTotal(in: month), ledger.planToPots, what)
             f.eq(d.investedTotal(in: month), ledger.toHoldings, what)
-            f.eq(d.expenseOverview(in: month).leftAfterTransfers, ledger.remaining, what)
+            let overview = d.expenseOverview(in: month)
+            f.eq(overview.leftAfterTransfers, ledger.remaining, what)
+            f.eq(overview.income, ledger.income, what)
+            f.eq(overview.expenses, ledger.expensesTotal, what)
+            f.eq(overview.expensesFromBank, ledger.planOutflow, what)
+            f.eq(overview.fromPots, ledger.paidFromPots, what)
+            f.eq(overview.toPots, ledger.planToPots, what)
+            f.eq(overview.toInvestments, ledger.toHoldings, what)
             f.eq(cents(ledger.planInflow), cents(ledger.income), "inkomen volgens de dagen: \(what)")
 
             // De som van de dagen is het totaal.
@@ -175,6 +198,66 @@ final class LedgerConsistencyTests: XCTestCase {
             f.eq(eventSum([.toPot]) { $0.potAmount }, cents(ledger.planToPots), what)
             f.eq(eventSum([.toHolding]) { $0.bankAmount }, -cents(ledger.toHoldings), what)
             f.eq(eventSum([.interest]) { $0.potAmount }, cents(ledger.interest), what)
+
+            // Elke pot en belegging: de overschrijving op de overschrijfdag is hetzelfde bedrag als de verdeling van de maand,
+            // ook bij een percentage. Het percentage is hier onafhankelijk nagerekend (hele centen, half omhoog).
+            if month >= d.startMonth {
+                let salaryCents = cents(d.salaryAmount(in: month))
+                let incomeCents = cents(ledger.income)
+                for id in d.pots.map(\.id) + d.holdings.map(\.id) {
+                    let allocated = cents(d.allocation(id, in: month))
+                    let transfers = list.filter { ($0.kind == .toPot && $0.potID == id) || ($0.kind == .toHolding && $0.holdingID == id) }
+                    f.eq(CentsMath.sum(transfers.map { $0.kind == .toPot ? cents($0.potAmount) : -cents($0.bankAmount) }), allocated,
+                         "overschrijving = verdeling: \(what)")
+                    f.ok(transfers.allSatisfy { $0.day == d.transferDay(for: id, in: month) }, "overschrijfdag: \(what)")
+                    f.eq(d.allocationCents(id, in: month), allocated, "allocationCents: \(what)")
+                    f.ok(allocated >= 0 || d.months[month.key]?.allocations[id.uuidString] != nil, "geen negatief percentage: \(what)")
+                    if case .percent(let rule) = d.allocationRule(id, in: month) {
+                        let hundredths = Int((min(max(rule.percent, 0), 100) * 100).rounded())
+                        let base = max(0, rule.basis == .salary ? salaryCents : incomeCents)
+                        f.eq(allocated, (base * hundredths + 5_000) / 10_000, "percentage van het inkomen: \(what)")
+                        coverage.percentMonths += 1
+                        if rule.basis == .allIncome && incomeCents != salaryCents { coverage.percentMonthsWithBothBases += 1 }
+                    }
+                }
+                // Een waarschuwing bij te veel verdeeld is een berekende eigenschap, geen crash.
+                let warnings = d.allocationWarnings(in: month)
+                f.eq(warnings.isEmpty, d.allocationWarning(in: month) == nil, "waarschuwing: \(what)")
+                if d.percentTotal(in: month) > 100 {
+                    f.ok(warnings.contains { if case .percentagesOver100 = $0 { return true } else { return false } }, "meer dan 100%: \(what)")
+                }
+            }
+
+            // Het salaris: de uitbetalingen vallen op hun eigen dag, met het bedrag dat een onafhankelijke berekening geeft (stap
+            // voor stap met `Calendar`, in hele centen), en het maandtotaal is hun som, overal hetzelfde.
+            if month >= d.startMonth {
+                let plan = d.plan(for: month)
+                let expected = referenceSalaryPayouts(d.salary, start: d.startMonth, month: month,
+                                                      salaryOverride: plan.salaryOverride, hoursOverride: plan.hoursOverride)
+                let payouts = d.salaryPayouts(in: month, plan: plan)
+                f.eq(payouts.map(\.day), expected.map(\.day), "dagen van de uitbetalingen: \(what)")
+                f.eq(payouts.map(\.cents), expected.map(\.cents), "bedragen van de uitbetalingen: \(what)")
+                let expectedTotal = expected.reduce(0) { $0 + $1.cents }
+                f.eq(cents(d.salaryAmount(in: month)), expectedTotal, "salaris van de maand: \(what)")
+                f.eq(d.salaryCents(in: month, plan: plan), expectedTotal, "salaris in centen: \(what)")
+                f.eq(CentsMath.sum(list.filter { $0.kind == .salary }.map { cents($0.bankAmount) }), expectedTotal,
+                     "salaris volgens de gebeurtenissen: \(what)")
+                f.eq(list.filter { $0.kind == .salary }.map(\.day), expected.filter { $0.cents != 0 }.map(\.day),
+                     "dagen van de salarisgebeurtenissen: \(what)")
+                let salaryIDs = list.filter { $0.kind == .salary }.map(\.id)
+                f.eq(Set(salaryIDs).count, salaryIDs.count, "elke uitbetaling heeft een eigen id: \(what)")
+                f.eq(d.salaryPayDays(in: month), referencePayDays(d.salary, start: d.startMonth, month: month), "schema: \(what)")
+                // De overschrijfdag zonder eigen dag is de eerste uitbetaling van de maand, anders de salarisdag.
+                f.eq(d.salaryDay(in: month), d.salary.schedule == .monthly ? d.salaryDay()
+                        : (referencePayDays(d.salary, start: d.startMonth, month: month).first ?? d.salaryDay()),
+                     "salarisdag: \(what)")
+                if d.salary.schedule != .monthly {
+                    coverage.scheduleMonths += 1
+                    if expected.count > 1 { coverage.monthsWithSeveralPayouts += 1 }
+                    if referencePayDays(d.salary, start: d.startMonth, month: month).isEmpty { coverage.monthsWithoutPayout += 1 }
+                    if plan.salaryOverride != nil || plan.hoursOverride != nil { coverage.overriddenSalaryMonths += 1 }
+                }
+            }
 
             // Het banksaldo per dag: de dagreeks van de motor geeft voor elke dag hetzelfde.
             for day in ledger.days {

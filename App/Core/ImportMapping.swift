@@ -2197,9 +2197,6 @@ extension FinanceData {
             name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
 
-        var plan = self.plan(for: target)
-        var planChanged = false
-
         for row in draft.rows {
             guard row.isActive else {
                 report.notSelected += 1
@@ -2219,35 +2216,37 @@ extension FinanceData {
 
             switch row.category {
             case .inkomen:
-                if let i = plan.extraIncome.firstIndex(where: { key($0.name) == key(name) }) {
+                // Een regel uit het bestand is een terugkerende regel (een reeks): hij geldt vanaf deze maand, ook in
+                // maanden erna die al zijn vastgelegd. Bijwerken geldt ook voor "deze en alle volgende maanden".
+                if var line = plan(for: target).extraIncome.first(where: { key($0.name) == key(name) }) {
                     if policy == .update {
-                        plan.extraIncome[i].amount = amount
-                        if let day { plan.extraIncome[i].day = day }
-                        planChanged = true
+                        line.amount = amount
+                        if let day { line.day = day }
+                        upsertLine(line, kind: .income, in: target, scope: .thisAndFollowing)
                         record(.updated)
                     } else {
                         record(.skippedExisting)
                     }
                 } else {
-                    plan.extraIncome.append(MoneyLine(name: name, amount: amount, isRecurring: true, kind: .fixed, day: day))
-                    planChanged = true
+                    addRecurringLine(MoneyLine(name: name, amount: amount, isRecurring: true, kind: .fixed, day: day),
+                                     kind: .income, in: target)
                     record(.added)
                 }
 
             case .vasteLasten, .variabeleLasten:
                 let kind: ExpenseKind = row.category == .vasteLasten ? .fixed : .variable
-                if let i = plan.expenses.firstIndex(where: { key($0.name) == key(name) }) {
+                if var line = plan(for: target).expenses.first(where: { key($0.name) == key(name) }) {
                     if policy == .update {
-                        plan.expenses[i].amount = amount
-                        if let day { plan.expenses[i].day = day }
-                        planChanged = true
+                        line.amount = amount
+                        if let day { line.day = day }
+                        upsertLine(line, kind: .expense, in: target, scope: .thisAndFollowing)
                         record(.updated)
                     } else {
                         record(.skippedExisting)
                     }
                 } else {
-                    plan.expenses.append(MoneyLine(name: name, amount: amount, isRecurring: true, kind: kind, day: day))
-                    planChanged = true
+                    addRecurringLine(MoneyLine(name: name, amount: amount, isRecurring: true, kind: kind, day: day),
+                                     kind: .expense, in: target)
                     record(.added)
                 }
 
@@ -2255,9 +2254,9 @@ extension FinanceData {
                 if let existingPot = pots.first(where: { key($0.name) == key(name) }) {
                     if policy == .update {
                         if row.meaning == .perMaand {
-                            var updated = existingPot
-                            updated.monthlyContribution = amount
-                            updatePot(updated, current: target)
+                            // Een inleg per maand uit het bestand is een vast bedrag: stond de pot op een percentage
+                            // van je inkomen, dan wordt het dat bedrag (en geldt het meteen voor deze maand).
+                            setContributionAmount(existingPot.id, amount: amount, current: target)
                         } else {
                             setPotBalance(existingPot.id, to: amount, current: target, note: "Import", date: now, asOf: now)
                         }
@@ -2280,9 +2279,7 @@ extension FinanceData {
                 if let existingHolding = holdings.first(where: { key($0.name) == key(name) }) {
                     if policy == .update {
                         if row.meaning == .perMaand {
-                            var updated = existingHolding
-                            updated.monthlyContribution = amount
-                            updateHolding(updated, current: target, now: now)
+                            setContributionAmount(existingHolding.id, amount: amount, current: target)
                         } else {
                             addSnapshot(holdingID: existingHolding.id, value: amount, invested: row.invested, date: now)
                         }
@@ -2317,16 +2314,6 @@ extension FinanceData {
             }
         }
 
-        // Alleen de regels teruggeven aan het actuele plan: bij "bijwerken" hebben `updatePot` en `updateHolding`
-        // de verdeling van deze maand al aangepast, en die mag niet door het oude plan van boven overschreven worden.
-        if planChanged {
-            let importedIncome = plan.extraIncome
-            let importedExpenses = plan.expenses
-            editPlan(target) { stored in
-                stored.extraIncome = importedIncome
-                stored.expenses = importedExpenses
-            }
-        }
         return report
     }
 }

@@ -331,13 +331,14 @@ enum BufferCalc {
     }
 
     /// Standaard maandbedrag: de verdeling van de gekozen pot deze maand, anders wat er nog over is
-    /// (nooit negatief), anders 0.
+    /// (nooit negatief), anders 0. Een schatting voor elke maand: bij een salaris om de zoveel weken of dagen rekent het
+    /// met een gemiddelde maand (`estimatedAllocation`, `estimatedRemaining`); bij het maandelijkse schema is dat deze maand.
     static func defaultMonthlySaving(in data: FinanceData, setup: BufferSetup, current: YearMonth) -> Double {
         if setup.source.usesPot, let pot = resolvedPot(in: data, preferred: setup.potID) {
-            let allocated = data.allocation(pot.id, in: current)
+            let allocated = data.estimatedAllocation(pot.id, in: current)
             if allocated > 0 { return allocated.cents }
         }
-        let left = data.remaining(in: current)
+        let left = data.estimatedRemaining(in: current)
         return left > 0 ? left.cents : 0
     }
 

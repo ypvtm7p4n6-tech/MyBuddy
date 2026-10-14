@@ -122,9 +122,11 @@ extension FinanceData {
         return holdings.reduce(0.0) { $0 + $1.netReturn } / Double(holdings.count)
     }
 
-    /// Wat er deze maand in totaal wordt ingelegd.
+    /// Wat er in totaal per maand wordt ingelegd, voor schattingen (toekomstschatting, doelen): wat er deze maand in totaal
+    /// wordt ingelegd. Bij een salaris om de zoveel weken of dagen en een inleg als percentage van het inkomen is het die van
+    /// een GEMIDDELDE maand (`estimatedFigures`). Bij het maandelijkse schema precies `investedTotal(in:)`.
     func monthlyInvestment(current: YearMonth) -> Double {
-        investedTotal(in: current)
+        CentsMath.value(estimatedFigures(current).invested)
     }
 
     // MARK: Wijzigen

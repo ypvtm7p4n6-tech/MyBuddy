@@ -8,8 +8,10 @@ import Foundation
 
 extension FinanceData {
     /// Effectief netto uurloon uit je salarisinstellingen.
-    /// - Uurloon: het ingestelde uurloon.
-    /// - Vast bedrag: maandsalaris gedeeld door het gemiddeld aantal uren per maand (uren per week × 52 / 12).
+    /// - Uurloon: het ingestelde uurloon (bij elk salarisschema hetzelfde).
+    /// - Vast bedrag: het GEMIDDELDE maandsalaris gedeeld door het gemiddeld aantal uren per maand. Bij het maandelijkse
+    ///   schema is dat maandsalaris / (uren per week × 52 / 12); bij een schema om de zoveel weken of dagen is het bedrag
+    ///   per uitbetaling gedeeld door de uren van één cyclus (beide delen krijgen dezelfde gemiddelde maand).
     /// nil als dat niet te berekenen is (geen uren per week of geen salaris): dan vult de gebruiker zelf een uurloon in.
     func effectiveHourlyWage() -> Double? {
         let wage: Double
@@ -19,7 +21,7 @@ extension FinanceData {
         case .fixed:
             let monthlyHours = salary.defaultMonthlyHours
             guard salary.hoursPerWeek > 0, monthlyHours.isFinite, monthlyHours > 0 else { return nil }
-            wage = salary.fixedMonthly / monthlyHours
+            wage = salary.averageMonthlyFixedAmount / monthlyHours
         }
         guard wage.isFinite, wage > 0 else { return nil }
         let rounded = wage.cents
@@ -296,12 +298,14 @@ extension PurchaseContext {
     static func make(from data: FinanceData, current: YearMonth, today: Date = Date(),
                      bufferPotID: UUID? = nil) -> PurchaseContext {
         var context = PurchaseContext()
-        let income = data.income(in: current)
+        // Een GEMIDDELDE maand (`estimated...`): bij een salaris om de zoveel weken of dagen is een maand met nul of twee
+        // uitbetalingen geen maat voor wat je gewoonlijk per maand hebt. Bij het maandelijkse schema is het deze maand.
+        let income = data.estimatedMonthlyIncome(in: current)
         context.monthlyIncome = max(0, income)
         // Zonder inkomen zegt het maandplan niets: het restant is dan alleen min de uitgaven, en misschien is het
         // salaris gewoon nog niet ingevuld. Dan laten we het maandplan buiten de uitspraak.
         if income > 0 {
-            context.remainingThisMonth = data.remaining(in: current)
+            context.remainingThisMonth = data.estimatedRemaining(in: current)
             context.expensesExceedIncome = CentsMath.int(income) - CentsMath.int(data.expensesFromBank(in: current)) < 0
         }
         if data.hasBankBalance {
@@ -317,7 +321,7 @@ extension PurchaseContext {
                                              name: pot.name,
                                              balance: max(0, data.potBalanceNow(pot.id, current: current, today: today)),
                                              goalAmount: pot.goalAmount,
-                                             monthlyContribution: data.allocation(pot.id, in: current),
+                                             monthlyContribution: data.estimatedAllocation(pot.id, in: current),
                                              isBuffer: pot.id == bufferID))
         }
         context.pots = options

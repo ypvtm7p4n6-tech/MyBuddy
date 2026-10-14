@@ -108,15 +108,16 @@ enum GoalMath {
 extension FinanceData {
     func goal(_ id: UUID) -> LifeGoal? { goals.first { $0.id == id } }
 
-    /// Inkomensverlies per maand als je minder uren werkt.
+    /// Inkomensverlies per maand als je minder uren werkt. Een schatting: het GEMIDDELDE per maand (bij een salaris om de
+    /// zoveel weken of dagen telt een maand met twee uitbetalingen niet dubbel), zie `SalarySettings.averageMonthly(perWeek:)`.
     func monthlyIncomeGap(for goal: LifeGoal) -> Double {
         if let o = goal.monthlyGapOverride { return max(0, o) }
         let from = goal.hoursFrom > 0 ? goal.hoursFrom : salary.hoursPerWeek
         let to = goal.hoursTo
         guard from > to, from > 0 else { return 0 }
         switch salary.mode {
-        case .hourly: return (salary.hourlyRate * (from - to) * 52 / 12).cents
-        case .fixed: return (salary.fixedMonthly * (1 - to / from)).cents
+        case .hourly: return salary.averageMonthly(perWeek: salary.hourlyRate * (from - to)).cents
+        case .fixed: return (salary.averageMonthlyFixedAmount * (1 - to / from)).cents
         }
     }
 
@@ -138,7 +139,9 @@ extension FinanceData {
     }
 
     /// Uitgangspunten van een doel. Bij financiering uit een spaarpot is `start` het saldo van nu (`today`, zoals
-    /// `potBalanceNow`): de inleg van de 25e telt pas vanaf de 25e mee, en niet al op de 9e.
+    /// `potBalanceNow`): de inleg van de 25e telt pas vanaf de 25e mee, en niet al op de 9e. De maandinleg is die van een
+    /// GEMIDDELDE maand (`estimatedAllocation`): bij een salaris om de zoveel weken of dagen en een inleg als percentage van
+    /// het inkomen is een maand met twee uitbetalingen geen maat voor "elke maand".
     func goalInputs(for goal: LifeGoal, current: YearMonth, today: Date = Date()) -> GoalInputs {
         let inflation = settings.inflation
         let portfolioReturn = weightedNetReturn(current: current)
@@ -153,7 +156,7 @@ extension FinanceData {
             monthly = monthlyInvestment(current: current)
         case .pot(let id):
             start = potBalanceNow(id, current: current, today: today)
-            monthly = allocation(id, in: current)
+            monthly = estimatedAllocation(id, in: current)
             nominal = 0
             name = pot(id)?.name ?? "Spaarpot"
         case .custom(let s, let m, let r):

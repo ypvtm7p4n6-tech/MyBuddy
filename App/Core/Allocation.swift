@@ -60,6 +60,18 @@ enum AllocationRule: Equatable {
         if case .percent = self { return true }
         return false
     }
+
+    /// Korte tekst voor in de UI: "€ 300" voor een vast bedrag, "10% van je salaris" of "12,5% van al je inkomsten" voor
+    /// een percentage.
+    var summary: String {
+        switch self {
+        case .amount(let value):
+            return Fmt.euro(value)
+        case .percent(let rule):
+            let base = rule.basis == .salary ? "je salaris" : "al je inkomsten"
+            return "\(Fmt.percent(rule.percent / 100, digits: 2)) van \(base)"
+        }
+    }
 }
 
 /// Het inkomen van een maand in hele centen, per grondslag.
@@ -86,14 +98,19 @@ extension Pot: ContributionSource {}
 extension Holding: ContributionSource {}
 
 extension ContributionSource {
-    /// De standaardregel voor een maand (zonder overschrijving): vanaf de startmaand het vaste bedrag of het percentage,
-    /// ervoor niets.
-    func defaultRule(in month: YearMonth) -> AllocationRule {
-        guard month >= startMonth else { return .amount(0) }
+    /// De inlegwijze zoals ingesteld, los van een maand: het vaste bedrag of het percentage met zijn grondslag. Het
+    /// percentage staat hier al op twee decimalen (zoals het wordt uitgerekend).
+    var contributionRule: AllocationRule {
         switch contributionMode {
         case .fixed: return .amount(monthlyContribution)
-        case .percentage: return .percent(PercentRule(percent: contributionPercent, basis: contributionBasis))
+        case .percentage: return .percent(PercentRule(percent: AllocationMath.cleanPercent(contributionPercent), basis: contributionBasis))
         }
+    }
+
+    /// De standaardregel voor een maand (zonder overschrijving): vanaf de startmaand de inlegwijze, ervoor niets.
+    func defaultRule(in month: YearMonth) -> AllocationRule {
+        guard month >= startMonth else { return .amount(0) }
+        return contributionRule
     }
 }
 
@@ -208,7 +225,7 @@ extension FinanceData {
     func incomeBases(of plan: MonthPlan, in month: YearMonth) -> IncomeBases {
         var extra = 0
         for line in plan.extraIncome { extra = CentsMath.add(extra, CentsMath.int(line.amount)) }
-        let salary = CentsMath.int(salaryAmount(in: month, plan: plan))
+        let salary = salaryCents(in: month, plan: plan)
         return IncomeBases(salary: salary, all: CentsMath.add(salary, extra))
     }
 
@@ -287,20 +304,73 @@ extension FinanceData {
         }
     }
 
+    /// Overschrijft de verdeling van één maand met een regel (bedrag of percentage). Een eerdere overschrijving van die
+    /// maand voor deze pot of belegging vervalt.
+    mutating func setAllocationRule(_ id: UUID, in month: YearMonth, rule: AllocationRule) {
+        switch rule {
+        case .amount(let value): setAllocation(id, in: month, amount: value)
+        case .percent(let percent): setAllocationPercent(id, in: month, percent: percent.percent, basis: percent.basis)
+        }
+    }
+
+    /// De inlegwijze van een pot of belegging (vast bedrag of percentage), los van een maand. nil als het id niet bestaat.
+    func contributionRule(of id: UUID) -> AllocationRule? {
+        if let pot = pot(id) { return pot.contributionRule }
+        return holdings.first(where: { $0.id == id })?.contributionRule
+    }
+
     /// Zet de standaardinleg van een pot of belegging op een percentage van het inkomen (vast percentage: elke maand
     /// hetzelfde). Voor de lopende maand geldt het ook meteen, zoals bij een nieuwe standaardinleg met een bedrag.
     mutating func setContributionPercent(_ id: UUID, percent: Double, basis: IncomeBasis, current: YearMonth) {
         let clean = AllocationMath.cleanPercent(percent)
-        if var updated = pot(id) {
-            updated.contributionMode = .percentage
-            updated.contributionPercent = clean
-            updated.contributionBasis = basis
-            updatePot(updated, current: current)
-        } else if var updated = holdings.first(where: { $0.id == id }) {
-            updated.contributionMode = .percentage
-            updated.contributionPercent = clean
-            updated.contributionBasis = basis
-            updateHolding(updated, current: current)
+        let before = contributionRule(of: id)
+        if let i = pots.firstIndex(where: { $0.id == id }) {
+            pots[i].contributionMode = .percentage
+            pots[i].contributionPercent = clean
+            pots[i].contributionBasis = basis
+        } else if let i = holdings.firstIndex(where: { $0.id == id }) {
+            holdings[i].contributionMode = .percentage
+            holdings[i].contributionPercent = clean
+            holdings[i].contributionBasis = basis
+        } else {
+            return
+        }
+        syncCurrentMonth(id, with: before, current: current)
+    }
+
+    /// Zet de standaardinleg van een pot of belegging op een vast bedrag per maand (zoals voor de percentages bestond).
+    /// Voor de lopende maand geldt het ook meteen.
+    mutating func setContributionAmount(_ id: UUID, amount: Double, current: YearMonth) {
+        let before = contributionRule(of: id)
+        if let i = pots.firstIndex(where: { $0.id == id }) {
+            pots[i].contributionMode = .fixed
+            pots[i].monthlyContribution = amount.cents
+        } else if let i = holdings.firstIndex(where: { $0.id == id }) {
+            holdings[i].contributionMode = .fixed
+            holdings[i].monthlyContribution = amount.cents
+        } else {
+            return
+        }
+        syncCurrentMonth(id, with: before, current: current)
+    }
+
+    /// Na een wijziging van de standaardinleg (`before` was de oude): de lopende maand krijgt de nieuwe standaard,
+    /// maar alleen als de inlegwijze echt veranderde en de pot of belegging al bestaat. Eerdere maanden blijven
+    /// zoals ze waren: die zijn vastgelegd (`materialize`) of volgen de standaard van hun tijd niet meer.
+    ///
+    /// Wie een pot of belegging zelf wijzigt (`updatePot`, `updateHolding`) en daarbij de inlegwijze verandert, roept
+    /// dit aan om de lopende maand mee te laten gaan.
+    mutating func syncCurrentMonth(_ id: UUID, with before: AllocationRule?, current: YearMonth) {
+        guard let after = contributionRule(of: id), after != before else { return }
+        let start = pot(id)?.startMonth ?? holdings.first(where: { $0.id == id })?.startMonth
+        guard let start, current >= start else { return }
+        editPlan(current) { plan in
+            plan.allocations.removeValue(forKey: id.uuidString)
+            plan.percentAllocations.removeValue(forKey: id.uuidString)
+            switch after {
+            case .amount(let value): plan.allocations[id.uuidString] = value.cents
+            case .percent(let rule): plan.percentAllocations[id.uuidString] = rule
+            }
         }
     }
 

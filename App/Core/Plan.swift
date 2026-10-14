@@ -197,14 +197,20 @@ extension FinanceData {
     ///
     /// Het plan waarmee `body` werkt is het plan zoals de maand het heeft (`plan(for:)`). Daarna: een nieuwe terugkerende
     /// regel krijgt een reeks, en een regel van een reeks die `body` weghaalt wordt voor deze maand overgeslagen (zodat hij
-    /// er niet ongemerkt terugkomt). Stoppen vanaf een maand en alleen-deze-maand-bewerken staan in
+    /// er niet ongemerkt terugkomt). Bepaalde de weggehaalde regel wat de volgende maanden zijn, dan houden die maanden
+    /// hem (zie `carryBaseline`). Stoppen vanaf een maand en alleen-deze-maand-bewerken staan in
     /// `removeLine(id:kind:in:scope:)` en `updateLine(_:kind:in:scope:)`.
     mutating func editPlan(_ month: YearMonth, _ body: (inout MonthPlan) -> Void) {
-        let before = plan(for: month)
+        let stored = storedPlans
+        let before = plan(for: month, using: stored)
         var p = before
         body(&p)
+        let dropped = FinanceData.droppedSeriesLines(before: before, after: p)
         FinanceData.settleSeries(in: &p, before: before)
         months[month.key] = p
+        for item in dropped {
+            carryBaseline(of: item.line, income: item.income, from: month, using: stored)
+        }
     }
 
     /// Legt alle maanden t/m `current` vast, zodat latere wijzigingen van standaarden het verleden niet veranderen.
@@ -238,14 +244,25 @@ extension FinanceData {
 
     // MARK: Dagen
 
-    /// Dag van de maand waarop het salaris binnenkomt (1...31). Korte maanden gebruiken hun laatste dag.
+    /// Dag van de maand waarop het salaris binnenkomt (1...31): de `payDay`. Korte maanden gebruiken hun laatste dag.
+    /// Bij een schema om de zoveel weken of dagen is dit alleen de terugval voor een maand zonder uitbetaling; welke dag
+    /// "de salarisdag" van een bepaalde maand is, zegt `salaryDay(in:)`.
     func salaryDay() -> Int {
         YearMonth.clampedDay(salary.payDay)
     }
 
-    /// Dag waarop een inkomstenregel binnenkomt: de eigen dag, anders de salarisdag.
+    /// Dag waarop een inkomstenregel binnenkomt: de eigen dag, anders de salarisdag (`salaryDay()`, de `payDay`).
+    /// Gebruik `incomeDay(of:in:)` als de maand bekend is: bij een salaris om de zoveel weken of dagen volgt de regel
+    /// zonder eigen dag de eerste uitbetaling van die maand.
     func incomeDay(of line: MoneyLine) -> Int {
         YearMonth.clampedDay(line.day ?? salaryDay())
+    }
+
+    /// Dag waarop een inkomstenregel in `month` binnenkomt: de eigen dag, anders de salarisdag van die maand
+    /// (`salaryDay(in:)`: de eerste uitbetaling van de maand, of de `payDay`-terugval). Bij het maandelijkse schema gelijk
+    /// aan `incomeDay(of:)`.
+    func incomeDay(of line: MoneyLine, in month: YearMonth) -> Int {
+        YearMonth.clampedDay(line.day ?? salaryDay(in: month))
     }
 
     /// Dag waarop een uitgave van de rekening gaat: de eigen dag, anders de 1e.
@@ -254,13 +271,14 @@ extension FinanceData {
     }
 
     /// Dag van `month` waarop de verdeling voor een spaarpot of belegging wordt overgeboekt.
-    /// Volgorde: de dag van de hele maandverdeling, dan de dag van de pot of belegging zelf, dan de salarisdag.
+    /// Volgorde: de dag van de hele maandverdeling, dan de dag van de pot of belegging zelf, dan de salarisdag van die maand
+    /// (`salaryDay(in:)`: de eerste uitbetaling van de maand, of de `payDay`).
     /// Het resultaat past in de maand (31 in februari is de laatste dag van februari).
     func transferDay(for id: UUID, in month: YearMonth) -> Int {
         let raw = months[month.key]?.transferDay
             ?? pots.first(where: { $0.id == id })?.transferDay
             ?? holdings.first(where: { $0.id == id })?.transferDay
-            ?? salary.payDay
+            ?? salaryDay(in: month)
         return min(YearMonth.clampedDay(raw), month.dayCount)
     }
 
@@ -320,13 +338,14 @@ extension FinanceData {
     /// beleggingen als tekst, in de volgorde van `pots` en `holdings`.
     ///
     /// Het inkomen komt eerst en hangt nooit van de verdeling af; een verdeling als percentage rekent daar overheen
-    /// (`allocationCents`), dezelfde som als overal.
-    fileprivate func monthFigures(of p: MonthPlan, in month: YearMonth, storedPlan: MonthPlan?,
-                                  potKeys: [String], holdingKeys: [String]) -> MonthFigures {
+    /// (`allocationCents`), dezelfde som als overal. Het salaris is de som van de uitbetalingen van de maand
+    /// (`salaryCents(in:plan:)`). Alleen voor SCHATTINGEN (`estimatedFigures`) komt het salaris van buiten: `salaryCents`.
+    func monthFigures(of p: MonthPlan, in month: YearMonth, storedPlan: MonthPlan?,
+                      potKeys: [String], holdingKeys: [String], salaryCents given: Int? = nil) -> MonthFigures {
         var f = MonthFigures()
         var extra = 0
         for line in p.extraIncome { extra = CentsMath.add(extra, CentsMath.int(line.amount)) }
-        let salaryCents = CentsMath.int(salaryAmount(in: month, plan: p))
+        let salaryCents = given ?? self.salaryCents(in: month, plan: p)
         f.income = CentsMath.add(salaryCents, extra)
         let bases = IncomeBases(salary: salaryCents, all: f.income)
         var expenses = 0
@@ -373,9 +392,11 @@ extension FinanceData {
         }
     }
 
+    /// Het salaris van een maand volgens zijn plan: de SOM van de uitbetalingen van die maand (`salaryCents(in:plan:)`).
+    /// Bij het maandelijkse schema is dat het maandsalaris (of de overschrijving van de maand), zoals altijd. Nooit een
+    /// gemiddelde: voor schattingen zie `SalarySettings.averageMonthlyAmount`.
     func salaryAmount(in month: YearMonth, plan p: MonthPlan) -> Double {
-        if let override = p.salaryOverride { return override.cents }
-        return salary.monthlyAmount(hoursOverride: p.hoursOverride)
+        CentsMath.value(salaryCents(in: month, plan: p))
     }
 
     func salaryAmount(in month: YearMonth) -> Double {
