@@ -1,6 +1,17 @@
 import SwiftUI
 import Charts
 
+// MARK: - Logica van de dagschermen (zonder SwiftUI)
+//
+// Alles tussen "BEGIN LOGICA" en "EINDE LOGICA" is Foundation-only en leest alleen uit de dagboekhouding van de
+// rekenmotor (`MonthLedger` en `DayTotals`, zie Ledger.swift). Er wordt hier geen bedrag zelf uitgerekend: de
+// schermen tonen wat de motor levert, zodat Overzicht, "Nog te verdelen", spaarpotten, bankrekening en dagen
+// precies dezelfde cijfers hebben. Alleen waar een bedrag uit twee motorwaarden samengesteld wordt (bijvoorbeeld
+// "overgeschreven" = spaarpotten + beleggingen) of waar een verschil getoond moet worden (de controle), gebeurt dat
+// in hele centen (`CentsMath`) en staat het hieronder uitgelegd.
+
+// BEGIN LOGICA
+
 // MARK: - Dagen in woorden
 
 /// Korte Nederlandse teksten voor dagen en datums ("de 25e", "ma 25 okt").
@@ -42,22 +53,17 @@ enum DayText {
     }
 }
 
-// MARK: - Logica van de dagschermen (zonder SwiftUI)
-//
-// Alles tussen "BEGIN LOGICA" en "EINDE LOGICA" is Foundation-only en leest alleen uit de dagboekhouding van de
-// rekenmotor (`MonthLedger` en `DayTotals`, zie Ledger.swift). Er wordt hier geen bedrag zelf uitgerekend: de
-// schermen tonen wat de motor levert, zodat Overzicht, "Nog te verdelen", spaarpotten, bankrekening en dagen
-// precies dezelfde cijfers hebben. Alleen waar een bedrag uit twee motorwaarden samengesteld wordt (bijvoorbeeld
-// "overgeschreven" = spaarpotten + beleggingen) gebeurt dat in hele centen en staat het hieronder uitgelegd.
-
-// BEGIN LOGICA
-
-/// Bedragen met teken, voor regels en tegels.
+/// Bedragen met teken, voor regels en tegels, en telwoorden.
 enum CashflowText {
     /// "+ € 3.000", "− € 1.000" of "€ 0" (zonder teken bij nul).
     static func signed(_ amount: Double) -> String {
         let sign = amount > 0 ? "+ " : (amount < 0 ? "− " : "")
         return sign + Fmt.euro(abs(amount))
+    }
+
+    /// "1 dag", "12 dagen".
+    static func days(_ count: Int) -> String {
+        count == 1 ? "1 dag" : "\(count) dagen"
     }
 }
 
@@ -166,10 +172,136 @@ enum CashflowDayFilter: String, CaseIterable, Identifiable {
     }
 }
 
-/// Ankers om naar een dag te scrollen.
+/// Waar de lijst naartoe scrolt.
 enum CashflowScroll {
-    static func dayID(_ day: Int) -> String { "cashflow-day-\(day)" }
+    /// De dag van vandaag als die in deze maand valt, anders nil (dan scrolt de lijst nergens naartoe). Dit is ook het
+    /// id van de kaart van die dag in de lijst.
+    static func todayTarget(in ledger: MonthLedger) -> Int? {
+        ledger.days.first(where: { $0.isToday })?.day
+    }
 }
+
+// MARK: Sluitende regels
+
+/// Eén regel in een sluitend overzicht van de maand (bankrekening of spaarpotten). `effectCents` is wat de regel met het
+/// saldo doet, met teken (nul voor begin, eind en detailregels): begin + alle effecten = eind. Zo laat de test zien dat
+/// het getoonde overzicht echt sluit, ook met handmatige boekingen en een ingevuld saldo.
+struct CashflowRow: Identifiable, Equatable {
+    enum Kind: String {
+        case begin, inflow, inflowPlan, inflowManual, outflow, outflowPlan, outflowManual
+        case toPots, toPotsPlan, toPotsManual, toHoldings, correction, end
+        case potsPlan, potsManual, interest, paidFromPots
+    }
+
+    enum Style { case line, detail, total }
+    enum Tone { case neutral, positive, negative, accent }
+
+    var kind: Kind
+    var title: String
+    /// "+", "−", "±", "=" of leeg.
+    var sign: String
+    /// Het bedrag zoals het getoond wordt. nil = onbekend.
+    var amount: Double?
+    /// Toont het bedrag met een plus of min (voor regels die ook negatief kunnen zijn).
+    var showsSign = false
+    var note: String?
+    var style: Style = .line
+    var tone: Tone = .neutral
+    var effectCents = 0
+
+    var id: String { kind.rawValue }
+}
+
+/// De regels van het maandoverzicht, rechtstreeks uit `MonthLedger`.
+enum CashflowSummary {
+    /// Een regel die geld laat bewegen: het teken volgt het effect op het saldo (`zeroSign` bij nul).
+    private static func movement(_ kind: CashflowRow.Kind, _ title: String, effect: Int, zeroSign: String,
+                                 tone: CashflowRow.Tone, note: String? = nil) -> CashflowRow {
+        let sign = effect > 0 ? "+" : (effect < 0 ? "−" : zeroSign)
+        return CashflowRow(kind: kind, title: title, sign: sign, amount: CentsMath.value(abs(effect)), note: note,
+                           tone: tone, effectCents: effect)
+    }
+
+    /// De bankrekening van de maand: begin, binnen, eruit, overgeschreven naar spaarpotten en beleggingen, het verschil met
+    /// een ingevuld saldo, eind. Handmatige stortingen, opnames en overboekingen staan apart bij elke regel als ze er zijn.
+    static func bankRows(_ l: MonthLedger) -> [CashflowRow] {
+        var rows: [CashflowRow] = []
+        rows.append(CashflowRow(kind: .begin, title: "Begin van de maand", sign: "", amount: l.openingBank, style: .total))
+
+        let payouts = l.salaryPayoutCount
+        rows.append(movement(.inflow, "Binnen", effect: CentsMath.int(l.inflow), zeroSign: "+", tone: .positive,
+                             note: payouts > 1 ? "Met \(payouts) salarisuitbetalingen" : nil))
+        if CentsMath.int(l.manualInflow) != 0 {
+            rows.append(CashflowRow(kind: .inflowPlan, title: "Salaris en inkomsten", sign: "", amount: l.planInflow, style: .detail))
+            rows.append(CashflowRow(kind: .inflowManual, title: "Handmatig gestort", sign: "", amount: l.manualInflow, style: .detail))
+        }
+
+        rows.append(movement(.outflow, "Eruit", effect: -CentsMath.int(l.outflow), zeroSign: "−", tone: .negative))
+        if CentsMath.int(l.manualOutflow) != 0 {
+            rows.append(CashflowRow(kind: .outflowPlan, title: "Uitgaven van je rekening", sign: "", amount: l.planOutflow, style: .detail))
+            rows.append(CashflowRow(kind: .outflowManual, title: "Handmatig opgenomen", sign: "", amount: l.manualOutflow, style: .detail))
+        }
+
+        // Meer terug van de spaarpotten dan erheen: dan komt er netto geld bij op de bankrekening.
+        let toPots = CentsMath.int(l.toPots)
+        if toPots != 0 || CentsMath.int(l.planToPots) != 0 || CentsMath.int(l.manualToPots) != 0 {
+            let back = toPots < 0
+            rows.append(movement(.toPots, back ? "Teruggeboekt van spaarpotten" : "Overgeschreven naar spaarpotten",
+                                 effect: -toPots, zeroSign: "−", tone: .accent))
+            if CentsMath.int(l.manualToPots) != 0 {
+                rows.append(CashflowRow(kind: .toPotsPlan, title: "Maandverdeling", sign: "", amount: l.planToPots, style: .detail))
+                rows.append(CashflowRow(kind: .toPotsManual, title: "Handmatig overgeboekt", sign: "", amount: l.manualToPots,
+                                        showsSign: true, style: .detail))
+            }
+        }
+
+        let toHoldings = CentsMath.int(l.toHoldings)
+        if toHoldings != 0 {
+            rows.append(movement(.toHoldings, toHoldings < 0 ? "Teruggeboekt van beleggingen" : "Overgeschreven naar beleggingen",
+                                 effect: -toHoldings, zeroSign: "−", tone: .accent))
+        }
+
+        let correction = CentsMath.int(l.bankCorrections)
+        if correction != 0 {
+            rows.append(CashflowRow(kind: .correction, title: "Verschil met je ingevulde saldo", sign: "±", amount: l.bankCorrections,
+                                    showsSign: true, note: "Je vulde een saldo in dat afweek van wat de app verwachtte.",
+                                    effectCents: correction))
+        }
+
+        rows.append(CashflowRow(kind: .end, title: "Eind van de maand", sign: "=", amount: l.closingBank, style: .total))
+        return rows
+    }
+
+    /// De spaarpotten van de maand: begin, inleg, handmatige boekingen, rente, betaald uit potten, eind.
+    static func potsRows(_ l: MonthLedger) -> [CashflowRow] {
+        var rows: [CashflowRow] = []
+        rows.append(CashflowRow(kind: .begin, title: "Begin van de maand", sign: "", amount: l.openingPots, style: .total))
+
+        let plan = CentsMath.int(l.planToPots)
+        if plan != 0 {
+            rows.append(movement(.potsPlan, "Inleg volgens je verdeling", effect: plan, zeroSign: "+", tone: .accent))
+        }
+        let manual = CentsMath.int(l.potEntriesNet)
+        if manual != 0 {
+            rows.append(CashflowRow(kind: .potsManual, title: "Handmatige boekingen", sign: "±", amount: l.potEntriesNet,
+                                    showsSign: true, note: "Stortingen, opnames en overboekingen die je zelf deed.",
+                                    effectCents: manual))
+        }
+        let interest = CentsMath.int(l.interest)
+        if interest != 0 {
+            rows.append(movement(.interest, "Rente", effect: interest, zeroSign: "+", tone: .positive))
+        }
+        let paid = CentsMath.int(l.paidFromPots)
+        if paid != 0 {
+            rows.append(movement(.paidFromPots, "Betaald uit potten", effect: -paid, zeroSign: "−", tone: .negative))
+        }
+
+        rows.append(CashflowRow(kind: .end, title: "Eind van de maand", sign: "=", amount: l.closingPots, style: .total))
+        return rows
+    }
+}
+
+// MARK: Controle
 
 /// De controle "klopt het met je overzicht?". Is alles in orde (`MonthLedger.allReconciles`), dan zijn er geen
 /// meldingen. Anders staat er per afwijking een Nederlandse zin met het verschil, zodat de gebruiker ziet waar het zit.
@@ -284,6 +416,112 @@ struct CashflowLineLookup {
     init(plan: MonthPlan) {
         income = Dictionary(plan.extraIncome.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         expenses = Dictionary(plan.expenses.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+}
+
+// MARK: Grafiek en bereiken
+
+/// Eén punt van de dagsaldo-grafiek.
+struct DayChartItem: Identifiable, Equatable {
+    let id: Date
+    let value: Double
+    let planned: Bool
+    var date: Date { id }
+
+    /// Punten voor de grafiek: de dagen met een bekend saldo, in de volgorde van `days`.
+    static func items(from days: [DayTotals]) -> [DayChartItem] {
+        days.compactMap { day -> DayChartItem? in
+            guard let balance = day.bankBalance else { return nil }
+            return DayChartItem(id: day.date, value: balance, planned: day.isPlanned)
+        }
+    }
+}
+
+/// Hoe ver de dagsaldo-grafiek kijkt: de komende 30 dagen of de gekozen maand.
+enum DayChartRange: String, CaseIterable, Identifiable {
+    case next30, month
+    var id: String { rawValue }
+
+    /// Van welke dag tot welke dag (beide meegerekend) de grafiek loopt.
+    func window(focus: YearMonth, today: Date) -> (from: Date, to: Date) {
+        let cal = YearMonth.calendar
+        let todayStart = cal.startOfDay(for: today)
+        switch self {
+        case .next30:
+            let end = cal.date(byAdding: .day, value: 29, to: todayStart) ?? todayStart
+            return (todayStart, end)
+        case .month:
+            return (focus.firstDay, focus.date(day: focus.dayCount))
+        }
+    }
+}
+
+/// De dagen die je op de bankpagina kunt kiezen.
+enum BankDayBounds {
+    /// Vanaf de eerste dag van de startmaand van de gegevens tot twee jaar na vandaag. Zonder grens rekent elke body alle
+    /// maanden vanaf het laatste saldo door (een datum in het jaar 3000 kost bijna een seconde), en zoiets ver vooruit
+    /// zegt niets. Vandaag valt altijd binnen het bereik, ook als de startmaand (na een import) later ligt.
+    static func range(startMonth: YearMonth, today: Date) -> ClosedRange<Date> {
+        let cal = YearMonth.calendar
+        let upper = cal.date(byAdding: .year, value: 2, to: today) ?? today
+        let lower = min(startMonth.firstDay, cal.startOfDay(for: today))
+        return lower...max(lower, upper)
+    }
+
+    static func clamp(_ value: Date, to range: ClosedRange<Date>) -> Date {
+        min(max(value, range.lowerBound), range.upperBound)
+    }
+}
+
+// MARK: Waarschuwing: onder nul of onder de buffer
+
+/// Het bereik waarin de waarschuwing het laagste saldo zoekt. Voor de huidige maand vanaf vandaag (een dip in het verleden
+/// verbergt dan geen dip die nog komt) en 30 dagen vooruit, dus ook over de maandwisseling heen. Voor andere maanden de
+/// hele maand.
+enum BankLowPointWindow {
+    static func range(for month: YearMonth, current: YearMonth, today: Date) -> (from: Date, to: Date) {
+        let cal = YearMonth.calendar
+        let monthEnd = month.date(day: month.dayCount)
+        guard month == current else { return (month.firstDay, monthEnd) }
+        let todayStart = cal.startOfDay(for: today)
+        let ahead = cal.date(byAdding: .day, value: 30, to: todayStart) ?? todayStart
+        return (todayStart, max(monthEnd, ahead))
+    }
+}
+
+/// De tekst van de waarschuwing bij het laagste dagsaldo. nil als alles in orde is.
+struct BankLowPointNote: Equatable {
+    let text: String
+    let severe: Bool
+
+    /// - Parameters:
+    ///   - low: de dag met het laagste saldo (uit de dagboekhouding, dus hetzelfde saldo als op de dagkaarten).
+    ///   - buffer: de gewenste buffer op de bankrekening.
+    ///   - balanceNow: het saldo van nu, nil als dat niet bekend is.
+    static func make(low: DayTotals, buffer: Double, balanceNow: Double?, today: Date) -> BankLowPointNote? {
+        guard let lowBalance = low.bankBalance else { return nil }
+        let cal = YearMonth.calendar
+        let past = cal.startOfDay(for: low.date) < cal.startOfDay(for: today)
+        let isToday = DayText.isSameDay(low.date, today)
+        let day = DayText.weekdayShort(low.date)
+        let balance = Fmt.euro(lowBalance)
+        if lowBalance < 0 {
+            if past {
+                return BankLowPointNote(text: "Op \(day) stond je saldo onder nul (\(balance)).", severe: true)
+            }
+            let when = isToday ? "vandaag" : "op \(day)"
+            return BankLowPointNote(text: "Let op: \(when) staat je saldo onder nul (\(balance)). Kijk of je een uitgave of overschrijving naar een andere dag kunt zetten.",
+                                    severe: true)
+        }
+        // De buffermelding is bedoeld voor een dip die je plan veroorzaakt. Zit je nu al onder je buffer,
+        // dan zie je dat bij het blok Buffer en blijft deze balk weg, zodat de melding "onder nul" opvalt.
+        // Is het saldo van nu niet bekend, dan is er niets om mee te vergelijken en blijft de melding ook weg.
+        if let now = balanceNow, buffer > 0 && lowBalance < buffer && now >= buffer && !past {
+            let start = isToday ? "Vandaag" : "Op \(day)"
+            return BankLowPointNote(text: "\(start) zakt je saldo naar \(balance). Dat is onder je gewenste buffer van \(Fmt.euro(buffer)).",
+                                    severe: false)
+        }
+        return nil
     }
 }
 
@@ -445,6 +683,7 @@ private struct DayFigureTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .tile()
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -469,18 +708,24 @@ struct DayFlowTiles: View {
 }
 
 /// Het saldo van de bankrekening en van de spaarpotten aan het eind van een dag, en wat er die dag nog te verdelen is.
-/// Precies de waarden van `DayTotals`, op de kaart van de dag en in het blok "Per dag" op de bankpagina.
+/// Precies de waarden van `DayTotals`, op de kaart van de dag en in het blok "Per dag" op de bankpagina. Bij het saldo staat
+/// ook het saldo aan het begin van de dag, zodat de dag sluit: begin + binnen − eruit − overgeschreven = eind.
 struct DayBalanceRows: View {
     let day: DayTotals
     var showsBank = true
     var showsPots = true
     var showsRemaining = true
 
+    private func caption(opening: Double?) -> String {
+        guard let opening else { return "Aan het eind van de dag" }
+        return "Aan het eind van de dag · begin \(Fmt.euro(opening))"
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             if showsBank {
                 if let balance = day.bankBalance {
-                    DayValueRow(title: "Saldo bankrekening", caption: "Aan het eind van de dag", text: Fmt.euro(balance),
+                    DayValueRow(title: "Saldo bankrekening", caption: caption(opening: day.openingBank), text: Fmt.euro(balance),
                                 color: balance < 0 ? Theme.negative : Color.primary, bold: true)
                 } else {
                     DayValueRow(title: "Saldo bankrekening", text: "onbekend", color: Color.secondary)
@@ -495,7 +740,7 @@ struct DayBalanceRows: View {
                 }
             }
             if showsPots {
-                DayValueRow(title: "Spaarpotten totaal", caption: "Aan het eind van de dag", text: Fmt.euro(day.potsTotal))
+                DayValueRow(title: "Spaarpotten totaal", caption: caption(opening: day.openingPots), text: Fmt.euro(day.potsTotal))
                 if day.potEntriesNet != 0 {
                     DayValueRow(title: "Handmatig op spaarpotten", text: CashflowText.signed(day.potEntriesNet))
                 }
@@ -510,14 +755,6 @@ struct DayBalanceRows: View {
 
 // MARK: - Grafiek van het dagsaldo
 
-/// Eén punt van de dagsaldo-grafiek.
-struct DayChartItem: Identifiable, Equatable {
-    let id: Date
-    let value: Double
-    let planned: Bool
-    var date: Date { id }
-}
-
 /// Lijn met vlak eronder voor het saldo aan het eind van elke dag. Geplande dagen (na vandaag) staan gestippeld en lichter,
 /// de nulstreep is rood gestippeld. Een gekozen dag krijgt een stip. De punten zijn de dagen uit de dagboekhouding,
 /// dus dezelfde saldi als op de dagkaarten.
@@ -526,16 +763,8 @@ struct DayBalanceChart: View {
     var selected: Date? = nil
     var height: CGFloat = 190
 
-    /// Punten voor de grafiek: de dagen met een bekend saldo.
-    static func items(from days: [DayTotals]) -> [DayChartItem] {
-        days.compactMap { day -> DayChartItem? in
-            guard let balance = day.bankBalance else { return nil }
-            return DayChartItem(id: day.date, value: balance, planned: day.isPlanned)
-        }
-    }
-
     var body: some View {
-        let items = DayBalanceChart.items(from: days)
+        let items = DayChartItem.items(from: days)
         let actual = items.filter { !$0.planned }
         let bridge: [DayChartItem] = actual.last.map { [$0] } ?? []
         let future = bridge + items.filter { $0.planned }
@@ -615,34 +844,18 @@ struct BankLowPointNotice: View {
     let month: YearMonth
     @Environment(AppStore.self) private var store
 
-    private struct Note {
-        let text: String
-        let severe: Bool
-    }
-
-    /// De dag met het laagste saldo in het bereik dat bij deze maand hoort.
-    private func lowestPoint(_ book: LedgerBook, today: Date) -> DayTotals? {
-        let cal = YearMonth.calendar
-        let todayStart = cal.startOfDay(for: today)
-        let monthEnd = month.date(day: month.dayCount)
-        var from = month.firstDay
-        var to = monthEnd
-        if month == store.now {
-            from = todayStart
-            let ahead = cal.date(byAdding: .day, value: 30, to: todayStart) ?? todayStart
-            to = max(monthEnd, ahead)
-        }
-        return CashflowLowPoint.lowest(in: book.days(from: from, to: to))
-    }
-
     var body: some View {
         let d = store.data
         let today = store.today
-        let book = LedgerBook(d, today: today)
-        if let low = lowestPoint(book, today: today), let lowBalance = low.bankBalance {
-            let buffer = d.bankBuffer(current: store.now)
-            let balanceNow = d.bankBalanceNowIfKnown(current: store.now, today: today)
-            if let note = makeNote(for: low, balance: lowBalance, buffer: buffer, balanceNow: balanceNow) {
+        // Zonder een enkel meetpunt of boeking is er nergens een saldo: dan valt er niets te rekenen.
+        if d.hasBankBalance {
+            let book = LedgerBook(d, today: today)
+            let window = BankLowPointWindow.range(for: month, current: store.now, today: today)
+            if let low = CashflowLowPoint.lowest(in: book.days(from: window.from, to: window.to)),
+               let note = BankLowPointNote.make(low: low,
+                                                buffer: d.bankBuffer(current: store.now),
+                                                balanceNow: d.bankBalanceNowIfKnown(current: store.now, today: today),
+                                                today: today) {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: note.severe ? "exclamationmark.triangle.fill" : "exclamationmark.circle.fill")
                         .foregroundStyle(note.severe ? Theme.negative : Theme.warning)
@@ -658,41 +871,9 @@ struct BankLowPointNotice: View {
             }
         }
     }
-
-    private func makeNote(for low: DayTotals, balance lowBalance: Double, buffer: Double, balanceNow: Double?) -> Note? {
-        let cal = YearMonth.calendar
-        let today = store.today
-        let past = cal.startOfDay(for: low.date) < cal.startOfDay(for: today)
-        let isToday = DayText.isSameDay(low.date, today)
-        let day = DayText.weekdayShort(low.date)
-        let balance = Fmt.euro(lowBalance)
-        if lowBalance < 0 {
-            if past {
-                return Note(text: "Op \(day) stond je saldo onder nul (\(balance)).", severe: true)
-            }
-            let when = isToday ? "vandaag" : "op \(day)"
-            return Note(text: "Let op: \(when) staat je saldo onder nul (\(balance)). Kijk of je een uitgave of overschrijving naar een andere dag kunt zetten.",
-                        severe: true)
-        }
-        // De buffermelding is bedoeld voor een dip die je plan veroorzaakt. Zit je nu al onder je buffer,
-        // dan zie je dat bij het blok Buffer en blijft deze balk weg, zodat de melding "onder nul" opvalt.
-        // Is het saldo van nu niet bekend, dan is er niets om mee te vergelijken en blijft de melding ook weg.
-        if let now = balanceNow, buffer > 0 && lowBalance < buffer && now >= buffer && !past {
-            let start = isToday ? "Vandaag" : "Op \(day)"
-            return Note(text: "\(start) zakt je saldo naar \(balance). Dat is onder je gewenste buffer van \(Fmt.euro(buffer)).",
-                        severe: false)
-        }
-        return nil
-    }
 }
 
 // MARK: - Bankrekening: per dag
-
-/// Hoe ver de dagsaldo-grafiek kijkt: de komende 30 dagen of de gekozen maand.
-enum DayChartRange: String, CaseIterable, Identifiable {
-    case next30, month
-    var id: String { rawValue }
-}
 
 /// Blok "Per dag" op de bankpagina: kies een datum en zie wat er die dag binnenkomt, eruit gaat en wordt overgeschreven,
 /// het saldo van de bankrekening en de spaarpotten aan het eind van de dag, en wat er t/m die dag nog te verdelen is.
@@ -703,37 +884,12 @@ struct BankDayBlock: View {
     @State private var date = Date()
     @State private var rangeChoice: DayChartRange?
 
-    private struct ChartWindow {
-        let from: Date
-        let to: Date
-    }
-
-    private func chartWindow(_ range: DayChartRange, focus: YearMonth, today: Date) -> ChartWindow {
-        let cal = YearMonth.calendar
-        let todayStart = cal.startOfDay(for: today)
-        switch range {
-        case .next30:
-            let end = cal.date(byAdding: .day, value: 29, to: todayStart) ?? todayStart
-            return ChartWindow(from: todayStart, to: end)
-        case .month:
-            return ChartWindow(from: focus.firstDay, to: focus.date(day: focus.dayCount))
-        }
-    }
-
-    /// De dagen die je kunt kiezen: vanaf de eerste dag van de startmaand van de gegevens tot twee jaar na vandaag.
-    /// Zonder grens rekent elke body alle maanden vanaf het laatste saldo door (een datum in het jaar 3000 kost
-    /// bijna een seconde), en zoiets ver vooruit zegt niets.
     private var dayRange: ClosedRange<Date> {
-        let cal = YearMonth.calendar
-        let upper = cal.date(byAdding: .year, value: 2, to: store.today) ?? store.today
-        // Vandaag valt altijd binnen het bereik, ook als de startmaand (na een import) later ligt.
-        let lower = min(store.data.startMonth.firstDay, cal.startOfDay(for: store.today))
-        return lower...upper
+        BankDayBounds.range(startMonth: store.data.startMonth, today: store.today)
     }
 
     private func clampedDay(_ value: Date) -> Date {
-        let range = dayRange
-        return min(max(value, range.lowerBound), range.upperBound)
+        BankDayBounds.clamp(value, to: dayRange)
     }
 
     /// De gekozen dag, met een korte animatie zodat saldo en gebeurtenissen niet hard omspringen.
@@ -760,7 +916,7 @@ struct BankDayBlock: View {
                    subtitle: "Binnen, eruit en saldo op elke dag",
                    tint: Theme.olive.opacity(0.3)) {
             dayPicker(today: today)
-            dayDetails(d, book: book, today: today)
+            dayDetails(d, book: book)
             chartSection(book, range: range, defaultRange: defaultRange, focus: focus, today: today)
         }
         .onAppear {
@@ -803,7 +959,7 @@ struct BankDayBlock: View {
     }
 
     @ViewBuilder
-    private func dayDetails(_ d: FinanceData, book: LedgerBook, today: Date) -> some View {
+    private func dayDetails(_ d: FinanceData, book: LedgerBook) -> some View {
         let totals = book.day(date)
         let multipleSalaries = book.ledger(YearMonth(date: date)).salaryPayoutCount > 1
         VStack(alignment: .leading, spacing: 2) {
@@ -851,10 +1007,12 @@ struct BankDayBlock: View {
     @ViewBuilder
     private func chartSection(_ book: LedgerBook, range: DayChartRange, defaultRange: DayChartRange,
                               focus: YearMonth, today: Date) -> some View {
-        let span = chartWindow(range, focus: focus, today: today)
+        let span = range.window(focus: focus, today: today)
         let days = book.days(from: span.from, to: span.to).filter { $0.bankBalance != nil }
         let lowest = CashflowLowPoint.lowest(in: days)
         Divider()
+        Text("Saldo per dag")
+            .font(.subheadline.weight(.semibold))
         Picker("Periode van de grafiek", selection: Binding(get: { rangeChoice ?? defaultRange },
                                                            set: { rangeChoice = $0 })) {
             Text("Komende 30 dagen").tag(DayChartRange.next30)
@@ -961,21 +1119,21 @@ struct UpcomingDayRow: View {
 
 // MARK: - Dag voor dag: de maand in cijfers
 
-/// Eén regel in een sluitend overzicht: teken, omschrijving en bedrag.
+/// Een regel in een sluitend overzicht: teken, omschrijving en bedrag.
 private struct LedgerLineRow: View {
-    enum Style { case line, detail, total }
+    let row: CashflowRow
 
-    let sign: String
-    let title: String
-    let amount: Double?
-    var tone: Color = .primary
-    var style: Style = .line
-    var note: String? = nil
-    /// Toont het bedrag met een plus of min (voor regels die ook negatief kunnen zijn).
-    var showsSign = false
+    private var tone: Color {
+        switch row.tone {
+        case .neutral: return Color.primary
+        case .positive: return Theme.positive
+        case .negative: return Theme.negative
+        case .accent: return Theme.accent
+        }
+    }
 
     private var titleFont: Font {
-        switch style {
+        switch row.style {
         case .line: return Font.subheadline
         case .detail: return Font.footnote
         case .total: return Font.subheadline.weight(.bold)
@@ -983,7 +1141,7 @@ private struct LedgerLineRow: View {
     }
 
     private var amountFont: Font {
-        switch style {
+        switch row.style {
         case .line: return Font.subheadline.weight(.semibold)
         case .detail: return Font.footnote
         case .total: return Font.subheadline.weight(.bold)
@@ -991,35 +1149,39 @@ private struct LedgerLineRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(sign)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 14)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(titleFont)
-                    .foregroundStyle(style == .detail ? Color.secondary : Color.primary)
-                    .lineLimit(2)
-                if let note {
-                    Text(note)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+            // Boven het eind staat een streep: begin + regels = eind.
+            if row.kind == .end { Divider() }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(row.sign)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.title)
+                        .font(titleFont)
+                        .foregroundStyle(row.style == .detail ? Color.secondary : Color.primary)
+                        .lineLimit(2)
+                    if let note = row.note {
+                        Text(note)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                Spacer(minLength: 8)
+                amountView
             }
-            Spacer(minLength: 8)
-            amountView
+            .padding(.leading, row.style == .detail ? 22 : 0)
         }
-        .padding(.leading, style == .detail ? 22 : 0)
         .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
     private var amountView: some View {
-        if let amount {
-            Text(showsSign ? CashflowText.signed(amount) : Fmt.euro(amount))
+        if let amount = row.amount {
+            Text(row.showsSign ? CashflowText.signed(amount) : Fmt.euro(amount))
                 .font(amountFont)
-                .foregroundStyle(style == .detail ? Color.secondary : tone)
+                .foregroundStyle(row.style == .detail ? Color.secondary : tone)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .contentTransition(.numericText())
@@ -1084,8 +1246,6 @@ struct CashflowBankBlock: View {
         let lowBalance = lowest?.bankBalance
         let lowText = lowBalance.map { Fmt.euro($0) } ?? "–"
         let lowCaption = lowest.map { DayText.weekdayShort($0.date) }
-        let payouts = ledger.salaryPayoutCount
-        let toPotsOut = ledger.toPots >= 0
         GlassBlock(title: "Bankrekening", symbol: "building.columns.fill", subtitle: Fmt.month(ledger.month),
                    tint: Theme.olive.opacity(0.3)) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
@@ -1098,38 +1258,10 @@ struct CashflowBankBlock: View {
                          caption: lowCaption)
             }
             VStack(spacing: 8) {
-                LedgerLineRow(sign: "", title: "Begin van de maand", amount: ledger.openingBank, style: .total)
-                LedgerLineRow(sign: "+", title: "Binnen", amount: ledger.inflow, tone: Theme.positive,
-                              note: payouts > 1 ? "Met \(payouts) salarisuitbetalingen" : nil)
-                if ledger.manualInflow != 0 {
-                    LedgerLineRow(sign: "", title: "Salaris en inkomsten", amount: ledger.planInflow, style: .detail)
-                    LedgerLineRow(sign: "", title: "Handmatig gestort", amount: ledger.manualInflow, style: .detail)
+                ForEach(CashflowSummary.bankRows(ledger)) { row in
+                    LedgerLineRow(row: row)
+                        .transition(.opacity)
                 }
-                LedgerLineRow(sign: "−", title: "Eruit", amount: ledger.outflow, tone: Theme.negative)
-                if ledger.manualOutflow != 0 {
-                    LedgerLineRow(sign: "", title: "Uitgaven van je rekening", amount: ledger.planOutflow, style: .detail)
-                    LedgerLineRow(sign: "", title: "Handmatig opgenomen", amount: ledger.manualOutflow, style: .detail)
-                }
-                if ledger.toPots != 0 {
-                    LedgerLineRow(sign: toPotsOut ? "−" : "+",
-                                  title: toPotsOut ? "Overgeschreven naar spaarpotten" : "Teruggeboekt van spaarpotten",
-                                  amount: abs(ledger.toPots), tone: Theme.accent)
-                    if ledger.manualToPots != 0 {
-                        LedgerLineRow(sign: "", title: "Maandverdeling", amount: ledger.planToPots, style: .detail)
-                        LedgerLineRow(sign: "", title: "Handmatig overgeboekt", amount: ledger.manualToPots,
-                                      style: .detail, showsSign: true)
-                    }
-                }
-                if ledger.toHoldings != 0 {
-                    LedgerLineRow(sign: "−", title: "Overgeschreven naar beleggingen", amount: ledger.toHoldings,
-                                  tone: Theme.accent)
-                }
-                if ledger.bankCorrections != 0 {
-                    LedgerLineRow(sign: "±", title: "Verschil met je ingevulde saldo", amount: ledger.bankCorrections,
-                                  note: "Je vulde een saldo in dat afweek van wat de app verwachtte.", showsSign: true)
-                }
-                Divider()
-                LedgerLineRow(sign: "=", title: "Eind van de maand", amount: ledger.closingBank, style: .total)
             }
             if ledger.openingBank == nil && ledger.closingBank != nil {
                 Text("Je saldo is pas later in de maand bekend, dus er is nog geen beginsaldo.")
@@ -1141,6 +1273,9 @@ struct CashflowBankBlock: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            Text("Bedragen staan afgerond op hele euro's, de berekening zelf klopt op de cent.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -1153,22 +1288,10 @@ struct CashflowPotsBlock: View {
         GlassBlock(title: "Spaarpotten", symbol: "tray.full.fill", subtitle: Fmt.month(ledger.month),
                    headerLink: .pots) {
             VStack(spacing: 8) {
-                LedgerLineRow(sign: "", title: "Begin van de maand", amount: ledger.openingPots, style: .total)
-                if ledger.planToPots != 0 {
-                    LedgerLineRow(sign: "+", title: "Inleg volgens je verdeling", amount: ledger.planToPots, tone: Theme.accent)
+                ForEach(CashflowSummary.potsRows(ledger)) { row in
+                    LedgerLineRow(row: row)
+                        .transition(.opacity)
                 }
-                if ledger.potEntriesNet != 0 {
-                    LedgerLineRow(sign: "±", title: "Handmatige boekingen", amount: ledger.potEntriesNet,
-                                  note: "Stortingen, opnames en overboekingen die je zelf deed.", showsSign: true)
-                }
-                if ledger.interest != 0 {
-                    LedgerLineRow(sign: "+", title: "Rente", amount: ledger.interest, tone: Theme.positive)
-                }
-                if ledger.paidFromPots != 0 {
-                    LedgerLineRow(sign: "−", title: "Betaald uit potten", amount: ledger.paidFromPots, tone: Theme.negative)
-                }
-                Divider()
-                LedgerLineRow(sign: "=", title: "Eind van de maand", amount: ledger.closingPots, style: .total)
             }
             Text("Inleg telt mee vanaf de overschrijfdag, rente vanaf de uitbetaaldag en een uitgave uit een pot vanaf de dag van die uitgave.")
                 .font(.caption)
@@ -1178,14 +1301,15 @@ struct CashflowPotsBlock: View {
 }
 
 /// De koppeling met het Overzicht: inkomen, uitgaven, gespaard, belegd en nog te verdelen van de maand, met precies
-/// dezelfde waarden als op het Overzicht, en de controle of alles sluit.
+/// dezelfde waarden als op het Overzicht, en een kleine bevestiging dat alles sluit.
 struct CashflowOverviewBlock: View {
     let ledger: MonthLedger
-    let check: LedgerCheck
+    let isOK: Bool
 
     var body: some View {
         let fromPots = ledger.expensesFromPots
-        GlassBlock(title: "Je overzicht", symbol: "chart.bar.xaxis", subtitle: "Dezelfde cijfers als in je overzicht") {
+        GlassBlock(title: "Je overzicht", symbol: "chart.bar.xaxis", subtitle: "Dezelfde cijfers als in je overzicht",
+                   headerLink: .overview) {
             VStack(spacing: 8) {
                 LedgerLinkRow(symbol: "briefcase.fill", title: "Inkomen", value: ledger.income, destination: .income)
                 LedgerLinkRow(symbol: "minus.circle.fill", title: "Uitgaven",
@@ -1199,7 +1323,7 @@ struct CashflowOverviewBlock: View {
                               value: ledger.remaining, tone: ledger.remaining < 0 ? Theme.negative : Color.primary,
                               destination: .distribute)
             }
-            if check.isOK {
+            if isOK {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                     Text("Klopt met je overzicht")
@@ -1209,23 +1333,39 @@ struct CashflowOverviewBlock: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .transition(.opacity)
             } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                        Text("De cijfers sluiten niet")
-                    }
-                    .font(.footnote.weight(.semibold))
-                    ForEach(check.issues) { issue in
-                        Text(issue.text).font(.footnote)
-                    }
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text("De cijfers sluiten niet, zie de melding bovenaan.")
                 }
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(Theme.negative)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .tile(tint: Theme.negative)
                 .transition(.opacity)
             }
         }
+    }
+}
+
+/// De rode melding als de bankrekening, de spaarpotten of het overzicht niet sluiten, met per afwijking het verschil.
+struct CashflowCheckBanner: View {
+    let check: LedgerCheck
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("De cijfers sluiten niet")
+            }
+            .font(.subheadline.weight(.semibold))
+            ForEach(check.issues) { issue in
+                Text(issue.text).font(.footnote)
+            }
+        }
+        .foregroundStyle(Theme.negative)
+        .padding(Theme.cardInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(tint: Theme.negative.opacity(0.22))
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 }
 
@@ -1254,6 +1394,9 @@ struct CashflowPage: View {
     @Environment(Router.self) private var router
     @State private var editing: CashflowLineTarget?
     @State private var filter: CashflowDayFilter = .all
+    /// De lijst scrolt één keer naar vandaag bij het openen. Komt de pagina terug in beeld (na een tik op een
+    /// gebeurtenis en weer terug), dan blijft de lijst staan waar je was.
+    @State private var didScrollToToday = false
 
     var body: some View {
         let d = store.data
@@ -1271,17 +1414,24 @@ struct CashflowPage: View {
                 VStack(spacing: Theme.pageSpacing) {
                     MonthPickerBlock()
                     BankLowPointNotice(month: month)
+                    if !check.isOK {
+                        CashflowCheckBanner(check: check)
+                    }
                     EqualSizeGrid(minimumColumnWidth: 340) {
                         CashflowBankBlock(ledger: ledger, lowest: lowest, balanceNow: balanceNow, hasBalance: d.hasBankBalance)
                         if !d.pots.isEmpty {
                             CashflowPotsBlock(ledger: ledger)
                         }
-                        CashflowOverviewBlock(ledger: ledger, check: check)
+                        CashflowOverviewBlock(ledger: ledger, isOK: check.isOK)
                     }
                     chartBlock(ledger)
                     daysSection(d, ledger: ledger, lookup: lookup, month: month, proxy: proxy)
                 }
-                .onAppear { scrollToToday(proxy, ledger: ledger) }
+                .onAppear {
+                    guard !didScrollToToday else { return }
+                    didScrollToToday = true
+                    scrollToToday(proxy, ledger: ledger)
+                }
             }
         }
         .sheet(item: $editing) { target in
@@ -1317,8 +1467,8 @@ struct CashflowPage: View {
                              month: YearMonth, proxy: ScrollViewProxy) -> some View {
         let days = filter.days(of: ledger)
         let multipleSalaries = ledger.salaryPayoutCount > 1
-        let hasToday = ledger.days.contains(where: { $0.isToday })
-        GlassBlock(title: "Dag voor dag", symbol: "calendar", subtitle: "\(days.count) dagen in \(Fmt.month(month))") {
+        let hasToday = CashflowScroll.todayTarget(in: ledger) != nil
+        GlassBlock(title: "Dag voor dag", symbol: "calendar", subtitle: "\(CashflowText.days(days.count)) in \(Fmt.month(month))") {
             Picker("Welke dagen", selection: filterBinding) {
                 ForEach(CashflowDayFilter.allCases) { option in
                     Text(option.title).tag(option)
@@ -1338,10 +1488,12 @@ struct CashflowPage: View {
                           message: "Er komt niets binnen, gaat niets weg en er wordt niets overgeschreven. Stel je salaris, inkomsten en uitgaven in met een dag naar keuze.")
             }
         } else {
+            // Het id van elke kaart is zijn dagnummer, zowel voor de lijst (ForEach) als voor het scrollen: in een lazy raster
+            // vindt `scrollTo` alleen kaarten die nog niet getekend zijn via de id's van de ForEach.
             LazyVGrid(columns: Theme.blockColumns, spacing: Theme.pageSpacing) {
-                ForEach(days) { day in
+                ForEach(days, id: \.day) { day in
                     dayCard(d, day: day, lookup: lookup, month: month, multipleSalaries: multipleSalaries)
-                        .id(CashflowScroll.dayID(day.day))
+                        .id(day.day)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
@@ -1420,10 +1572,13 @@ struct CashflowPage: View {
     /// Scrolt naar de kaart van vandaag, als de maand de huidige is. Bij het openen kort wachten: de lijst heeft zijn
     /// plek pas na de eerste layout.
     private func scrollToToday(_ proxy: ScrollViewProxy, ledger: MonthLedger, delay: Bool = true) {
-        guard let todayCard = ledger.days.first(where: { $0.isToday }) else { return }
-        let target = CashflowScroll.dayID(todayCard.day)
+        #if DEBUG
+        // De screenshots van CI (demo-modus) tonen de pagina vanaf de bovenkant, met de maandsamenvatting in beeld.
+        if delay && DebugLaunch.isDemo { return }
+        #endif
+        guard let target = CashflowScroll.todayTarget(in: ledger) else { return }
         Task { @MainActor in
-            if delay { try? await Task.sleep(nanoseconds: 300_000_000) }
+            if delay { try? await Task.sleep(nanoseconds: 450_000_000) }
             withAnimation(Theme.motion) { proxy.scrollTo(target, anchor: .top) }
         }
     }

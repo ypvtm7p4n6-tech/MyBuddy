@@ -52,9 +52,13 @@ struct OverviewPage: View {
                         StatTile(title: "Gemiddeld over per maand", value: Fmt.euro(period.average(left)))
                     }
                     if period.hasProjected {
-                        Text("Maanden na deze maand zijn verwacht: ze volgen je standaardsalaris, terugkerende regels en standaardinleg.")
+                        Text("Maanden na deze maand zijn verwacht: ze volgen je salarisschema, terugkerende regels en standaardinleg.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                    // Bij één maand: sluiten deze cijfers met de dagen van die maand? Met een link naar het dagoverzicht.
+                    if mode == .month {
+                        DayCheckBlock(month: focus)
                     }
                 }
 
@@ -72,8 +76,9 @@ struct OverviewPage: View {
                         BreakdownRow(symbol: "tray.full.fill", title: "Spaarpotten", value: endWorth.pots, destination: .pots)
                         BreakdownRow(symbol: "chart.line.uptrend.xyaxis", title: "Beleggingen", value: endWorth.investments, destination: .portfolio)
                     }
-                    if !d.hasBankBalance {
-                        Text("Vul je banksaldo in voor een compleet vermogen.")
+                    // Zonder bekend saldo aan het eind van de periode telt de bank als € 0 mee in het vermogen.
+                    if d.bankBalance(at: endMonth) == nil {
+                        Text("Voor deze periode is je banksaldo nog niet bekend. Vul je saldo in voor een compleet vermogen.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -149,6 +154,27 @@ struct BreakdownRow: View {
     }
 }
 
+/// Meldt of de cijfers van een maand (inkomen, uitgaven, gespaard, belegd, over) sluiten met de dagen van die maand, en
+/// leidt naar het dagoverzicht. Het oordeel komt van de rekenmotor (`MonthLedger.allReconciles`): daar worden dezelfde
+/// bedragen op twee onafhankelijke manieren uitgerekend en met elkaar vergeleken.
+private struct DayCheckBlock: View {
+    let month: YearMonth
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let ledger = store.data.monthLedger(month, asOf: store.today)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: ledger.allReconciles ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                Text(ledger.allReconciles ? "Klopt met je dagoverzicht" : "Dit klopt niet met je dagoverzicht")
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(ledger.allReconciles ? Theme.positive : Theme.negative)
+            ChipLink(title: "Per dag bekijken", symbol: "calendar", destination: .cashflow)
+        }
+    }
+}
+
 // MARK: - Maand kiezen
 
 struct MonthPickerBlock: View {
@@ -186,6 +212,8 @@ struct DayPickerRow: View {
 }
 
 // MARK: - Salaris en inkomsten
+
+// BEGIN LOGICA
 
 /// Korte teksten voor het salarisschema. Alleen tekst: alle bedragen en data komen uit de rekenmotor.
 enum SalaryScheduleText {
@@ -229,6 +257,24 @@ enum SalaryScheduleText {
     }
 }
 
+/// Wijzigingen aan het salarisschema, los van het scherm. De rekenmotor doet het rekenwerk.
+enum SalaryScheduleEdit {
+    /// Schakelt het schema om. Een schema om de zoveel weken of dagen heeft een bekende uitbetaaldatum nodig: dat is de
+    /// volgende uitbetaling van het huidige schema (je weet meestal wanneer je het eerstvolgende salaris krijgt). Is er al
+    /// een datum ingesteld, dan blijft die. Het interval begint op een gangbare waarde (zie `startInterval`).
+    static func change(_ data: inout FinanceData, to schedule: SalarySchedule, today: Date) {
+        guard data.salary.schedule != schedule else { return }
+        var anchor: CalendarDay?
+        if schedule != .monthly, data.salary.anchor == nil {
+            let next = data.nextPayDate(after: today) ?? today
+            anchor = CalendarDay(date: next)
+        }
+        data.salary.setSchedule(schedule, interval: SalaryScheduleText.startInterval(for: schedule), anchor: anchor)
+    }
+}
+
+// EINDE LOGICA
+
 struct IncomePage: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
@@ -263,20 +309,11 @@ struct IncomePage: View {
                 set: { value in store.mutate { $0.salary.anchorDate = value } })
     }
 
-    /// Schakelt het schema om. Een schema om de zoveel weken of dagen heeft een bekende uitbetaaldatum nodig: dat is de
-    /// volgende uitbetaling van het huidige schema (je weet meestal wanneer je het eerstvolgende salaris krijgt).
+    /// Schakelt het schema om (zie `SalaryScheduleEdit.change`).
     private func changeSchedule(to schedule: SalarySchedule) {
         let today = store.today
         withAnimation(Theme.motion) {
-            store.mutate { data in
-                guard data.salary.schedule != schedule else { return }
-                var anchor: CalendarDay?
-                if schedule != .monthly, data.salary.anchor == nil {
-                    let next = data.nextPayDate(after: today) ?? today
-                    anchor = CalendarDay(date: next)
-                }
-                data.salary.setSchedule(schedule, interval: SalaryScheduleText.startInterval(for: schedule), anchor: anchor)
-            }
+            store.mutate { SalaryScheduleEdit.change(&$0, to: schedule, today: today) }
         }
     }
 
@@ -338,6 +375,11 @@ struct IncomePage: View {
             switch s.mode {
             case .fixed:
                 NumberRow(title: s.isMonthly ? "Per maand" : "Per uitbetaling", value: salary(\.fixedMonthly))
+                if !s.isMonthly {
+                    Text("Vul in wat er bij elke uitbetaling op je rekening komt, niet wat je per maand krijgt.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             case .hourly:
                 NumberRow(title: "Uurloon", value: salary(\.hourlyRate))
                 NumberRow(title: "Uren per week", value: salary(\.hoursPerWeek), unit: .plain("uur"))
@@ -392,6 +434,13 @@ struct IncomePage: View {
                 anchorRow(s)
             }
 
+            let upcoming = upcomingPayDates(d, today: today)
+            if !upcoming.isEmpty {
+                Text("Volgende uitbetalingen: " + upcoming.map { payDateText($0, today: today) }.joined(separator: " · "))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.footnote)
@@ -401,6 +450,27 @@ struct IncomePage: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// De eerstvolgende uitbetalingen vanaf vandaag, elk de volgende van de vorige (`nextPayDate(after:)`): zo zie je meteen
+    /// of het schema klopt met wat je verwacht.
+    private func upcomingPayDates(_ d: FinanceData, today: Date, count: Int = 4) -> [Date] {
+        var result: [Date] = []
+        var cursor = today
+        for _ in 0..<count {
+            guard let next = d.nextPayDate(after: cursor) else { break }
+            result.append(next)
+            cursor = next
+        }
+        return result
+    }
+
+    /// "23 okt", met het jaar erbij als het niet dit jaar is.
+    private func payDateText(_ date: Date, today: Date) -> String {
+        let calendar = YearMonth.calendar
+        let year = calendar.component(.year, from: date)
+        if year == calendar.component(.year, from: today) { return DayText.short(date) }
+        return DayText.short(date) + " " + String(year)
     }
 
     /// De datum van een uitbetaling en uitleg bij een schema om de zoveel weken of dagen.
@@ -426,6 +496,8 @@ struct IncomePage: View {
     private func monthBlock(_ d: FinanceData, month: YearMonth, plan: MonthPlan, payouts: [PayoutLine],
                             total: Double) -> some View {
         let s = d.salary
+        // Altijd drie naast elkaar, ook op een smalle iPhone.
+        let tiles = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
         let subtitle: String = {
             if month < d.startMonth { return "Voor je startmaand telt er geen salaris mee" }
             switch payouts.count {
@@ -440,7 +512,7 @@ struct IncomePage: View {
                 Spacer()
                 BigAmount(value: total, font: .system(.title2, design: .rounded, weight: .bold))
             }
-            if !payouts.isEmpty && !s.isMonthly {
+            if !payouts.isEmpty {
                 VStack(spacing: 10) {
                     ForEach(payouts) { payout in
                         HStack(spacing: 10) {
@@ -481,6 +553,13 @@ struct IncomePage: View {
                 }
             }
 
+            // Het inkomen van de maand is precies het getal van het overzicht en van "Nog te verdelen": salaris plus overig.
+            LazyVGrid(columns: tiles, spacing: 8) {
+                StatTile(title: "Salaris", value: Fmt.euro(total))
+                StatTile(title: "Overig", value: Fmt.euro(d.extraIncomeTotal(in: month)))
+                StatTile(title: "Inkomen", value: Fmt.euro(d.income(in: month)), caption: "in je overzicht")
+            }
+
             switch s.mode {
             case .fixed:
                 Toggle("Afwijkend bedrag deze maand", isOn: overrideEnabled(month))
@@ -504,6 +583,7 @@ struct IncomePage: View {
                     }
                 }
             }
+            ChipLink(title: "Dag voor dag bekijken", symbol: "calendar", destination: .cashflow)
         }
     }
 
@@ -548,8 +628,159 @@ struct IncomePage: View {
 
 // MARK: - Regels: inkomsten en uitgaven
 
+// BEGIN LOGICA
+
+/// De korte aantekening onder een terugkerende regel in de lijst.
+struct RecurringRowNote: Equatable {
+    var text: String
+    /// Valt op (oranje): de regel wijkt af van de reeks.
+    var isWarning: Bool
+}
+
+/// Teksten rond terugkerende regels. Alleen tekst: wat er over de reeks bekend is komt uit de rekenmotor (`SeriesInfo`).
+enum RecurringText {
+    static let skipTitle = "Alleen deze maand overslaan"
+    static let stopTitle = "Stoppen vanaf deze maand"
+    static let deleteTitle = "Terugkerende regel verwijderen?"
+
+    /// "de 25e" bij een eigen dag; zonder eigen dag de standaard (bijvoorbeeld "je salarisdag, de 25e").
+    static func dayPhrase(day: Int?, defaultPhrase: String) -> String {
+        guard let day else { return defaultPhrase }
+        return DayText.ordinal(YearMonth.clampedDay(day))
+    }
+
+    /// Een dag vanaf de 29e bestaat niet in elke maand: dan geldt de laatste dag van die maand.
+    static func shortMonthNote(day: Int) -> String {
+        day >= 29 ? " Is een maand korter, dan geldt de laatste dag van die maand." : ""
+    }
+
+    /// Onder de schakelaar "Terugkerend" bij een regel die nog niet terugkeert: wat het betekent.
+    /// `resumes`: er is al een terugkerende regel met deze naam die in de maand ontbreekt (die loopt dan door).
+    static func newRecurring(dayPhrase: String, day: Int, month: YearMonth, resumes: Bool) -> String {
+        var text = "Komt elke maand terug op \(dayPhrase), vanaf \(Fmt.month(month)). Je ziet de regel vanzelf in de maanden erna, ook in maanden die je al hebt ingevuld."
+        text += shortMonthNote(day: day)
+        if resumes {
+            text += " Er is al een terugkerende regel met deze naam die in \(Fmt.month(month)) ontbreekt: die loopt dan weer door, er komt geen tweede naast."
+        }
+        return text
+    }
+
+    /// Onder de schakelaar bij een regel die al terugkeert, met wat de reeks weet: sinds wanneer, tot wanneer.
+    static func existingRecurring(dayPhrase: String, day: Int, info: SeriesInfo?, month: YearMonth) -> String {
+        var text = "Komt elke maand terug op \(dayPhrase)."
+        text += shortMonthNote(day: day)
+        if let info {
+            if info.isException {
+                text += " In \(Fmt.month(month)) wijkt deze regel af van de reeks; de maanden erna volgen de reeks."
+            } else if let last = info.lastMonth {
+                text += " Loopt tot en met \(Fmt.month(last))."
+            } else if info.firstMonth == month {
+                text += " Begint in \(Fmt.month(month)) en gaat door tot je hem stopt."
+            } else {
+                text += " Loopt sinds \(Fmt.month(info.firstMonth)) en gaat door tot je hem stopt."
+            }
+        }
+        text += " Bij Bewaar kies je of een wijziging alleen voor deze maand geldt of ook voor de maanden erna."
+        return text
+    }
+
+    /// Onder de schakelaar als de regel niet terugkeert (of niet meer wordt).
+    static func oneOff(month: YearMonth, wasRecurring: Bool) -> String {
+        if wasRecurring {
+            return "Zet je Terugkerend uit, dan kies je bij Bewaar of de regel alleen in \(Fmt.month(month)) eenmalig wordt of vanaf deze maand niet meer terugkomt."
+        }
+        return "Zonder Terugkerend telt deze regel alleen in \(Fmt.month(month))."
+    }
+
+    /// Titel en uitleg van de vraag bij Bewaar van een terugkerende regel die terugkerend blijft.
+    static let scopeTitle = "Voor welke maanden geldt dit?"
+
+    static func scopeMessage(name: String, month: YearMonth, current: YearMonth) -> String {
+        "\(quoted(name)) komt elke maand terug. Je wijziging geldt alleen voor \(Fmt.month(month)), of ook voor alle maanden erna. Eerdere maanden blijven zoals ze zijn." + pastNote(month: month, current: current)
+    }
+
+    /// Ligt de maand al achter ons, dan veranderen bij "alle maanden erna" ook de maanden tussen die maand en nu mee, en
+    /// dus ook de saldo's van toen. Dat zegt de vraag erbij.
+    static func pastNote(month: YearMonth, current: YearMonth) -> String {
+        month < current
+            ? " Let op: \(Fmt.month(month)) is al voorbij, dus ook de maanden daarna die al voorbij zijn veranderen mee."
+            : ""
+    }
+
+    /// Titel en uitleg van de vraag bij Bewaar als je Terugkerend uitzet.
+    static let stopRecurringTitle = "Niet meer terugkerend"
+
+    static func stopRecurringMessage(name: String, month: YearMonth, current: YearMonth) -> String {
+        "Alleen deze maand: \(quoted(name)) staat in \(Fmt.month(month)) nog als eenmalige regel en komt in de maand erna gewoon terug. Stoppen: de regel komt vanaf \(Fmt.month(month)) niet meer terug, ook niet in maanden die je al hebt ingevuld." + pastNote(month: month, current: current)
+    }
+
+    /// Uitleg bij het verwijderen van een terugkerende regel.
+    static func deleteMessage(name: String, month: YearMonth, current: YearMonth) -> String {
+        "\(quoted(name)) komt elke maand terug. Overslaan haalt de regel alleen uit \(Fmt.month(month)): in de maand erna komt hij gewoon terug. Stoppen haalt hem uit \(Fmt.month(month)) en alle maanden erna; eerdere maanden blijven zoals ze zijn." + pastNote(month: month, current: current)
+    }
+
+    private static func quoted(_ name: String) -> String {
+        name.isEmpty ? "Deze regel" : "\"\(name)\""
+    }
+
+    /// De aantekening onder een terugkerende regel in de lijst van `month`. nil als er niets te melden is.
+    /// - een afwijkende maand wijkt af van de reeks (oranje);
+    /// - een gestopte reeks zegt tot wanneer hij loopt;
+    /// - in een maand die nog komt staat de regel er vanzelf (komt uit de reeks, hoeft niet te worden ingevuld).
+    static func rowNote(info: SeriesInfo?, month: YearMonth, current: YearMonth) -> RecurringRowNote? {
+        guard let info else { return nil }
+        if info.isException {
+            return RecurringRowNote(text: "Alleen deze maand anders. De maanden erna volgen de reeks.", isWarning: true)
+        }
+        if let last = info.lastMonth {
+            let text = last == month ? "Laatste keer: daarna stopt deze regel" : "Loopt tot en met \(Fmt.month(last))"
+            return RecurringRowNote(text: text, isWarning: false)
+        }
+        if month > current && info.firstMonth < month {
+            return RecurringRowNote(text: "Staat er vanzelf: komt elke maand terug", isWarning: false)
+        }
+        return nil
+    }
+}
+
+/// Wat "Bewaar" met een regel doet, los van het scherm.
+enum LineSave {
+    /// Moet er eerst gevraagd worden voor welke maanden een wijziging geldt? Alleen bij een regel die al terugkeert en die
+    /// echt is gewijzigd.
+    static func needsScopeQuestion(existing: MoneyLine?, edited: MoneyLine) -> Bool {
+        guard let existing, existing.isRecurring else { return false }
+        return existing != edited
+    }
+
+    /// Slaat de regel op in `month`. De motor doet het werk (`updateLine`, `addOrResumeRecurringLine`): `scope` zegt bij een
+    /// terugkerende regel of alleen deze maand verandert of ook alle maanden erna.
+    ///
+    /// Een nieuwe terugkerende regel loopt door in een reeks met dezelfde naam die in deze maand ontbreekt (overgeslagen, of
+    /// pas later begonnen), zodat er vanaf de maand erna geen tweede reeks naast komt. Typte je andere waarden dan die reeks
+    /// heeft, dan krijgt de reeks vanaf deze maand die waarden.
+    static func apply(_ data: inout FinanceData, edited: MoneyLine, isNew: Bool, kind: FinanceData.LineKind,
+                      month: YearMonth, scope: SeriesScope) {
+        guard isNew, edited.isRecurring else {
+            data.updateLine(edited, kind: kind, in: month, scope: scope)
+            return
+        }
+        let saved = data.addOrResumeRecurringLine(edited, kind: kind, in: month)
+        var typed = edited
+        typed.id = saved.id
+        typed.seriesID = saved.seriesID
+        if !saved.sameBaseline(as: typed) {
+            data.updateLine(typed, kind: kind, in: month, scope: .thisAndFollowing)
+        }
+    }
+}
+
+// EINDE LOGICA
+
 /// Lijst met regels (extra inkomsten of uitgaven) voor één maand, met toevoegen, wijzigen en verwijderen.
 /// Bij uitgaven kun je kiezen of je alleen vaste of alleen variabele posten toont.
+///
+/// Een terugkerende regel komt elke maand terug op zijn eigen dag, ook in maanden die nog komen. Bij wijzigen en
+/// verwijderen kies je of het alleen voor deze maand geldt of ook voor de maanden erna.
 struct MoneyLinesBlock: View {
     let kind: FinanceData.LineKind
     var expenseKind: ExpenseKind? = nil
@@ -558,6 +789,8 @@ struct MoneyLinesBlock: View {
     @Environment(AppStore.self) private var store
     @State private var showAdd = false
     @State private var editing: MoneyLine?
+    /// Een terugkerende regel waarvan het verwijderen eerst vraagt voor welke maanden.
+    @State private var deleting: MoneyLine?
 
     private var title: String {
         if kind == .income { return "Overige inkomsten" }
@@ -601,17 +834,18 @@ struct MoneyLinesBlock: View {
                     VStack(spacing: 0) {
                         MoneyLineRow(line: line, kind: kind, month: month,
                                      onEdit: { editing = line },
-                                     onDelete: {
-                                         withAnimation(Theme.motion) {
-                                             store.mutate { $0.deleteLine(id: line.id, kind: kind, in: month) }
-                                         }
-                                     })
+                                     onDelete: { requestDelete(line) })
                         if line.id != lines.last?.id { Divider() }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             ChipButton(title: "Toevoegen", symbol: "plus") { showAdd = true }
+            if lines.contains(where: { $0.isRecurring }) {
+                Text(recurringHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .sheet(isPresented: $showAdd) {
             MoneyLineSheet(line: nil, kind: kind, month: month, defaultExpenseKind: expenseKind ?? .fixed)
@@ -619,15 +853,48 @@ struct MoneyLinesBlock: View {
         .sheet(item: $editing) { line in
             MoneyLineSheet(line: line, kind: kind, month: month, defaultExpenseKind: line.kind)
         }
+        .confirmationDialog(RecurringText.deleteTitle,
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { pending in
+            Button(RecurringText.skipTitle) { remove(pending, scope: .thisMonth) }
+            Button(RecurringText.stopTitle, role: .destructive) { remove(pending, scope: .thisAndFollowing) }
+            Button("Annuleer", role: .cancel) {}
+        } message: { pending in
+            Text(RecurringText.deleteMessage(name: pending.name, month: month, current: store.now))
+        }
+    }
+
+    private var recurringHint: String {
+        if month > store.now {
+            return "Terugkerende regels staan er vanzelf in. Pas je er een aan, dan kies je of dat alleen voor \(Fmt.month(month)) geldt of ook voor de maanden erna."
+        }
+        return "Een terugkerende regel komt elke maand terug op zijn eigen dag, ook in maanden die nog komen."
     }
 
     private func subtitle(total: Double, fromPots: Double) -> String {
         if fromPots > 0 { return "Totaal \(Fmt.euro(total)) · \(Fmt.euro(fromPots)) uit spaarpotten" }
         return "Totaal \(Fmt.euro(total))"
     }
+
+    /// Een eenmalige regel verdwijnt meteen; bij een terugkerende vraagt de app eerst voor welke maanden.
+    private func requestDelete(_ line: MoneyLine) {
+        if line.isRecurring {
+            deleting = line
+        } else {
+            remove(line, scope: .thisAndFollowing)
+        }
+    }
+
+    private func remove(_ line: MoneyLine, scope: SeriesScope) {
+        let lineKind = kind
+        let lineMonth = month
+        withAnimation(Theme.motion) {
+            store.mutate { $0.removeLine(id: line.id, kind: lineKind, in: lineMonth, scope: scope) }
+        }
+    }
 }
 
-/// Eén regel in de lijst: naam, dag van de maand, eventueel de spaarpot(ten) waar het uit komt, en het bedrag.
+/// Eén regel in de lijst: naam, dag van de maand, of hij terugkeert, eventueel de spaarpot(ten) waar het uit komt, en het bedrag.
 struct MoneyLineRow: View {
     let line: MoneyLine
     let kind: FinanceData.LineKind
@@ -651,10 +918,12 @@ struct MoneyLineRow: View {
 
     var body: some View {
         let d = store.data
-        let rawDay = kind == .income ? d.incomeDay(of: line) : d.expenseDay(of: line)
+        let rawDay = kind == .income ? d.incomeDay(of: line, in: month) : d.expenseDay(of: line)
         let day = min(rawDay, month.dayCount)
         let payers = payingPots(d)
         let payerNames = DayText.list(payers.map { $0.name })
+        let info: SeriesInfo? = line.isRecurring ? d.seriesInfo(of: line, in: month) : nil
+        let note = RecurringText.rowNote(info: info, month: month, current: store.now)
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(line.name)
@@ -663,11 +932,17 @@ struct MoneyLineRow: View {
                 HStack(spacing: 10) {
                     Label(DayText.ordinal(day), systemImage: "calendar")
                     if line.isRecurring {
-                        Label("Terugkerend", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Terugkerend, elke maand", systemImage: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(Theme.accent)
                     }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                if let note {
+                    Text(note.text)
+                        .font(.caption2)
+                        .foregroundStyle(note.isWarning ? Theme.warning : Color.secondary)
+                }
                 if let first = payers.first {
                     Label {
                         Text("uit \(payerNames)")
@@ -690,9 +965,10 @@ struct MoneyLineRow: View {
                 .animation(Theme.motion, value: line.amount)
             Menu {
                 Button("Wijzig", action: onEdit)
-                Button("Verwijder", role: .destructive, action: onDelete)
+                Button(line.isRecurring ? "Verwijder…" : "Verwijder", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .accessibilityLabel("Opties voor \(line.name)")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -724,6 +1000,7 @@ struct MoneyLineSheet: View {
     var defaultExpenseKind: ExpenseKind = .fixed
 
     @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var amount: Double
     @State private var recurring: Bool
@@ -732,6 +1009,8 @@ struct MoneyLineSheet: View {
     @State private var fromPotsOn: Bool
     /// Bedrag per spaarpot (alleen potten met een bedrag boven nul tellen mee).
     @State private var shareAmounts: [UUID: Double]
+    /// Het verwijderen van een terugkerende regel vraagt eerst voor welke maanden.
+    @State private var confirmingDelete = false
 
     init(line: MoneyLine?, kind: FinanceData.LineKind, month: YearMonth, defaultExpenseKind: ExpenseKind = .fixed) {
         self.line = line
@@ -756,7 +1035,8 @@ struct MoneyLineSheet: View {
 
     var body: some View {
         let d = store.data
-        SheetScaffold(title: titleText, canSave: canSave(d), onSave: save) {
+        SheetScaffold(title: titleText, canSave: canSave(d), onSave: { save(scope: .thisAndFollowing) },
+                      saveChoices: saveChoices()) {
             Section {
                 TextField(kind == .income ? "Naam, bijv. Zorgtoeslag" : "Naam, bijv. Huur", text: $name)
                 NumberRow(title: "Bedrag", value: $amount)
@@ -767,13 +1047,27 @@ struct MoneyLineSheet: View {
                     .pickerStyle(.segmented)
                 }
                 DayPickerRow(title: "Dag van de maand", day: $day, defaultText: defaultDayText(d))
-                Toggle("Terugkerend, elke maand", isOn: $recurring)
             } footer: {
                 Text(footerText(d))
+            }
+            Section {
+                Toggle("Terugkerend, elke maand", isOn: recurringBinding)
+            } footer: {
+                Text(recurringFooter(d))
             }
             if kind == .expense && !d.pots.isEmpty {
                 potSection(d)
             }
+            if let line {
+                deleteSection(line)
+            }
+        }
+        .confirmationDialog(RecurringText.deleteTitle, isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button(RecurringText.skipTitle) { removeAndClose(scope: .thisMonth) }
+            Button(RecurringText.stopTitle, role: .destructive) { removeAndClose(scope: .thisAndFollowing) }
+            Button("Annuleer", role: .cancel) {}
+        } message: {
+            Text(RecurringText.deleteMessage(name: line?.name ?? "", month: month, current: store.now))
         }
     }
 
@@ -786,22 +1080,48 @@ struct MoneyLineSheet: View {
         }
     }
 
-    // MARK: Dag
+    // MARK: Dag en terugkerend
+
+    private func defaultDayPhrase(_ d: FinanceData) -> String {
+        if kind == .expense { return DayText.ordinal(1) }
+        let ordinal = DayText.ordinal(d.salaryDay(in: month))
+        return d.salary.isMonthly ? "je salarisdag, \(ordinal)" : "de eerste salarisdag van de maand, \(ordinal)"
+    }
 
     private func defaultDayText(_ d: FinanceData) -> String {
-        kind == .income ? "Standaard (\(DayText.ordinal(d.salaryDay())))" : "Standaard (\(DayText.ordinal(1)))"
+        if kind == .expense { return "Standaard (\(DayText.ordinal(1)))" }
+        return "Standaard (\(DayText.ordinal(d.salaryDay(in: month))))"
     }
 
     private func footerText(_ d: FinanceData) -> String {
+        let phrase = RecurringText.dayPhrase(day: day, defaultPhrase: defaultDayPhrase(d))
         if kind == .income {
-            return "Voor \(Fmt.month(month)). Standaard komt dit binnen op je salarisdag, \(DayText.ordinal(d.salaryDay())). Kies een andere dag als het bedrag op een ander moment binnenkomt. Terugkerende regels verschijnen automatisch in de volgende maanden."
+            return "Voor \(Fmt.month(month)). Dit komt binnen op \(phrase). Kies een andere dag als het bedrag op een ander moment binnenkomt."
         }
-        return "Voor \(Fmt.month(month)). Kies de dag waarop het van je rekening gaat; standaard is dat de 1e. Vast zijn kosten die elke maand gelijk zijn, zoals huur. Variabel zijn kosten die schommelen, zoals boodschappen. Terugkerende regels verschijnen automatisch in de volgende maanden."
+        return "Voor \(Fmt.month(month)). Dit gaat van je rekening op \(phrase). Vast zijn kosten die elke maand gelijk zijn, zoals huur. Variabel zijn kosten die schommelen, zoals boodschappen."
+    }
+
+    private var recurringBinding: Binding<Bool> {
+        Binding(get: { recurring }, set: { on in withAnimation(Theme.motion) { recurring = on } })
+    }
+
+    /// Wat "Terugkerend" voor deze regel inhoudt: op welke dag hij terugkomt, vanaf en tot wanneer.
+    private func recurringFooter(_ d: FinanceData) -> String {
+        let phrase = RecurringText.dayPhrase(day: day, defaultPhrase: defaultDayPhrase(d))
+        let wasRecurring = line?.isRecurring == true
+        guard recurring else { return RecurringText.oneOff(month: month, wasRecurring: wasRecurring) }
+        if let line, line.isRecurring {
+            return RecurringText.existingRecurring(dayPhrase: phrase, day: effectiveDay, info: d.seriesInfo(of: line, in: month),
+                                                   month: month)
+        }
+        // Een nieuwe terugkerende regel loopt door in een reeks met dezelfde naam die in deze maand ontbreekt.
+        let resumes = line == nil && d.resumableSeries(named: name, kind: kind, in: month) != nil
+        return RecurringText.newRecurring(dayPhrase: phrase, day: effectiveDay, month: month, resumes: resumes)
     }
 
     /// De dag waarop deze regel valt, begrensd op de lengte van de maand.
     private var effectiveDay: Int {
-        let fallback = kind == .income ? store.data.salaryDay() : 1
+        let fallback = kind == .income ? store.data.salaryDay(in: month) : 1
         return min(YearMonth.clampedDay(day ?? fallback), month.dayCount)
     }
 
@@ -971,7 +1291,8 @@ struct MoneyLineSheet: View {
     }
 
     private func balanceCaption(available: Double, tooMuch: Bool) -> some View {
-        let prefix = lineDate > store.today ? "Verwacht saldo op" : "Saldo op"
+        // Per kalenderdag: de dag van vandaag is al gebeurd, pas een latere dag is verwacht.
+        let prefix = DayMath.isPlanned(lineDate, asOf: store.today) ? "Verwacht saldo op" : "Saldo op"
         return Text("\(prefix) \(DayText.short(lineDate)): \(Fmt.euro(available))")
             .font(.caption)
             .foregroundStyle(tooMuch ? Theme.warning : Color.secondary)
@@ -1004,6 +1325,38 @@ struct MoneyLineSheet: View {
             result[pot.id] = CentsMath.value(base + (index < extra ? 1 : 0))
         }
         withAnimation(Theme.motion) { shareAmounts = result }
+    }
+
+    // MARK: Verwijderen
+
+    @ViewBuilder
+    private func deleteSection(_ existing: MoneyLine) -> some View {
+        Section {
+            Button(role: .destructive) {
+                requestDelete(existing)
+            } label: {
+                Text(existing.isRecurring ? "Verwijder…" : "Verwijder")
+            }
+        }
+    }
+
+    /// Een eenmalige regel verdwijnt meteen; bij een terugkerende vraagt de app eerst voor welke maanden.
+    private func requestDelete(_ existing: MoneyLine) {
+        if existing.isRecurring {
+            confirmingDelete = true
+        } else {
+            removeAndClose(scope: .thisAndFollowing)
+        }
+    }
+
+    private func removeAndClose(scope: SeriesScope) {
+        guard let existing = line else { return }
+        let lineKind = kind
+        let lineMonth = month
+        withAnimation(Theme.motion) {
+            store.mutate { $0.removeLine(id: existing.id, kind: lineKind, in: lineMonth, scope: scope) }
+        }
+        dismiss()
     }
 
     // MARK: Opslaan
@@ -1041,17 +1394,229 @@ struct MoneyLineSheet: View {
         return updated
     }
 
-    private func save() {
-        let result = draftLine()
+    /// Bij een regel die al terugkeert vraagt "Bewaar" eerst voor welke maanden de wijziging geldt (alleen deze maand, of
+    /// ook alle maanden erna). Is er niets gewijzigd, of keerde de regel niet terug, dan wordt meteen opgeslagen.
+    private func saveChoices() -> SaveChoices? {
+        let edited = draftLine()
+        guard LineSave.needsScopeQuestion(existing: line, edited: edited) else { return nil }
+        let thisMonth = SaveChoices.Option(id: "this", title: SeriesScope.thisMonth.title) { save(scope: .thisMonth) }
+        if edited.isRecurring {
+            let following = SaveChoices.Option(id: "following", title: SeriesScope.thisAndFollowing.title) {
+                save(scope: .thisAndFollowing)
+            }
+            return SaveChoices(title: RecurringText.scopeTitle,
+                               message: RecurringText.scopeMessage(name: edited.name, month: month, current: store.now),
+                               options: [thisMonth, following])
+        }
+        let stop = SaveChoices.Option(id: "stop", title: RecurringText.stopTitle, role: .destructive) {
+            save(scope: .thisAndFollowing)
+        }
+        return SaveChoices(title: RecurringText.stopRecurringTitle,
+                           message: RecurringText.stopRecurringMessage(name: edited.name, month: month, current: store.now),
+                           options: [thisMonth, stop])
+    }
+
+    private func save(scope: SeriesScope) {
+        let edited = draftLine()
+        // Niets gewijzigd: niets opslaan (een afgeleide regel van een toekomstige maand blijft dan afgeleid).
+        if let line, line == edited { return }
+        let isNew = line == nil
         let lineKind = kind
         let lineMonth = month
         withAnimation(Theme.motion) {
-            store.mutate { $0.upsertLine(result, kind: lineKind, in: lineMonth) }
+            store.mutate { LineSave.apply(&$0, edited: edited, isNew: isNew, kind: lineKind, month: lineMonth, scope: scope) }
         }
     }
 }
 
 // MARK: - Verdelen
+
+// BEGIN LOGICA
+
+/// Wijzigingen aan de verdeling van één spaarpot of belegging in één maand, los van het scherm. Alle bedragen en regels
+/// komen uit de rekenmotor (`FinanceData`); hier wordt niets zelf uitgerekend.
+///
+/// De verdeling van een maand is een vast bedrag of een percentage van het inkomen van díe maand (de motor rekent het bij
+/// het lezen uit). Een wijziging hier geldt alleen voor die maand (een overschrijving, bij een percentage "variabel");
+/// `makeStandard` zet hem als standaard voor elke maand.
+enum AllocationEdit {
+    /// Het percentage waarmee een maand begint als je van "Bedrag" naar "Percentage" schakelt: de standaard van de pot of
+    /// belegging als die een percentage is (en niet 0), anders het percentage van het salaris dat het huidige bedrag is.
+    /// Zo springt het bedrag niet (op de afronding na). Zonder inkomen begint het op 0%.
+    static func startingPercent(_ data: FinanceData, id: UUID, month: YearMonth) -> PercentRule {
+        if case .percent(let standard)? = data.defaultAllocationRule(id, in: month), standard.percent > 0 {
+            return standard
+        }
+        let amount = data.allocation(id, in: month)
+        let percent = data.percent(forAmount: amount, of: .salary, in: month) ?? 0
+        return PercentRule(percent: percent, basis: .salary)
+    }
+
+    /// Schakelt de inlegwijze van een maand om. Naar een vast bedrag: het bedrag van nu blijft staan. Naar een
+    /// percentage: zie `startingPercent`. Staat de maand al zo, dan gebeurt er niets.
+    static func setMode(_ data: inout FinanceData, id: UUID, month: YearMonth, to mode: ContributionMode) {
+        let current = data.allocationRule(id, in: month)
+        switch mode {
+        case .fixed:
+            guard current.isPercent else { return }
+            data.setAllocation(id, in: month, amount: data.allocation(id, in: month))
+        case .percentage:
+            guard !current.isPercent else { return }
+            let start = startingPercent(data, id: id, month: month)
+            data.setAllocationPercent(id, in: month, percent: start.percent, basis: start.basis)
+        }
+    }
+
+    static func setAmount(_ data: inout FinanceData, id: UUID, month: YearMonth, amount: Double) {
+        data.setAllocation(id, in: month, amount: amount)
+    }
+
+    /// Een ander percentage voor deze maand; de grondslag van de maand blijft.
+    static func setPercent(_ data: inout FinanceData, id: UUID, month: YearMonth, percent: Double) {
+        var basis: IncomeBasis?
+        if case .percent(let rule) = data.allocationRule(id, in: month) { basis = rule.basis }
+        data.setAllocationPercent(id, in: month, percent: percent, basis: basis)
+    }
+
+    /// Een andere grondslag (alleen salaris of alle inkomsten) voor het percentage van deze maand.
+    static func setBasis(_ data: inout FinanceData, id: UUID, month: YearMonth, to basis: IncomeBasis) {
+        guard case .percent(let rule) = data.allocationRule(id, in: month) else { return }
+        data.setAllocationPercent(id, in: month, percent: rule.percent, basis: basis)
+    }
+
+    /// Haalt de afwijking van deze maand weg: de standaard van de pot of belegging geldt weer.
+    static func resetToStandard(_ data: inout FinanceData, id: UUID, month: YearMonth) {
+        data.clearAllocationOverride(id, in: month)
+    }
+
+    /// Maakt de regel van deze maand (bedrag of percentage) de standaard voor elke maand. De lopende maand krijgt hem
+    /// meteen (de motor doet dat zelf); een maand die nog komt volgt daarna de standaard in plaats van zijn eigen
+    /// afwijking. Een maand in het verleden blijft zoals hij was.
+    static func makeStandard(_ data: inout FinanceData, id: UUID, month: YearMonth, current: YearMonth) {
+        switch data.allocationRule(id, in: month) {
+        case .amount(let value):
+            data.setContributionAmount(id, amount: value, current: current)
+        case .percent(let rule):
+            data.setContributionPercent(id, percent: rule.percent, basis: rule.basis, current: current)
+        }
+        if month > current { data.clearAllocationOverride(id, in: month) }
+    }
+}
+
+// EINDE LOGICA
+
+/// Eén spaarpot of belegging op de pagina Verdelen: de inleg van deze maand als vast bedrag of als percentage van het
+/// inkomen (per maand te overschrijven), met wat het percentage in euro's oplevert, de overschrijfdag en de standaard.
+private struct AllocationRow: View {
+    let id: UUID
+    let name: String
+    let symbol: String
+    let color: Color
+    let month: YearMonth
+    /// "Wordt overgeschreven op de 25e · salarisdag" (de pagina stelt dit samen uit de rekenmotor).
+    let caption: String
+
+    @Environment(AppStore.self) private var store
+
+    private var modeBinding: Binding<ContributionMode> {
+        Binding(get: { store.data.allocationRule(id, in: month).isPercent ? ContributionMode.percentage : ContributionMode.fixed },
+                set: { newMode in
+                    withAnimation(Theme.motion) {
+                        store.mutate { AllocationEdit.setMode(&$0, id: id, month: month, to: newMode) }
+                    }
+                })
+    }
+
+    private var amountBinding: Binding<Double> {
+        Binding(get: { store.data.allocation(id, in: month) },
+                set: { value in store.mutate { AllocationEdit.setAmount(&$0, id: id, month: month, amount: value) } })
+    }
+
+    private var percentBinding: Binding<Double> {
+        Binding(get: {
+            if case .percent(let rule) = store.data.allocationRule(id, in: month) { return rule.percent }
+            return 0
+        }, set: { value in
+            store.mutate { AllocationEdit.setPercent(&$0, id: id, month: month, percent: value) }
+        })
+    }
+
+    private var basisBinding: Binding<IncomeBasis> {
+        Binding(get: {
+            if case .percent(let rule) = store.data.allocationRule(id, in: month) { return rule.basis }
+            return IncomeBasis.salary
+        }, set: { newBasis in
+            withAnimation(Theme.motion) {
+                store.mutate { AllocationEdit.setBasis(&$0, id: id, month: month, to: newBasis) }
+            }
+        })
+    }
+
+    var body: some View {
+        let d = store.data
+        let effective = d.effectiveAllocation(id, in: month)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                SymbolBadge(symbol: symbol, color: color, size: 30)
+                Text(name)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                Spacer(minLength: 6)
+                if effective.isOverride {
+                    Text("Afwijkend")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Theme.warning)
+                        .transition(.opacity)
+                }
+            }
+            ContributionFields(mode: modeBinding, amount: amountBinding, percent: percentBinding, basis: basisBinding,
+                               allowsNegativeAmount: true,
+                               resolvedAmount: effective.rule.isPercent ? effective.amount : nil,
+                               resolvedNote: effective.rule.isPercent ? effective.rule.summary : nil,
+                               footnote: noIncomeNote(d, rule: effective.rule), subject: name)
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if effective.isOverride {
+                standardRow(d)
+            }
+        }
+        .padding(10)
+        .tile()
+    }
+
+    /// Een percentage van niets is niets: zeg dat, anders lijkt het veld stuk.
+    private func noIncomeNote(_ d: FinanceData, rule: AllocationRule) -> String? {
+        guard case .percent(let percent) = rule, d.incomeBases(in: month).cents(for: percent.basis) == 0 else { return nil }
+        let what = percent.basis == .salary ? "salaris" : "inkomen"
+        return "Er is in \(Fmt.month(month)) geen \(what): het percentage geeft nu € 0."
+    }
+
+    /// Wat de standaard is, met de knoppen om daarnaar terug te gaan of van deze maand de standaard te maken.
+    @ViewBuilder
+    private func standardRow(_ d: FinanceData) -> some View {
+        let standard = d.defaultAllocationRule(id, in: month)
+        Text("Standaard: \(standard?.summary ?? Fmt.euro(0))")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        ChipGrid {
+            ChipButton(title: "Terug naar standaard", symbol: "arrow.counterclockwise") {
+                withAnimation(Theme.motion) {
+                    store.mutate { AllocationEdit.resetToStandard(&$0, id: id, month: month) }
+                }
+            }
+            // Van een maand in het verleden maak je geen standaard: dat gaat over wat er vanaf nu gebeurt.
+            if month >= store.now {
+                ChipButton(title: "Maak dit je standaard", symbol: "pin") {
+                    let current = store.now
+                    withAnimation(Theme.motion) {
+                        store.mutate { AllocationEdit.makeStandard(&$0, id: id, month: month, current: current) }
+                    }
+                }
+            }
+        }
+    }
+}
 
 struct DistributePage: View {
     @Environment(AppStore.self) private var store
@@ -1061,112 +1626,119 @@ struct DistributePage: View {
         let d = store.data
         let month = router.focusMonth
         let figures = d.monthFigures(month)
-        // Dezelfde formule als overal: inkomen − uitgaven van de bank − verdeeld − belegd.
-        let left = d.remaining(in: month)
-        let allocatedCents = figures.saved + figures.invested
-        let availableCents = figures.income - (figures.expenses - figures.fromPots)
-        let over = left < 0
-        let fromPots = CentsMath.value(figures.fromPots)
         let plan = d.plan(for: month)
-        // Altijd drie naast elkaar, ook op een smalle iPhone.
-        let tiles = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
 
         PageScaffold(title: "Verdelen") {
             VStack(spacing: Theme.pageSpacing) {
                 MonthPickerBlock()
+                remainingBlock(d, month: month, figures: figures)
+                transferDayBlock(d, month: month, plan: plan)
+                potsBlock(d, month: month)
+                holdingsBlock(d, month: month)
+            }
+        }
+    }
 
-                GlassBlock(title: "Nog te verdelen", symbol: "square.split.2x2.fill",
-                           subtitle: month > store.now ? "Verwacht" : nil,
-                           tint: Theme.olive.opacity(0.3)) {
-                    BigAmount(value: left, color: over ? Theme.negative : Color.primary)
-                    ProgressBar(progress: availableCents > 0 ? Double(allocatedCents) / Double(availableCents) : 0,
-                                tint: over ? Theme.negative : Theme.accent, height: 10)
-                    LazyVGrid(columns: tiles, spacing: 8) {
-                        StatTile(title: "Inkomen", value: Fmt.euro(CentsMath.value(figures.income)))
-                        StatTile(title: "Uitgaven", value: Fmt.euro(CentsMath.value(figures.expenses)))
-                        StatTile(title: "Verdeeld", value: Fmt.euro(CentsMath.value(allocatedCents)))
-                    }
-                    if fromPots > 0 {
-                        Text("Waarvan \(Fmt.euro(fromPots)) uit een spaarpot. Dat telt niet mee in dit bedrag.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if over {
-                        Text(availableCents < 0
-                             ? "Je uitgaven zijn hoger dan je inkomen deze maand."
-                             : "Je hebt \(Fmt.euro(-left)) meer verdeeld dan je beschikbaar hebt.")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.negative)
-                    }
-                    ChipGrid {
-                        ChipButton(title: "Standaardverdeling", symbol: "arrow.counterclockwise") {
-                            withAnimation(Theme.motion) { store.mutate { $0.applyDefaultAllocations(in: month) } }
-                        }
-                        ChipButton(title: "Rest over potten", symbol: "divide") {
-                            withAnimation(Theme.motion) { store.mutate { $0.spreadRemainingOverPots(in: month) } }
-                        }
-                        ChipButton(title: "Alles op nul", symbol: "xmark.circle") {
-                            withAnimation(Theme.motion) { store.mutate { $0.clearAllocations(in: month) } }
-                        }
-                    }
+    // MARK: Nog te verdelen
+
+    @ViewBuilder
+    private func remainingBlock(_ d: FinanceData, month: YearMonth, figures: MonthFigures) -> some View {
+        // Dezelfde formule als overal: inkomen − uitgaven van de bank − verdeeld − belegd.
+        let left = CentsMath.value(figures.remaining)
+        let allocatedCents = CentsMath.add(figures.saved, figures.invested)
+        let availableCents = figures.available
+        let over = left < 0
+        let fromPots = CentsMath.value(figures.fromPots)
+        // Waar de verdeling niet klopt (percentages samen boven 100%, of meer verdeeld dan er is): tekst van de rekenmotor.
+        let warnings = d.allocationWarnings(in: month)
+        let explanation = percentExplanation(d, month: month)
+        // Altijd drie naast elkaar, ook op een smalle iPhone.
+        let tiles = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+
+        GlassBlock(title: "Nog te verdelen", symbol: "square.split.2x2.fill",
+                   subtitle: month > store.now ? "Verwacht" : nil,
+                   tint: Theme.olive.opacity(0.3)) {
+            BigAmount(value: left, color: over ? Theme.negative : Color.primary)
+            ProgressBar(progress: availableCents > 0 ? Double(allocatedCents) / Double(availableCents) : 0,
+                        tint: over ? Theme.negative : Theme.accent, height: 10)
+            LazyVGrid(columns: tiles, spacing: 8) {
+                StatTile(title: "Inkomen", value: Fmt.euro(CentsMath.value(figures.income)))
+                StatTile(title: "Uitgaven", value: Fmt.euro(CentsMath.value(figures.expenses)))
+                StatTile(title: "Verdeeld", value: Fmt.euro(CentsMath.value(allocatedCents)))
+            }
+            if fromPots > 0 {
+                Text("Waarvan \(Fmt.euro(fromPots)) uit een spaarpot. Dat telt niet mee in dit bedrag.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if month < d.startMonth {
+                Text("Maanden vóór je startmaand (\(Fmt.month(d.startMonth))) tellen niet mee: daar verdeel je niets.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if availableCents < 0 {
+                Text("Je uitgaven zijn hoger dan je inkomen deze maand.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.negative)
+            }
+            ForEach(warnings, id: \.message) { warning in
+                Label(warning.message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(warningColor(warning))
+            }
+            if let explanation {
+                Text(explanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ChipGrid {
+                ChipButton(title: "Standaardverdeling", symbol: "arrow.counterclockwise") {
+                    withAnimation(Theme.motion) { store.mutate { $0.applyDefaultAllocations(in: month) } }
                 }
-
-                GlassBlock(title: "Overschrijfdag", symbol: "calendar.badge.clock",
-                           subtitle: "Wanneer gaat het geld naar de potten?") {
-                    DayPickerRow(title: "Dag van de maand", day: planDayBinding(month),
-                                 defaultText: "Standaard")
-                    Text(transferExplanation(plan: plan, month: month, salaryDay: d.salaryDay()))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    Text("Op de overschrijfdag gaat het bedrag automatisch van je bankrekening naar de spaarpot of belegging. Dat geldt ook voor maanden die nog komen. Tot die dag telt het bedrag niet mee in het saldo van de pot.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                ChipButton(title: "Rest over potten", symbol: "divide") {
+                    withAnimation(Theme.motion) { store.mutate { $0.spreadRemainingOverPots(in: month) } }
                 }
-
-                GlassBlock(title: "Spaarpotten", symbol: "tray.full.fill", headerLink: .pots) {
-                    if d.pots.isEmpty {
-                        Text("Je hebt nog geen spaarpotten. Maak er een op de pagina Spaarpotten.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(d.pots) { pot in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 10) {
-                                SymbolBadge(symbol: pot.symbol, color: Theme.color(pot.colorIndex), size: 30)
-                                NumberRow(title: pot.name, value: allocationBinding(pot.id, month), allowsNegative: true)
-                            }
-                            Text(transferCaption(id: pot.id, month: month, d: d))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, 40)
-                        }
-                    }
-                }
-
-                GlassBlock(title: "Beleggen", symbol: "chart.line.uptrend.xyaxis", headerLink: .portfolio) {
-                    if d.holdings.isEmpty {
-                        Text("Je hebt nog geen beleggingen. Voeg ze toe op de pagina Beleggingen.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(d.holdings) { h in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 10) {
-                                SymbolBadge(symbol: h.kind.symbol, color: Theme.accent, size: 30)
-                                NumberRow(title: h.name, value: allocationBinding(h.id, month), allowsNegative: true)
-                            }
-                            Text(transferCaption(id: h.id, month: month, d: d))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, 40)
-                        }
-                    }
+                ChipButton(title: "Alles op nul", symbol: "xmark.circle") {
+                    withAnimation(Theme.motion) { store.mutate { $0.clearAllocations(in: month) } }
                 }
             }
         }
     }
 
+    private func warningColor(_ warning: AllocationWarning) -> Color {
+        switch warning {
+        case .percentagesOver100: return Theme.warning
+        case .overAllocated: return Theme.negative
+        }
+    }
+
+    /// Waarover de percentages van deze maand rekenen, en wat ze samen vragen. nil als niets een percentage heeft.
+    private func percentExplanation(_ d: FinanceData, month: YearMonth) -> String? {
+        let ids = d.pots.map { $0.id } + d.holdings.map { $0.id }
+        guard ids.contains(where: { d.allocationRule($0, in: month).isPercent }) else { return nil }
+        let bases = d.incomeBases(in: month)
+        let salary = Fmt.euro(CentsMath.value(bases.cents(for: .salary)))
+        let all = Fmt.euro(CentsMath.value(bases.cents(for: .allIncome)))
+        let total = Fmt.percent(d.percentTotal(in: month) / 100, digits: 2)
+        return "Een percentage rekent over het inkomen van \(Fmt.month(month)): \(salary) salaris, \(all) met extra inkomsten. Je percentages samen: \(total). \"Rest over potten\" maakt van een percentage een vast bedrag."
+    }
+
     // MARK: Overschrijfdag
+
+    @ViewBuilder
+    private func transferDayBlock(_ d: FinanceData, month: YearMonth, plan: MonthPlan) -> some View {
+        GlassBlock(title: "Overschrijfdag", symbol: "calendar.badge.clock",
+                   subtitle: "Wanneer gaat het geld naar de potten?") {
+            DayPickerRow(title: "Dag van de maand", day: planDayBinding(month),
+                         defaultText: "Standaard")
+            Text(transferExplanation(plan: plan, month: month, d: d))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text("Op de overschrijfdag gaat het bedrag automatisch van je bankrekening naar de spaarpot of belegging. Dat geldt ook voor maanden die nog komen. Tot die dag telt het bedrag niet mee in het saldo van de pot.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
 
     private func planDayBinding(_ month: YearMonth) -> Binding<Int?> {
         Binding<Int?>(get: { store.data.months[month.key]?.transferDay },
@@ -1177,36 +1749,74 @@ struct DistributePage: View {
                       })
     }
 
-    private func transferExplanation(plan: MonthPlan, month: YearMonth, salaryDay: Int) -> String {
+    private func transferExplanation(plan: MonthPlan, month: YearMonth, d: FinanceData) -> String {
         if let chosen = plan.transferDay {
             let day = min(YearMonth.clampedDay(chosen), month.dayCount)
             return "Alles wat je deze maand verdeelt gaat op \(DayText.ordinal(day)) over."
         }
-        return "Standaard geldt per pot of belegging de eigen overschrijfdag, en anders je salarisdag (\(DayText.ordinal(salaryDay)))."
+        let salaryDay = DayText.ordinal(d.salaryDay(in: month))
+        let phrase = d.salary.isMonthly ? "je salarisdag (\(salaryDay))" : "de eerste salarisdag van de maand (\(salaryDay))"
+        return "Standaard geldt per pot of belegging de eigen overschrijfdag, en anders \(phrase)."
     }
 
     /// Waar de dag van een pot of belegging vandaan komt.
     private func transferSource(id: UUID, month: YearMonth, d: FinanceData) -> String {
         if d.months[month.key]?.transferDay != nil { return "dag van deze maand" }
         let ownDay = d.pot(id)?.transferDay ?? d.holdings.first(where: { $0.id == id })?.transferDay
-        return ownDay != nil ? "eigen dag" : "salarisdag"
+        if ownDay != nil { return "eigen dag" }
+        return d.salary.isMonthly ? "salarisdag" : "eerste salaris van de maand"
     }
 
     /// "Wordt overgeschreven op de 25e · salarisdag"
     private func transferCaption(id: UUID, month: YearMonth, d: FinanceData) -> String {
         let day = d.transferDay(for: id, in: month)
         let source = transferSource(id: id, month: month, d: d)
-        if CentsMath.int(d.allocation(id, in: month)) == 0 {
+        if d.allocationCents(id, in: month) == 0 {
             return "Overschrijfdag: \(DayText.ordinal(day)) · \(source)"
         }
-        let planned = month.date(day: day) > store.today
+        // Per kalenderdag: de overschrijfdag zelf is al gebeurd (vanaf het begin van die dag), pas een latere dag is gepland.
+        let planned = DayMath.isPlanned(month.date(day: day), asOf: store.today)
         let verb = planned ? "Wordt overgeschreven op" : "Overgeschreven op"
         return "\(verb) \(DayText.ordinal(day)) · \(source)"
     }
 
-    private func allocationBinding(_ id: UUID, _ month: YearMonth) -> Binding<Double> {
-        Binding(get: { store.data.allocation(id, in: month) },
-                set: { value in store.mutate { $0.setAllocation(id, in: month, amount: value) } })
+    // MARK: Spaarpotten en beleggingen
+
+    @ViewBuilder
+    private func potsBlock(_ d: FinanceData, month: YearMonth) -> some View {
+        GlassBlock(title: "Spaarpotten", symbol: "tray.full.fill", headerLink: .pots) {
+            if d.pots.isEmpty {
+                Text("Je hebt nog geen spaarpotten. Maak er een op de pagina Spaarpotten.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(d.pots) { pot in
+                AllocationRow(id: pot.id, name: pot.name, symbol: pot.symbol, color: Theme.color(pot.colorIndex),
+                              month: month, caption: transferCaption(id: pot.id, month: month, d: d))
+                    .disabled(month < d.startMonth)
+            }
+            if !d.pots.isEmpty || !d.holdings.isEmpty {
+                Text("Wat je hier invult geldt voor \(Fmt.month(month)). Kies Percentage om een deel van je inkomen te verdelen: het bedrag rekent mee als je inkomen verandert. Een ander percentage in één maand mag ook. Wil je het elke maand, kies dan Maak dit je standaard.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func holdingsBlock(_ d: FinanceData, month: YearMonth) -> some View {
+        GlassBlock(title: "Beleggen", symbol: "chart.line.uptrend.xyaxis", headerLink: .portfolio) {
+            if d.holdings.isEmpty {
+                Text("Je hebt nog geen beleggingen. Voeg ze toe op de pagina Beleggingen.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(d.holdings) { h in
+                AllocationRow(id: h.id, name: h.name, symbol: h.kind.symbol, color: Theme.accent,
+                              month: month, caption: transferCaption(id: h.id, month: month, d: d))
+                    .disabled(month < d.startMonth)
+            }
+        }
     }
 }
 
@@ -1270,6 +1880,9 @@ struct BankPage: View {
     }
 }
 
+/// Het saldo van de bankrekening van nu. Dit is hetzelfde getal als het saldo aan het eind van vandaag op de dagpagina
+/// (`DayTotals.bankBalance`): alles gebeurt per kalenderdag, dus wat vandaag op je plan staat telt al mee. Het eindsaldo
+/// van de maand is `bankBalance(at:)` (`MonthLedger.closingBank`).
 struct BankBalanceBlock: View {
     @Environment(AppStore.self) private var store
     @Binding var action: BankAction?
@@ -1277,18 +1890,26 @@ struct BankBalanceBlock: View {
     var body: some View {
         let d = store.data
         let now = store.now
-        GlassBlock(title: "Saldo nu", symbol: "building.columns.fill", tint: Theme.olive.opacity(0.3)) {
-            if d.hasBankBalance {
-                BigAmount(value: d.bankBalanceNow(current: now, today: store.today))
-                if let last = d.sortedBankSnapshots.last {
-                    Text("Laatst ingevuld: \(Fmt.euro(last.balance)) op \(Fmt.date(last.date)). Stortingen, opnames en alles wat je plant komen daar bovenop, op de dag waarop het gebeurt.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Het saldo volgt je stortingen, opnames en alles wat je plant, op de dag waarop het gebeurt.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+        let today = store.today
+        // Alleen een saldo tonen als het van nu bekend is: een saldo dat pas later begint zegt niets over vandaag.
+        let balanceNow = d.bankBalanceNowIfKnown(current: now, today: today)
+        let monthEnd = d.bankBalance(at: now)
+        GlassBlock(title: "Saldo nu", symbol: "building.columns.fill",
+                   subtitle: balanceNow == nil ? nil : "Vandaag, \(DayText.weekdayShort(today))",
+                   tint: Theme.olive.opacity(0.3)) {
+            if let balanceNow {
+                BigAmount(value: balanceNow, color: balanceNow < 0 ? Theme.negative : Color.primary)
+                if let monthEnd {
+                    StatTile(title: "Eind van \(Fmt.month(now))", value: Fmt.euro(monthEnd),
+                             color: monthEnd < 0 ? Theme.negative : Color.primary,
+                             caption: "verwacht, met alles wat nog komt")
                 }
+                Text(explanation(d))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if d.hasBankBalance {
+                EmptyHint(symbol: "calendar.badge.clock", title: "Je saldo van vandaag is nog niet bekend",
+                          message: "Wat je invulde begint pas op een latere dag. Vul je saldo van vandaag in.")
             } else {
                 EmptyHint(symbol: "building.columns", title: "Begin met je saldo",
                           message: "Je koppelt geen bank. Vul je saldo in of zet er geld op; de app houdt het bij en rekent ermee verder.")
@@ -1304,18 +1925,28 @@ struct BankBalanceBlock: View {
             }
         }
     }
+
+    /// Hoe het saldo tot stand komt, met de regel voor een ingevuld saldo.
+    private func explanation(_ d: FinanceData) -> String {
+        let perDay = "Het saldo telt per dag: wat vandaag op je plan staat, is al meegerekend."
+        if let last = d.sortedBankSnapshots.last {
+            return "Laatst ingevuld: \(Fmt.euro(last.balance)) op \(Fmt.date(last.date)). Boekingen van de dag waarop je het saldo invult gelden als al verwerkt. Stortingen, opnames en alles wat je plant komen daar bovenop, op de dag waarop het gebeurt. \(perDay)"
+        }
+        return "Het saldo volgt je stortingen, opnames en alles wat je plant, op de dag waarop het gebeurt. \(perDay)"
+    }
 }
 
 /// Wat er in een maand binnenkomt, uitgaat en overblijft, met een knop om de standaardposten in te vullen.
+/// Onderaan staat het saldo aan het eind van de maand (`bankBalance(at:)`, hetzelfde als `MonthLedger.closingBank`).
 struct BankFlowBlock: View {
     let month: YearMonth
     @Environment(AppStore.self) private var store
     @State private var message: String?
 
-    /// Het deel van de uitgaven van één soort dat uit spaarpotten komt (kost de bankrekening niets).
-    private func fromPots(_ d: FinanceData, kind: ExpenseKind) -> Double {
+    /// Het deel van de uitgaven van één soort dat van de bankrekening gaat, zoals de rekenmotor het boekt per regel.
+    private func bankPart(_ d: FinanceData, kind: ExpenseKind) -> Double {
         guard month >= d.startMonth else { return 0 }
-        return CentsMath.value(CentsMath.sum(d.expenseLines(in: month, kind: kind).map { CentsMath.int(d.fromPots(of: $0)) }))
+        return CentsMath.value(CentsMath.sum(d.expenseLines(in: month, kind: kind).map { CentsMath.int(d.fromBank(of: $0)) }))
     }
 
     var body: some View {
@@ -1323,8 +1954,8 @@ struct BankFlowBlock: View {
         let o = d.expenseOverview(in: month)
         let missing = d.missingStandardExpenses(in: month).count
         // De balk toont wat van de bank gaat, zodat alle stukken samen het inkomen vormen.
-        let fixedBank = max(0, o.fixed - fromPots(d, kind: .fixed))
-        let variableBank = max(0, o.variable - fromPots(d, kind: .variable))
+        let fixedBank = bankPart(d, kind: .fixed)
+        let variableBank = bankPart(d, kind: .variable)
         GlassBlock(title: "Binnen en eruit", symbol: "arrow.left.arrow.right",
                    subtitle: month > store.now ? "\(Fmt.month(month)) · verwacht" : Fmt.month(month)) {
             SegmentBar(segments: [
@@ -1350,25 +1981,55 @@ struct BankFlowBlock: View {
                 FlowRow(title: "Over op de rekening", value: o.leftAfterTransfers, bold: true,
                         color: o.leftAfterTransfers < 0 ? Theme.negative : Theme.positive)
             }
+            if let note = payoutNote(d) {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if o.leftAfterTransfers < 0 {
                 Text("Je geeft meer uit en verdeelt meer dan je inkomen. Pas je uitgaven of je verdeling aan.")
                     .font(.footnote)
                     .foregroundStyle(Theme.negative)
             }
+            endBalance(d)
             ChipGrid {
                 ChipButton(title: missing == 0 ? "Standaardposten staan erin" : "Standaard uitgaven invullen",
                            symbol: "wand.and.stars") {
                     let added = store.data.missingStandardExpenses(in: month).count
                     withAnimation(Theme.motion) { store.mutate { $0.fillStandardExpenses(in: month) } }
                     message = added == 0 ? "Alle standaardposten staan al in deze maand."
-                                         : "\(added) standaardposten ingevuld met een richtbedrag. Pas ze aan naar jouw situatie."
+                                         : "\(added) standaardposten ingevuld met een richtbedrag. Ze komen elke maand terug; pas ze aan naar jouw situatie."
                 }
                 ChipLink(title: "Geld verdelen", symbol: "square.split.2x2", destination: .distribute)
+                ChipLink(title: "Dag voor dag", symbol: "calendar", destination: .cashflow)
             }
             if let message {
                 Text(message).font(.caption).foregroundStyle(.secondary)
             } else if missing > 0 {
-                Text("De knop vult gangbare vaste en variabele posten in met een richtbedrag. Je kunt alles daarna aanpassen of verwijderen.")
+                Text("De knop vult gangbare vaste en variabele posten in met een richtbedrag, als terugkerende regel. Je kunt alles daarna aanpassen of verwijderen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Komt het salaris vaker dan één keer in de maand binnen, dan staat hier wanneer.
+    private func payoutNote(_ d: FinanceData) -> String? {
+        let payouts = d.salaryPayouts(in: month, plan: d.plan(for: month)).filter { $0.cents != 0 }
+        guard payouts.count > 1 else { return nil }
+        return "Je salaris komt in \(Fmt.month(month)) \(payouts.count) keer binnen: \(d.salaryPayoutDaysText(in: month))."
+    }
+
+    /// Het saldo van de rekening aan het eind van de maand: begin, binnen, eruit en overgeschreven, met handmatige boekingen
+    /// en je ingevulde saldo erbij. Per dag staat het bij Dag voor dag.
+    @ViewBuilder
+    private func endBalance(_ d: FinanceData) -> some View {
+        if let closing = d.bankBalance(at: month) {
+            VStack(alignment: .leading, spacing: 4) {
+                Divider()
+                FlowRow(title: "Saldo aan het eind van de maand", value: closing, bold: true,
+                        color: closing < 0 ? Theme.negative : Color.primary)
+                Text("Dit is het saldo van je rekening, met je eigen stortingen, opnames en ingevulde saldo. Per dag zie je het bij Dag voor dag.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1404,6 +2065,7 @@ struct FlowRow: View {
 }
 
 /// Overschrijvingen vanaf de rekening naar spaarpotten en beleggingen, volgens je maandverdeling, met de dag.
+/// Bij een percentage staat erbij welk percentage het is; het bedrag is altijd wat de rekenmotor van dat percentage maakt.
 struct BankTransfersBlock: View {
     let month: YearMonth
     @Environment(AppStore.self) private var store
@@ -1415,22 +2077,33 @@ struct BankTransfersBlock: View {
         let title: String
         let amount: Double
         let day: Int
+        let detail: String
+    }
+
+    /// "de 25e" of, bij een percentage, "de 25e · 10% van je salaris".
+    private func detail(_ d: FinanceData, id: UUID, day: Int) -> String {
+        let rule = d.allocationRule(id, in: month)
+        return rule.isPercent ? "\(DayText.ordinal(day)) · \(rule.summary)" : DayText.ordinal(day)
     }
 
     var body: some View {
         let d = store.data
         let potRows: [Row] = d.pots.map { pot in
-            Row(id: pot.id, symbol: pot.symbol, color: Theme.color(pot.colorIndex), title: pot.name,
-                amount: d.allocation(pot.id, in: month), day: d.transferDay(for: pot.id, in: month))
+            let day = d.transferDay(for: pot.id, in: month)
+            return Row(id: pot.id, symbol: pot.symbol, color: Theme.color(pot.colorIndex), title: pot.name,
+                       amount: d.allocation(pot.id, in: month), day: day, detail: detail(d, id: pot.id, day: day))
         }.filter { $0.amount != 0 }
         let holdingRows: [Row] = d.holdings.map { h in
-            Row(id: h.id, symbol: h.kind.symbol, color: Theme.flowInvested, title: h.name,
-                amount: d.allocation(h.id, in: month), day: d.transferDay(for: h.id, in: month))
+            let day = d.transferDay(for: h.id, in: month)
+            return Row(id: h.id, symbol: h.kind.symbol, color: Theme.flowInvested, title: h.name,
+                       amount: d.allocation(h.id, in: month), day: day, detail: detail(d, id: h.id, day: day))
         }.filter { $0.amount != 0 }
         let rows = (potRows + holdingRows).sorted { lhs, rhs in
             lhs.day != rhs.day ? lhs.day < rhs.day : lhs.title < rhs.title
         }
-        let total = CentsMath.value(CentsMath.sum(rows.map { CentsMath.int($0.amount) }))
+        // Samen precies wat het overzicht als gespaard en belegd telt.
+        let figures = d.monthFigures(month)
+        let total = CentsMath.value(CentsMath.add(figures.saved, figures.invested))
         GlassBlock(title: "Overschrijvingen", symbol: "arrow.up.right.circle.fill",
                    subtitle: "Van de rekening naar spaarpotten en beleggingen", headerLink: .distribute) {
             if rows.isEmpty {
@@ -1441,7 +2114,7 @@ struct BankTransfersBlock: View {
                 VStack(spacing: 8) {
                     ForEach(rows) { row in
                         TransferRow(symbol: row.symbol, color: row.color, title: row.title, amount: row.amount,
-                                    dayText: DayText.ordinal(row.day))
+                                    dayText: row.detail)
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
@@ -1501,7 +2174,7 @@ struct BankForecastBlock: View {
             GlassBlock(title: "Verwacht verloop", symbol: "chart.line.uptrend.xyaxis",
                        subtitle: "Saldo aan het eind van elke maand") {
                 TimeLineChart(points: series, height: 160)
-                Text("Gebaseerd op je saldo, inkomen, uitgaven en verdeling per maand. De grafiek past zich aan als je iets wijzigt.")
+                Text("Gebaseerd op je saldo, inkomen, uitgaven en verdeling per maand. Het eindsaldo van een maand is hetzelfde getal als bij Binnen en eruit en bij Dag voor dag. De grafiek past zich aan als je iets wijzigt.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1515,7 +2188,8 @@ struct BankBufferBlock: View {
     var body: some View {
         let d = store.data
         let now = store.now
-        if d.hasBankBalance {
+        // Alleen als het saldo van nu bekend is: zonder saldo zegt "daarboven" niets.
+        if d.hasBankBalanceNow(current: now, today: store.today) {
             GlassBlock(title: "Buffer", symbol: "shield.lefthalf.filled") {
                 HStack(spacing: 8) {
                     StatTile(title: "Gewenste buffer", value: Fmt.euro(d.bankBuffer(current: now)))
@@ -1646,8 +2320,9 @@ struct BankActionSheet: View {
         let d = store.data
         let now = store.now
         let today = store.today
-        // Saldo's van nu: wat nog moet komen (het salaris van de 25e, de inleg) telt nog niet mee.
-        let bank = d.bankBalanceNow(current: now, today: today)
+        // Saldo's van nu, per kalenderdag: wat vandaag op je plan staat telt al mee, wat op een latere dag komt (het salaris
+        // van de 25e, de inleg) nog niet.
+        let bank = d.bankBalanceNowIfKnown(current: now, today: today)
         let potBalance = potID.map { d.potBalanceNow($0, current: now, today: today) } ?? 0
         SheetScaffold(title: action.title, canSave: canSave(potBalance: potBalance), onSave: { save() }) {
             Section {
@@ -1669,21 +2344,22 @@ struct BankActionSheet: View {
             }
         }
         .onAppear {
-            if action == .balance { amount = bank }
+            if action == .balance { amount = bank ?? 0 }
             if potID == nil { potID = d.pots.first?.id }
         }
     }
 
-    private func headerText(bank: Double, potBalance: Double) -> String {
+    private func headerText(bank: Double?, potBalance: Double) -> String {
+        let bankText = bank.map { Fmt.euro($0) } ?? "onbekend"
         switch action {
-        case .fromPot: return "Saldo spaarpot \(Fmt.euro(potBalance)) · bankrekening \(Fmt.euro(bank))"
-        default: return "Saldo bankrekening \(Fmt.euro(bank))"
+        case .fromPot: return "Saldo spaarpot \(Fmt.euro(potBalance)) · bankrekening \(bankText)"
+        default: return "Saldo bankrekening \(bankText)"
         }
     }
 
     private var footerText: String {
         switch action {
-        case .balance: return "Vul het saldo in zoals het nu op je rekening staat. Elke invoer wordt bewaard."
+        case .balance: return "Vul het saldo in zoals het nu op je rekening staat. Boekingen van de dag waarop je het saldo invult gelden als al verwerkt. Elke invoer wordt bewaard."
         case .deposit: return "Dit zet geld op de bankrekening in de app. Er gebeurt niets bij een echte bank."
         case .withdraw: return "Dit haalt geld van de bankrekening in de app, bijvoorbeeld voor contant geld of een grote uitgave."
         case .toPot: return "Het bedrag gaat van de bankrekening naar de spaarpot en staat in de geschiedenis van beide."

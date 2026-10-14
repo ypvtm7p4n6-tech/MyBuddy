@@ -82,20 +82,27 @@ struct IncomeBlock: View {
     var body: some View {
         let d = store.data
         let period = d.periodSummary(router.periodMode, containing: router.focusMonth, current: store.now)
-        let salaryTotal = period.months.reduce(0) { $0 + d.salaryAmount(in: $1.month) }
-        let extraTotal = period.months.reduce(0) { $0 + d.extraIncomeTotal(in: $1.month) }
+        // Salaris (de som van de uitbetalingen van elke maand) en overige inkomsten, in hele centen opgeteld: samen zijn ze
+        // het inkomen hierboven.
+        let parts = d.incomeParts(in: period.months.map(\.month))
         LinkedBlock(title: "Salaris & inkomsten", symbol: "eurosign.circle.fill",
                     subtitle: Fmt.period(router.periodMode, containing: router.focusMonth),
                     destination: .income) {
             BigAmount(value: period.income, font: .system(.title, design: .rounded, weight: .bold))
-            if d.salary.monthlyAmount() == 0 && extraTotal == 0 {
+            if d.salary.monthlyAmount() == 0 && parts.extra == 0 {
                 Text("Stel je salaris in als vast bedrag of met een uurloon.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 8) {
-                    StatTile(title: "Salaris", value: Fmt.euro(salaryTotal))
-                    StatTile(title: "Overig", value: Fmt.euro(extraTotal))
+                    StatTile(title: "Salaris", value: Fmt.euro(parts.salary))
+                    StatTile(title: "Overig", value: Fmt.euro(parts.extra))
+                }
+                // Een salaris om de zoveel weken of dagen komt niet elke maand even vaak binnen: zeg wanneer.
+                if !d.salary.isMonthly {
+                    Text("Salaris \(d.salaryScheduleSummary(asOf: store.today)).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -111,19 +118,20 @@ struct DistributeBlock: View {
     var body: some View {
         let d = store.data
         let period = d.periodSummary(router.periodMode, containing: router.focusMonth, current: store.now)
-        let allocated = period.saved + period.invested
-        // Wat je te verdelen had: het restant plus wat je al hebt verdeeld (volgt zo altijd de som van "Over").
-        let available = period.remaining + allocated
-        let progress = available > 0 ? allocated / available : 0
-        let over = period.remaining < 0
+        // Dezelfde rekenregels als voor één maand, in hele centen (`MonthFigures`): wat je te verdelen had (`available`) is
+        // inkomen min uitgaven van de bank, en "Nog te verdelen" is dat min wat je verdeelde. Zo volgt het altijd de som van "Over".
+        let figures = period.figures
+        let allocatedCents = CentsMath.add(figures.saved, figures.invested)
+        let progress = figures.available > 0 ? Double(allocatedCents) / Double(figures.available) : 0
+        let remaining = CentsMath.value(figures.remaining)
+        let over = figures.remaining < 0
         // Onder nul door te hoge uitgaven (bijvoorbeeld nog geen salaris) is niet "te veel verdeeld".
-        let spending = RemainingShortfall.isSpending(income: period.income,
-                                                     bankExpenses: period.expenses - period.fromPots)
+        let spending = figures.available < 0
         LinkedBlock(title: "Verdelen", symbol: "square.split.2x2.fill",
                     subtitle: over ? (spending ? "Je uitgaven zijn hoger dan je inkomen" : "Je hebt te veel verdeeld")
                                    : "Nog te verdelen",
                     destination: .distribute) {
-            BigAmount(value: period.remaining,
+            BigAmount(value: remaining,
                       font: .system(.title, design: .rounded, weight: .bold),
                       color: over ? Theme.negative : Color.primary)
             ProgressBar(progress: progress, tint: over ? Theme.negative : Theme.accent, height: 10)
@@ -185,19 +193,17 @@ struct BankBlock: View {
     var body: some View {
         let d = store.data
         let now = store.now
+        let today = store.today
         let months = router.periodMode.months(containing: router.focusMonth)
         let target = months.last ?? router.focusMonth
-        // Is er nog geen saldo bekend, dan blijft dit nil. Voor de huidige maand telt het saldo van vandaag,
-        // voor andere perioden het saldo aan het eind ervan.
-        let endBalance = d.bankBalance(at: target)
-        let balance: Double? = (endBalance != nil && target == now)
-            ? d.bankBalanceNow(current: now, today: store.today)
-            : endBalance
-        let overviews = months.map { d.expenseOverview(in: $0) }
-        let fixed = overviews.reduce(0) { $0 + $1.fixed }
-        let variable = overviews.reduce(0) { $0 + $1.variable }
-        let left = overviews.reduce(0) { $0 + $1.leftAfterTransfers }
-        let fromPots = overviews.reduce(0) { $0 + $1.fromPots }
+        // Dezelfde som als "Over" in het Overzicht en bij Verdelen: de cijfers van de periode (`PeriodSummary`).
+        let period = d.periodSummary(router.periodMode, containing: router.focusMonth, current: now)
+        // Voor de huidige maand telt het saldo van vandaag, en alleen als dat bekend is (een saldo dat pas later in de maand
+        // begint zegt niets over vandaag: dan geen "€ 0" maar de uitnodiging om het in te vullen). Voor andere perioden is
+        // het het saldo aan het eind ervan.
+        let balance: Double? = target == now ? d.bankBalanceNowIfKnown(current: now, today: today) : d.bankBalance(at: target)
+        let kinds = d.expenseKindTotals(in: months)
+        let left = period.remaining
         LinkedBlock(title: "Bankrekening", symbol: "building.columns.fill",
                     subtitle: "Saldo, uitgaven en overschrijvingen",
                     destination: .bank) {
@@ -206,6 +212,10 @@ struct BankBlock: View {
                 Text(balanceNote(target: target, now: now))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if d.hasBankBalance {
+                Text("Je saldo van vandaag is nog niet bekend. Vul je saldo van vandaag in.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             } else {
                 Text("Vul je saldo in of zet er geld op. De app houdt het bij en rekent ermee.")
                     .font(.footnote)
@@ -213,14 +223,14 @@ struct BankBlock: View {
             }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
                       spacing: 8) {
-                StatTile(title: "Vast", value: Fmt.euro(fixed))
-                StatTile(title: "Variabel", value: Fmt.euro(variable))
+                StatTile(title: "Vast", value: Fmt.euro(kinds.fixed))
+                StatTile(title: "Variabel", value: Fmt.euro(kinds.variable))
                 StatTile(title: "Over", value: Fmt.euro(left),
                          color: left < 0 ? Theme.negative : Color.primary)
             }
             // Vast en Variabel bevatten ook wat uit een spaarpot komt, Over niet: zonder uitleg tellen de tegels niet op.
-            if fromPots > 0 {
-                Text("Waarvan \(Fmt.euro(fromPots)) uit spaarpotten. Dat telt niet mee in Over.")
+            if period.fromPots > 0 {
+                Text("Waarvan \(Fmt.euro(period.fromPots)) uit spaarpotten. Dat telt niet mee in Over.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -117,8 +117,16 @@ struct RemainingHeader: View {
     var body: some View {
         let d = store.data
         let m = store.now
-        let left = d.remaining(in: m)
-        let fromPots = d.expensesFromPots(in: m)
+        // Alle cijfers van de maand komen uit één `MonthFigures` (zie `MonthBoard`), dus ze sluiten op de cent:
+        // inkomen − uitgaven van je rekening − verdeeld = nog te verdelen. "Over deze maand" in het Overzicht hieronder en
+        // de pagina Verdelen tonen hetzelfde getal.
+        //
+        // Keuze voor uitgaven uit een spaarpot: de middelste tegel toont wat van je rekening gaat (`expensesFromBank`). Wat uit
+        // een pot komt kost dit maandbudget niets en staat in de toelichting eronder, met het totaal van de uitgaven (zoals
+        // het Overzicht dat toont). Zonder uitgaven uit potten is de tegel gewoon "Uitgaven".
+        let board = MonthBoard(d, month: m)
+        let left = board.remaining
+        let percentWarning = d.allocationWarnings(in: m).first { $0.isPercentageWarning }
         // Dit blok gaat over de huidige maand, dus de verdeelpagina opent ook op de huidige maand.
         Button {
             router.showCurrentMonth(m)
@@ -135,26 +143,26 @@ struct RemainingHeader: View {
                         .foregroundStyle(.secondary)
                 }
                 BigAmount(value: left, color: left < 0 ? Theme.negative : Color.primary)
-                if left < 0 {
+                if board.isNegative {
                     // De tekst volgt de oorzaak: te hoge uitgaven (bijvoorbeeld nog geen salaris) of te veel verdeeld.
-                    let spending = RemainingShortfall.isSpending(income: d.income(in: m),
-                                                                 bankExpenses: d.expensesFromBank(in: m))
-                    Text(spending ? "Je uitgaven zijn hoger dan je inkomen deze maand."
-                                  : "Je hebt meer verdeeld dan er over was deze maand.")
+                    Text(board.spendingExceedsIncome ? "Je uitgaven zijn hoger dan je inkomen deze maand."
+                                                     : "Je hebt meer verdeeld dan er over was deze maand.")
                         .font(.footnote)
                         .foregroundStyle(Theme.negative)
-                } else {
-                    HStack(spacing: 8) {
-                        MiniFigure(title: "Inkomen", value: d.income(in: m))
-                        MiniFigure(title: "Uitgaven", value: d.expensesTotal(in: m))
-                        MiniFigure(title: "Verdeeld", value: d.savedTotal(in: m) + d.investedTotal(in: m))
-                    }
-                    // Uitgaven uit een spaarpot kosten dit maandbudget niets: zonder uitleg tellen de drie tegels niet op.
-                    if fromPots > 0 {
-                        Text("Waarvan \(Fmt.euro(fromPots)) uit een spaarpot. Dat telt niet mee in dit bedrag.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                }
+                HStack(spacing: 8) {
+                    MiniFigure(title: "Inkomen", value: board.income)
+                    MiniFigure(title: board.hasPotExpenses ? "Bankuitgaven" : "Uitgaven", value: board.expensesFromBank)
+                    MiniFigure(title: "Verdeeld", value: board.allocated)
+                }
+                // Uitgaven uit een spaarpot kosten dit maandbudget niets: zonder uitleg tellen de drie tegels niet op.
+                if board.hasPotExpenses {
+                    Text("Bankuitgaven is wat van je rekening gaat. In totaal geef je \(Fmt.euro(board.expensesTotal)) uit, waarvan \(Fmt.euro(board.fromPots)) uit een spaarpot. Dat telt niet mee in dit bedrag.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let percentWarning {
+                    AllocationWarningLabel(warning: percentWarning)
                 }
             }
             .padding(Theme.cardInset)
@@ -171,13 +179,18 @@ struct MiniFigure: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             Text(Fmt.euro(value))
                 .font(.system(.footnote, design: .rounded, weight: .semibold))
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
                 .contentTransition(.numericText())
         }
+        .animation(Theme.motion, value: value)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .tile()
@@ -207,8 +220,8 @@ struct OverviewBlock: View {
         let now = store.now
         let months = d.summaries(from: now.adding(-4), count: 6, current: now)
         let worth = d.netWorth(at: now, current: now)
-        // Dezelfde som als "Nog te verdelen" bovenaan Home.
-        let left = d.remaining(in: now)
+        // Dezelfde som als "Nog te verdelen" bovenaan Home (`MonthBoard.remaining`, dus `remaining(in:)`).
+        let left = MonthBoard(d, month: now).remaining
         // Een tik opent het overzicht altijd op deze maand, niet op de maand waar je op Savings het laatst naar keek.
         LinkedBlock(title: "Overzicht", symbol: "chart.bar.xaxis", subtitle: "Waar gaat je geld heen?",
                     destination: .overview, showsCurrentMonth: true) {
@@ -216,10 +229,12 @@ struct OverviewBlock: View {
             FlowLegend()
             HStack(spacing: 8) {
                 // Hetzelfde getal en label als op de Overzicht-pagina ("Eind <maand>"): bank, potten en beleggingen
-                // aan het eind van de maand, dus inclusief salaris en inleg die nog komen.
-                StatTile(title: "Vermogen eind maand", value: Fmt.euro(worth.total))
+                // aan het eind van de maand, dus inclusief salaris en inleg die nog komen. Het label noemt het peilmoment.
+                StatTile(title: MoneyLabels.netWorthEnd(of: now), value: Fmt.euro(worth.total),
+                         caption: "Verwacht")
                 StatTile(title: "Over deze maand", value: Fmt.euro(left),
-                         color: left < 0 ? Theme.negative : Color.primary)
+                         color: left < 0 ? Theme.negative : Color.primary,
+                         caption: "Nog te verdelen")
             }
         }
     }
@@ -268,10 +283,9 @@ struct PotsTotals: View {
         let today = store.today
         let saved = d.totalSaved(current: now, today: today)
         let goal = d.totalGoal()
-        // Met hetzelfde saldo van vandaag als op de tegels, zodat voortgang en bedragen bij elkaar passen.
-        let towardGoals = d.pots
-            .filter { ($0.goalAmount ?? 0) > 0 }
-            .reduce(0) { $0 + d.potBalanceNow($1.id, current: now, today: today) }
+        // Met hetzelfde saldo van vandaag als op de tegels, zodat voortgang en bedragen bij elkaar passen (de rekenmotor
+        // telt de potten met een doel in hele centen op).
+        let towardGoals = d.savedTowardGoals(current: now, today: today)
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 StatTile(title: "Totaal gespaard", value: Fmt.euro(saved))
@@ -293,7 +307,8 @@ struct PotMiniTile: View {
 
     var body: some View {
         let balance = store.data.potBalanceNow(pot.id, current: store.now, today: store.today)
-        let progress = goalProgress(balance: balance)
+        // Dezelfde voortgang als op de pagina Spaarpotten en bij de pot zelf (`potProgress`, met het saldo van vandaag).
+        let progress = store.data.potProgress(pot.id, current: store.now, today: store.today)
         let color = Theme.color(pot.colorIndex)
         NavigationLink(value: Destination.pot(pot.id)) {
             VStack(spacing: 6) {
@@ -325,14 +340,6 @@ struct PotMiniTile: View {
             .tile(tint: color)
         }
         .buttonStyle(.plain)
-    }
-}
-
-extension PotMiniTile {
-    /// Hoever de pot is met het saldo van vandaag; nil zonder doel. Kan boven 1 uitkomen.
-    fileprivate func goalProgress(balance: Double) -> Double? {
-        guard let goal = pot.goalAmount, goal > 0 else { return nil }
-        return max(0, balance / goal)
     }
 }
 

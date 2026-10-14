@@ -38,7 +38,9 @@ struct PortfolioPage: View {
                             StatTile(title: "Ingelegd", value: Fmt.euroWhole(invested))
                             StatTile(title: "Rendement", value: Fmt.euroWhole(gain),
                                      color: gain >= 0 ? Theme.positive : Theme.negative)
-                            StatTile(title: "Inleg deze maand", value: Fmt.euroWhole(d.monthlyInvestment(current: now)))
+                            // Wat je verdeling deze maand naar beleggingen stuurt: dezelfde som als "Belegd" in het Overzicht
+                            // en bij Verdelen, en de optelling van de "Inleg deze maand" op de pagina van elke belegging.
+                            StatTile(title: "Inleg deze maand", value: Fmt.euroWhole(d.investedTotal(in: now)))
                         }
                         priceStatus
                     }
@@ -158,6 +160,7 @@ struct HoldingRow: View {
 struct HoldingDetailPage: View {
     let holdingID: UUID
     @Environment(AppStore.self) private var store
+    @Environment(Router.self) private var router
     @Environment(\.dismiss) private var dismiss
     @State private var showEdit = false
     @State private var showValue = false
@@ -185,6 +188,8 @@ struct HoldingDetailPage: View {
         let valueSeries = d.portfolioSeries(from: now.adding(-12), count: 25, current: now, only: [holding.id]).map { TimePoint($0) }
         let priceSeries = history.enumerated().map { TimePoint(id: "p\($0.offset)", date: $0.element.date, value: $0.element.close, projected: false) }
         let color = Theme.color(HoldingKind.allCases.firstIndex(of: holding.kind) ?? 0)
+        // De opbouw van de maandelijkse inleg (een bedrag of een percentage van je inkomen), uit de rekenmotor.
+        let contribution = ContributionInfo(d, id: holding.id, month: now)
 
         PageScaffold(title: holding.name) {
             VStack(spacing: Theme.pageSpacing) {
@@ -223,8 +228,6 @@ struct HoldingDetailPage: View {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                         StatTile(title: "Verwacht rendement", value: Fmt.percent(holding.expectedReturn))
                         StatTile(title: "Kosten per jaar", value: Fmt.percent(holding.annualCost, digits: 2))
-                        StatTile(title: "Inleg deze maand", value: Fmt.euro(d.allocation(holding.id, in: now)))
-                        StatTile(title: "Standaard inleg", value: Fmt.euro(holding.monthlyContribution))
                     }
                     HStack(spacing: 10) {
                         ChipButton(title: "Instellingen", symbol: "pencil") { showEdit = true }
@@ -243,6 +246,25 @@ struct HoldingDetailPage: View {
                         Text("Historie aanvullen neemt aan dat je het afgelopen jaar evenveel stuks had als nu.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                GlassBlock(title: "Inleg", symbol: "calendar", subtitle: "Wat er elke maand naar deze belegging gaat") {
+                    // De opbouw van de inleg: de standaardregel (een bedrag of een percentage van je inkomen) en wat daar in
+                    // deze maand uit volgt. Alles uit de rekenmotor (`ContributionInfo`).
+                    if let contribution {
+                        ContributionSummary(info: contribution)
+                    }
+                    if let note = transferNote(holding, info: contribution) {
+                        Text(note).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    ChipGrid {
+                        ChipButton(title: "Inleg aanpassen", symbol: "pencil") { showEdit = true }
+                        // De inleg hoort bij deze maand: de verdeelpagina opent op de huidige maand.
+                        ChipButton(title: "Verdelen", symbol: "square.split.2x2") {
+                            router.showCurrentMonth(store.now)
+                            router.open(.distribute)
+                        }
                     }
                 }
 
@@ -298,6 +320,20 @@ struct HoldingDetailPage: View {
                 Text("Ook de meetpunten en de geplande inleg verdwijnen.")
             }
         }
+    }
+
+    /// "De inleg gaat op de 25e van je rekening naar deze belegging, je salarisdag."
+    private func transferNote(_ holding: Holding, info: ContributionInfo?) -> String? {
+        let d = store.data
+        let now = store.now
+        // Alleen als er iets wordt ingelegd: deze maand een bedrag, of een standaardregel die niet nul is.
+        guard let info, info.amount != 0 || info.standard != .amount(0) else { return nil }
+        let day = d.transferDay(for: holding.id, in: now)
+        let usesPayDay = holding.transferDay == nil && d.months[now.key]?.transferDay == nil
+        let base = "De inleg gaat op \(PotFormat.dayName(day)) van je rekening naar deze belegging"
+        guard usesPayDay else { return base + "." }
+        // Bij een salaris om de zoveel weken of dagen is het de eerste uitbetaling van de maand.
+        return base + (d.salary.isMonthly ? ", je salarisdag." : ", de eerste salarisdag van de maand.")
     }
 
     @ViewBuilder
@@ -379,6 +415,10 @@ struct HoldingEditSheet: View {
     @State private var expectedReturn = HoldingKind.etf.defaultReturn
     @State private var annualCost = HoldingKind.etf.defaultCost
     @State private var monthly = 0.0
+    // Inleg: een vast bedrag (`monthly`) of een percentage van het inkomen (0...100, twee decimalen).
+    @State private var mode: ContributionMode = .fixed
+    @State private var percent = 0.0
+    @State private var basis: IncomeBasis = .salary
     /// Eigen overschrijfdag voor de inleg. nil = je salarisdag.
     @State private var transferDay: Int?
 
@@ -448,10 +488,10 @@ struct HoldingEditSheet: View {
                     NumberRow(title: "Huidige waarde", value: $manualValue)
                 }
                 NumberRow(title: "Totaal ingelegd", value: $invested)
-                NumberRow(title: "Inleg per maand", value: $monthly)
+                contributionFields
                 Toggle("Eigen overschrijfdag", isOn: animated(Binding(
                     get: { transferDay != nil },
-                    set: { on in transferDay = on ? store.data.salaryDay() : nil }
+                    set: { on in transferDay = on ? store.data.salaryDay(in: store.now) : nil }
                 )))
                 if let day = transferDay {
                     Stepper(value: Binding(get: { day }, set: { transferDay = $0 }), in: 1...31) {
@@ -495,6 +535,9 @@ struct HoldingEditSheet: View {
                 expectedReturn = h.expectedReturn
                 annualCost = h.annualCost
                 monthly = h.monthlyContribution
+                mode = h.contributionMode
+                percent = h.contributionPercent
+                basis = h.contributionBasis
                 transferDay = h.transferDay
             }
             loaded = true
@@ -503,10 +546,57 @@ struct HoldingEditSheet: View {
 
     /// Uitleg onder de bedragen. Zelfde opbouw als bij een spaarpot.
     private var moneyFooter: some View {
-        let payDay = store.data.salaryDay()
+        let d = store.data
+        let payDay = PotFormat.dayName(d.salaryDay(in: store.now))
+        // Bij een salaris om de zoveel weken of dagen is "de salarisdag" de eerste uitbetaling van de maand.
+        let payText = d.salary.isMonthly ? "je salarisdag (\(payDay))" : "de eerste salarisdag van de maand (\(payDay))"
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Het totaal ingelegd gebruikt de app voor het rendement. De inleg per maand verschijnt in je maandverdeling.")
-            Text("Op de overschrijfdag gaat de inleg van je bankrekening naar de belegging. Zonder eigen dag is dat je salarisdag (\(PotFormat.dayName(payDay))). Een verdeling die je voor één maand maakt, kan een eigen dag hebben; die gaat voor.")
+            if mode == .percentage {
+                Text("Het totaal ingelegd gebruikt de app voor het rendement. Een percentage rekent over het inkomen van die maand: gaat je salaris omhoog, dan gaat de inleg vanzelf mee.")
+            } else {
+                Text("Het totaal ingelegd gebruikt de app voor het rendement. De inleg per maand verschijnt in je maandverdeling.")
+            }
+            Text("Op de overschrijfdag gaat de inleg van je bankrekening naar de belegging. Zonder eigen dag is dat \(payText). Een verdeling die je voor één maand maakt, kan een eigen dag hebben; die gaat voor.")
+        }
+    }
+
+    // MARK: Inleg
+
+    /// De inleg: een vast bedrag of een percentage van je inkomen, met de grondslag. Wat het percentage in euro's oplevert
+    /// komt uit de rekenmotor (`ContributionPreview`), precies zoals de verdeling het straks uitrekent.
+    @ViewBuilder
+    private var contributionFields: some View {
+        let preview: ContributionPreview.Result? = mode == .percentage
+            ? ContributionPreview.resolve(store.data, percent: percent, basis: basis, month: store.now)
+            : nil
+        ContributionFields(mode: modeBinding, amount: $monthly, percent: $percent, basis: $basis,
+                           amountTitle: "Inleg per maand", percentTitle: "Percentage van je inkomen",
+                           resolvedAmount: preview?.amount, resolvedNote: preview?.note, footnote: preview?.footnote,
+                           subject: name)
+    }
+
+    private var modeBinding: Binding<ContributionMode> {
+        Binding(
+            get: { mode },
+            set: { newMode in
+                withAnimation(Theme.motion) {
+                    prefill(for: newMode)
+                    mode = newMode
+                }
+            }
+        )
+    }
+
+    /// Bij een andere inlegwijze begint het veld bij wat de inleg nu is (zie `PotEditSheet.prefill`): zo verspringt de
+    /// inleg niet. De rekenmotor doet de omrekening.
+    private func prefill(for newMode: ContributionMode) {
+        let d = store.data
+        let month = store.now
+        switch newMode {
+        case .percentage:
+            if percent == 0, monthly > 0, let start = d.percent(forAmount: monthly, of: basis, in: month) { percent = start }
+        case .fixed:
+            if monthly == 0, percent > 0 { monthly = d.percentAmount(percent, of: basis, in: month) }
         }
     }
 
@@ -585,6 +675,10 @@ struct HoldingEditSheet: View {
         h.expectedReturn = expectedReturn
         h.annualCost = annualCost
         h.monthlyContribution = monthly.cents
+        h.contributionMode = mode
+        // Het percentage zoals de rekenmotor het gebruikt: 0...100 op twee decimalen.
+        h.contributionPercent = AllocationMath.cleanPercent(percent)
+        h.contributionBasis = basis
         h.transferDay = transferDay
         let result = h
 

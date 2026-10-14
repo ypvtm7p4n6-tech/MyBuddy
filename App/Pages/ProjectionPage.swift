@@ -78,6 +78,12 @@ struct ProjectionPage: View {
                 GlassBlock(title: "Uitgangspunten", symbol: "slider.horizontal.3") {
                     NumberRow(title: "Startbedrag", value: $start)
                     NumberRow(title: "Inleg per maand", value: $monthly)
+                    // Bij een salaris om de zoveel weken of dagen is de voorgestelde inleg een gemiddelde maand.
+                    if !store.data.salary.isMonthly {
+                        Text("De voorgestelde inleg is een gemiddelde maand: je salaris komt niet elke maand even vaak binnen.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     NumberRow(title: "Rendement per jaar", value: $annualReturn, unit: .percent, maxDigits: 2)
                     Toggle("In koopkracht van vandaag", isOn: $inflationAdjusted)
                     if inflationAdjusted {

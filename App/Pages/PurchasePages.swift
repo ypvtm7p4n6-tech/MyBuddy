@@ -428,6 +428,16 @@ private struct PurchasePageContent: View {
         .animation(Theme.motion, value: manualWage > 0)
     }
 
+    /// Hoe het uurloon uit een vast salaris volgt, zoals `effectiveHourlyWage` het rekent: bij het maandelijkse schema uit het
+    /// maandsalaris en 52 ÷ 12 weken per maand, anders uit het bedrag per uitbetaling en de uren van die periode.
+    private var weeklyHoursHint: String {
+        let salary = store.data.salary
+        if salary.isMonthly {
+            return "Vul je uren per week in, dan reken ik je uurloon uit je maandsalaris (uren per week × 52 ÷ 12). Of typ zelf je netto uurloon."
+        }
+        return "Vul je uren per week in, dan reken ik je uurloon uit je salaris per uitbetaling (\(salary.cycleDescription)) en je uren in die periode. Of typ zelf je netto uurloon."
+    }
+
     @ViewBuilder
     private var wageHint: some View {
         if manualWage > 0 {
@@ -447,7 +457,7 @@ private struct PurchasePageContent: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else if showsWeeklyHours {
-            Text("Vul je uren per week in, dan reken ik je uurloon uit je maandsalaris (uren per week × 52 ÷ 12). Of typ zelf je netto uurloon.")
+            Text(weeklyHoursHint)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {

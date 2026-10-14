@@ -247,6 +247,82 @@ struct ChoiceRow: View {
     }
 }
 
+// MARK: - Inleg: bedrag of percentage
+
+/// De invoer voor de inleg van een spaarpot of belegging: een vast bedrag of een percentage van het inkomen, met de
+/// grondslag (alleen salaris of alle inkomsten). Dit is alleen invoer: wat een percentage in euro's oplevert komt van de
+/// aanroeper uit de rekenmotor (`resolvedAmount`), zodat hier niets wordt uitgerekend en elk scherm hetzelfde bedrag toont.
+/// Werkt in een `Form` (elke regel een rij) en in een blok (de regels onder elkaar).
+struct ContributionFields: View {
+    @Binding var mode: ContributionMode
+    @Binding var amount: Double
+    /// 0...100, maximaal twee decimalen (de rekenmotor rondt het zelf ook zo af).
+    @Binding var percent: Double
+    @Binding var basis: IncomeBasis
+    var amountTitle = "Bedrag"
+    var percentTitle = "Percentage"
+    /// Een bedrag onder nul betekent geld terug naar de rekening (alleen bij de verdeling van een maand).
+    var allowsNegativeAmount = false
+    /// Het bedrag in euro's dat het percentage nu oplevert, uit de rekenmotor. nil = niet tonen.
+    var resolvedAmount: Double? = nil
+    /// Korte tekst naast dat bedrag, bijvoorbeeld "10% van je salaris".
+    var resolvedNote: String? = nil
+    /// Extra uitleg onder het percentage, bijvoorbeeld dat er in die maand geen inkomen is.
+    var footnote: String? = nil
+    /// Waar het over gaat (de naam van de pot of belegging): VoiceOver leest hem bij de keuzes voor.
+    var subject: String? = nil
+
+    private func label(_ text: String) -> String {
+        guard let subject, !subject.isEmpty else { return text }
+        return text + " " + subject
+    }
+
+    var body: some View {
+        Group {
+            Picker(label("Inlegwijze"), selection: $mode) {
+                Text("Bedrag").tag(ContributionMode.fixed)
+                Text("Percentage").tag(ContributionMode.percentage)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            switch mode {
+            case .fixed:
+                NumberRow(title: amountTitle, value: $amount, allowsNegative: allowsNegativeAmount)
+            case .percentage:
+                NumberRow(title: percentTitle, value: $percent, unit: .plain("%"), maxDigits: 2, range: 0...100)
+                Picker(label("Percentage van"), selection: $basis) {
+                    ForEach(IncomeBasis.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                if let resolvedAmount {
+                    HStack(spacing: 8) {
+                        if let resolvedNote {
+                            Text(resolvedNote)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Text("= " + Fmt.euro(resolvedAmount))
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .contentTransition(.numericText())
+                            .animation(Theme.motion, value: resolvedAmount)
+                    }
+                }
+                if let footnote {
+                    Text(footnote)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Sheets
 
 /// Een vraag bij "Bewaar": in plaats van meteen op te slaan vraagt het blad eerst iets, bijvoorbeeld voor welke maanden

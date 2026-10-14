@@ -69,10 +69,11 @@ struct AcceleratorsSection: View {
     private var acceleratorsBlock: some View {
         let d = store.data
         let now = store.now
-        let inputs = d.goalInputs(for: goal, current: now)
+        // Alles met het saldo van vandaag (`store.today`): dezelfde start en inleg als op de pagina van het doel.
+        let inputs = d.goalInputs(for: goal, current: now, today: store.today)
         let baseline = Growth.monthsToReach(target: inputs.target, start: inputs.start,
                                             monthly: inputs.monthly, annualReturn: inputs.effectiveReturn)
-        let list = d.accelerators(for: goal, current: now)
+        let list = d.accelerators(for: goal, current: now, today: store.today)
         // Wat al is toegepast (voor dit doel of een ander) telt niet meer mee in de berekening: het zit al in je gegevens.
         let locked = lockedRecords(in: list, data: d, current: now)
         let chosen = list.filter { selected.contains($0.id) && locked[$0.id] == nil }
@@ -169,7 +170,7 @@ struct AcceleratorsSection: View {
 
     /// Opent de bevestiging met precies wat er verandert.
     private func prepareApply(_ acc: Accelerator) {
-        let plan = store.data.applyPlan(acc, for: goal, current: store.now)
+        let plan = store.data.applyPlan(acc, for: goal, current: store.now, now: store.today)
         pending = PendingApplication(accelerator: acc, plan: plan)
     }
 
@@ -177,13 +178,14 @@ struct AcceleratorsSection: View {
     private func apply(_ acc: Accelerator) {
         let target = goal
         let current = store.now
-        let date = Date()
+        let date = store.today
         var appliedTitle: String?
         withAnimation(Theme.motion) {
             store.mutate { data in
                 appliedTitle = data.apply(acc, for: target, current: current, now: date)?.title
             }
             selected.remove(acc.id)
+            // De bevestiging liet vooraf al zien of er iets te doen valt (`plan.message` legt uit waarom niet).
             if let appliedTitle { confirmation = "Toegepast: \(appliedTitle)" }
         }
     }

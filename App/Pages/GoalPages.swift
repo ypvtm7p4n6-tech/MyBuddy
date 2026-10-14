@@ -46,7 +46,8 @@ private struct GoalsHubBlockContent: View {
                         GoalsHubNote(text: "Nog geen levensdoelen. Denk aan pensioen, een vakantie of parttime werken.")
                     } else {
                         ForEach(goals) { goal in
-                            GoalsHubRow(goal: goal, analysis: d.analyze(goal, current: store.now))
+                            // Met het saldo van vandaag (`store.today`), zoals de doelpagina en de versnellers.
+                            GoalsHubRow(goal: goal, analysis: d.analyze(goal, current: store.now, today: store.today))
                         }
                         if d.goals.count > 2 {
                             Text("en nog \(d.goals.count - 2) \(d.goals.count - 2 == 1 ? "doel" : "doelen")")
@@ -294,7 +295,7 @@ struct GoalCard: View {
     let goal: LifeGoal
 
     var body: some View {
-        let a = store.data.analyze(goal, current: store.now)
+        let a = store.data.analyze(goal, current: store.now, today: store.today)
         NavigationLink(value: Destination.goal(goal.id)) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
@@ -355,7 +356,7 @@ struct GoalDetailPage: View {
     private func content(_ goal: LifeGoal) -> some View {
         let d = store.data
         let now = store.now
-        let a = d.analyze(goal, current: now)
+        let a = d.analyze(goal, current: now, today: store.today)
 
         PageScaffold(title: goal.name) {
             VStack(spacing: Theme.pageSpacing) {
@@ -392,6 +393,13 @@ struct GoalDetailPage: View {
                         StatTile(title: "Rendement na kosten", value: Fmt.percent(a.inputs.nominalReturn))
                         StatTile(title: goal.inflationAdjusted ? "Reëel rendement" : "Gebruikt rendement",
                                  value: Fmt.percent(a.inputs.effectiveReturn))
+                    }
+                    // Een doel kijkt vooruit: bij een salaris om de zoveel weken of dagen rekent het met een gemiddelde maand
+                    // (een maand met twee uitbetalingen is geen maat voor "elke maand"). Zeg dat.
+                    if !d.salary.isMonthly, !isCustomFunding(goal) {
+                        Text("Je salaris komt niet elke maand even vaak binnen. Daarom rekent dit doel met een gemiddelde maand.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     HStack(spacing: 10) {
                         ChipButton(title: "Doel aanpassen", symbol: "pencil") { showEdit = true }
@@ -469,18 +477,31 @@ struct GoalDetailPage: View {
         }
     }
 
+    /// Is het doel gefinancierd met eigen waarden (dan speelt je salarisschema geen rol)?
+    private func isCustomFunding(_ goal: LifeGoal) -> Bool {
+        if case .custom = goal.funding { return true }
+        return false
+    }
+
+    /// De uitleg bij het benodigde bedrag. Het uitgerekende bedrag zelf komt altijd uit de rekenmotor (`a.inputs.target`), zodat
+    /// de tekst en het getal bovenaan hetzelfde zeggen.
     private func explanation(_ goal: LifeGoal, _ a: GoalAnalysis) -> String {
         let d = store.data
         switch goal.kind {
         case .retirement:
-            let net = max(0, goal.monthlySpending - goal.otherMonthlyIncome)
-            return "(\(Fmt.euro(goal.monthlySpending)) − \(Fmt.euro(goal.otherMonthlyIncome))) × 12 ÷ \(Fmt.percent(goal.withdrawalRate)) = \(Fmt.euro(Growth.capitalNeeded(monthlyAmount: net, withdrawalRate: goal.withdrawalRate))). Zo veel kapitaal heb je nodig om elke maand op te nemen zonder dat het opraakt (de opnameregel)."
+            return "(\(Fmt.euro(goal.monthlySpending)) − \(Fmt.euro(goal.otherMonthlyIncome))) × 12 ÷ \(Fmt.percent(goal.withdrawalRate)) = \(Fmt.euro(a.inputs.target)). Zo veel kapitaal heb je nodig om elke maand op te nemen zonder dat het opraakt (de opnameregel)."
         case .partTime:
+            // Het inkomensverlies is een schatting: bij een salaris om de zoveel weken of dagen een gemiddelde maand.
             let gap = d.monthlyIncomeGap(for: goal)
+            let average = d.salary.isMonthly ? "" : "gemiddeld "
             if let years = goal.partTimeYears, years > 0 {
-                return "Je mist \(Fmt.euro(gap)) per maand als je \(Fmt.input(goal.hoursFrom > 0 ? goal.hoursFrom : d.salary.hoursPerWeek)) in plaats van \(Fmt.input(goal.hoursTo)) uur werkt. Voor \(years) jaar heb je daarvoor \(Fmt.euro(a.inputs.target)) nodig."
+                return "Je mist \(average)\(Fmt.euro(gap)) per maand als je \(Fmt.input(goal.hoursFrom > 0 ? goal.hoursFrom : d.salary.hoursPerWeek)) in plaats van \(Fmt.input(goal.hoursTo)) uur werkt. Voor \(years) jaar heb je daarvoor \(Fmt.euro(a.inputs.target)) nodig."
             }
-            return "Je mist \(Fmt.euro(gap)) per maand als je \(Fmt.input(goal.hoursTo)) uur werkt. Zonder einddatum heb je \(Fmt.euro(a.inputs.target)) nodig (\(Fmt.euro(gap)) × 12 ÷ \(Fmt.percent(goal.withdrawalRate)))."
+            // Wat je zelf nog aan inkomsten hebt gaat van het verlies af (zoals de rekenmotor het doet).
+            let formula = goal.otherMonthlyIncome > 0
+                ? "(\(Fmt.euro(gap)) − \(Fmt.euro(goal.otherMonthlyIncome))) × 12 ÷ \(Fmt.percent(goal.withdrawalRate))"
+                : "\(Fmt.euro(gap)) × 12 ÷ \(Fmt.percent(goal.withdrawalRate))"
+            return "Je mist \(average)\(Fmt.euro(gap)) per maand als je \(Fmt.input(goal.hoursTo)) uur werkt. Zonder einddatum heb je \(Fmt.euro(a.inputs.target)) nodig (\(formula))."
         case .vacation, .custom:
             return "Het doelbedrag is \(Fmt.euro(goal.targetAmount))."
         }

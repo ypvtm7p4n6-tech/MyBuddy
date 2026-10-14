@@ -38,6 +38,8 @@ struct ProjectionBlock: View {
         let d = store.data
         let now = store.now
         let start = d.portfolioValue(current: now)
+        // Een schatting: wat er per maand wordt ingelegd, en bij een salaris om de zoveel weken of dagen een gemiddelde maand
+        // (`monthlyInvestment`, zie SalarySchedule.swift). Zo rekent ook de toekomstschatting zelf.
         let monthly = d.monthlyInvestment(current: now)
         let rate = d.weightedNetReturn(current: now)
         let inflation = d.settings.inflation
@@ -55,7 +57,7 @@ struct ProjectionBlock: View {
                         StatTile(title: "Over \(years) jaar", value: Fmt.euro(r.total))
                     }
                 }
-                Text("Met \(Fmt.euro(monthly)) per maand en \(Fmt.percent(rate)) rendement na kosten.")
+                Text("Met \(d.salary.isMonthly ? "" : "gemiddeld ")\(Fmt.euro(monthly)) per maand en \(Fmt.percent(rate)) rendement na kosten.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -71,7 +73,8 @@ struct AcceleratorsBlock: View {
     var body: some View {
         let d = store.data
         let goal = d.goals.first
-        let list = goal.map { d.accelerators(for: $0, current: store.now) } ?? []
+        // Met het saldo van vandaag (`store.today`), zoals de doelen en de versnellerspagina.
+        let list = goal.map { d.accelerators(for: $0, current: store.now, today: store.today) } ?? []
         LinkedBlock(title: "Versnellers", symbol: "bolt.fill",
                     subtitle: goal.map { "Voor \($0.name)" }, destination: .accelerators) {
             if goal == nil {

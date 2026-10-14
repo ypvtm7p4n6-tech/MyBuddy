@@ -34,7 +34,8 @@ private struct BufferBlockContent: View {
         let d = store.data
         let now = store.now
         let setup = BufferSetup.fromJSON(storedSetup) ?? BufferCalc.initialSetup(for: d, current: now)
-        let r = BufferCalc.summary(for: d, setup: setup, current: now)
+        // Met het saldo van vandaag (`store.today`): dezelfde bank en spaarpot als op de pagina Buffer.
+        let r = BufferCalc.summary(for: d, setup: setup, current: now, today: store.today)
         LinkedBlock(title: "Buffer", symbol: "shield.lefthalf.filled",
                     subtitle: r.hasTarget ? "\(r.months) maanden aan uitgaven" : nil,
                     destination: .buffer) {
@@ -96,8 +97,10 @@ private struct BufferPageContent: View {
     var body: some View {
         let d = store.data
         let now = store.now
+        // Met het saldo van vandaag (`store.today`): de bank en de spaarpot zoals ze er nu voor staan.
         let input = BufferCalc.inputs(from: d, setup: setup, current: now,
-                                      monthlySaving: monthlySaving, fillWithin: SafeInt.clamped(fillMonths, to: 1...60))
+                                      monthlySaving: monthlySaving, fillWithin: SafeInt.clamped(fillMonths, to: 1...60),
+                                      today: store.today)
         let result = BufferCalc.calculate(input)
 
         PageScaffold(title: "Buffer") {
@@ -174,14 +177,17 @@ private struct BufferPageContent: View {
     private func expensesBlock(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
         let overview = d.expenseOverview(in: now)
         let known = overview.fixed + overview.variable > 0
-        let income: Double = d.income(in: now)
+        // Een buffer rekent met een gewone maand: bij een salaris om de zoveel weken of dagen is dat het gemiddelde inkomen
+        // per maand (`estimatedMonthlyIncome`), niet de maand met twee uitbetalingen. Bij het maandelijkse schema is het
+        // inkomen van deze maand.
+        let income: Double = d.estimatedMonthlyIncome(in: now)
         let share = BufferCalc.clampedShare(setup.variableShare)
         let sharePercent = Fmt.percent(share, digits: 0)
         GlassBlock(title: "Noodzakelijke uitgaven", symbol: "cart.fill",
                    subtitle: known ? "Uit je uitgaven van \(Fmt.month(now))" : "Nog geen uitgaven ingevuld") {
             if known {
                 LazyVGrid(columns: tileColumns, spacing: 8) {
-                    StatTile(title: "Inkomen", value: Fmt.euroWhole(income))
+                    StatTile(title: d.salary.isMonthly ? "Inkomen" : "Gemiddeld inkomen", value: Fmt.euroWhole(income))
                     StatTile(title: "Vaste uitgaven", value: Fmt.euroWhole(overview.fixed))
                     StatTile(title: "Variabele uitgaven", value: Fmt.euroWhole(overview.variable))
                 }
@@ -214,9 +220,10 @@ private struct BufferPageContent: View {
 
     @ViewBuilder
     private func currentBlock(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
-        let bank = BufferCalc.bankAmount(in: d, current: now)
+        let today = store.today
+        let bank = BufferCalc.bankAmount(in: d, current: now, today: today)
         let chosenPot = BufferCalc.resolvedPot(in: d, preferred: setup.potID)
-        let potValue = BufferCalc.potAmount(in: d, setup: setup, current: now)
+        let potValue = BufferCalc.potAmount(in: d, setup: setup, current: now, today: today)
         GlassBlock(title: "Wat heb je al?", symbol: "building.columns.fill", subtitle: "Waar staat je buffer nu") {
             BufferPickerRow(title: "Bron", selection: bind(\.source)) {
                 ForEach(BufferSource.allCases) { item in Text(item.title).tag(item) }
@@ -245,8 +252,11 @@ private struct BufferPageContent: View {
                     StatTile(title: "Totaal in buffer", value: Fmt.euroWhole(r.current), color: Theme.accent)
                 }
             }
-            if setup.source.usesBank && !d.hasBankBalance {
-                Text("Je hebt nog geen banksaldo ingevuld bij Bankrekening. Tot die tijd telt de bank als 0.")
+            // Het saldo van vandaag moet bekend zijn: een saldo dat pas later begint zegt niets over nu.
+            if setup.source.usesBank && !d.hasBankBalanceNow(current: now, today: today) {
+                Text(d.hasBankBalance
+                     ? "Je banksaldo van vandaag is nog niet bekend: wat je invulde begint pas later. Tot die tijd telt de bank als 0."
+                     : "Je hebt nog geen banksaldo ingevuld bij Bankrekening. Tot die tijd telt de bank als 0.")
                     .font(.footnote)
                     .foregroundStyle(Theme.warning)
             }

@@ -69,6 +69,17 @@ enum PotFormat {
         return (shown > 0 ? "+" : "") + Fmt.euro(value)
     }
 
+    /// "morgen" of "over 12 dagen".
+    static func daysAhead(_ days: Int) -> String {
+        days <= 1 ? "morgen" : "over \(days) dagen"
+    }
+
+    /// "+ € 300" of "− € 60" voor een boeking in de lijst met komende boekingen; rente met centen onder de 10 euro.
+    static func bookingAmount(_ value: Double, isInterest: Bool) -> String {
+        let text = isInterest ? interest(abs(value)) : Fmt.euro(abs(value))
+        return (value >= 0 ? "+ " : "− ") + text
+    }
+
     /// "Je krijgt rente in januari en juli, op de 1e."
     static func schedule(_ payout: InterestPayout, firstMonth: Int, day: Int) -> String {
         var text: String
@@ -183,10 +194,6 @@ struct PotInterestBadge: View {
 private enum PotLayout {
     /// Minimale breedte van een tegel.
     static let tileWidth: CGFloat = 140
-    /// Zoveel maanden vooruit kijkt de geschiedenis voor geplande boekingen.
-    static let lookAheadMonths = 12
-    /// Zoveel geplande boekingen staan onder "Binnenkort".
-    static let upcomingLimit = 4
     /// Zoveel boekingen uit het verleden staan standaard in de lijst.
     static let historyLimit = 20
 }
@@ -214,12 +221,20 @@ struct PotsPage: View {
         let today = store.today
         let hasInterest = d.pots.contains { InterestRules.isActive($0) }
         let received = PotInterestStats.received(in: d, asOf: today)
+        // Het saldo van vandaag (de tegels, Home en de detailpagina's tonen hetzelfde) en wat het aan het eind van de maand
+        // wordt: dezelfde som als "Spaarpotten" in het Vermogen op het Overzicht.
+        let saved = d.totalSaved(current: now, today: today)
+        let endOfMonth = d.totalSaved(asOf: now.date(day: now.dayCount))
         PageScaffold(title: "Spaarpotten") {
             VStack(spacing: Theme.pageSpacing) {
-                GlassBlock(title: "Totaal gespaard", symbol: "tray.full.fill", tint: Theme.olive.opacity(0.3)) {
-                    BigAmount(value: d.totalSaved(current: now, today: today))
+                GlassBlock(title: "Totaal gespaard", symbol: "tray.full.fill", subtitle: "Saldo van vandaag",
+                           tint: Theme.olive.opacity(0.3)) {
+                    BigAmount(value: saved)
                     PotTileGrid {
-                        StatTile(title: "Deze maand erbij", value: Fmt.euro(d.savedTotal(in: now)))
+                        StatTile(title: "Inleg deze maand", value: Fmt.euro(d.savedTotal(in: now)),
+                                 caption: "Volgens je verdeling van \(Fmt.monthNames[now.month - 1])")
+                        StatTile(title: "Eind \(Fmt.monthNames[now.month - 1])", value: Fmt.euro(endOfMonth),
+                                 caption: "Verwacht, met alles wat nog komt")
                         if hasInterest {
                             StatTile(title: "Rente dit jaar", value: PotFormat.interest(received.thisYear),
                                      color: Theme.positive)
@@ -305,6 +320,14 @@ struct PotRowCard: View {
                             Spacer(minLength: 0)
                         }
                     }
+                    if let line = contributionLine(d, month: now) {
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .contentTransition(.numericText())
+                    }
                 }
                 Image(systemName: "chevron.right")
                     .font(.footnote.weight(.semibold))
@@ -315,6 +338,13 @@ struct PotRowCard: View {
             .glassCard(interactive: true)
         }
         .buttonStyle(.plain)
+    }
+
+    /// "Inleg 10% van je salaris, € 300 deze maand" voor een pot die een percentage van het inkomen inlegt. Een vast
+    /// bedrag krijgt geen extra regel (de pagina van de pot laat het zien). Het bedrag is dat van de verdeling (`allocation`).
+    private func contributionLine(_ d: FinanceData, month: YearMonth) -> String? {
+        guard let rule = d.contributionRule(of: pot.id), rule.isPercent else { return nil }
+        return "Inleg \(rule.summary), \(Fmt.euro(d.allocation(pot.id, in: month))) deze maand"
     }
 }
 
@@ -351,6 +381,8 @@ struct PotDetailPage: View {
     @State private var action: PotAction?
     @State private var showEdit = false
     @State private var confirmDelete = false
+    /// Wat het verwijderen van deze pot doet met je rekening (uit de rekenmotor, op het moment dat je op verwijderen tikt).
+    @State private var deleteEffect: PotDeleteEffect?
     @State private var showAllHistory = false
     /// Een boeking waarvan het verwijderen eerst om een bevestiging vraagt, omdat er een andere helft bij hoort.
     @State private var pendingEntryDelete: PendingEntryDelete?
@@ -377,38 +409,44 @@ struct PotDetailPage: View {
         let d = store.data
         let now = store.now
         let today = store.today
+        // "Saldo nu" is overal hetzelfde getal: dat van de tegel op Home en op de pagina Spaarpotten (`potBalanceNow`).
         let balance = d.potBalanceNow(pot.id, current: now, today: today)
+        let endOfMonth = d.potBalance(pot.id, at: now)
         let progress = d.potProgress(pot.id, current: now, today: today)
-        let timeline = d.potTimeline(pot.id, current: now.adding(PotLayout.lookAheadMonths), asOf: today)
-        let planned = timeline.filter { $0.isPlanned }.sorted { $0.date < $1.date }
+        // De geschiedenis hoeft niet verder dan deze maand: wat nog komt staat bij "Komende boekingen".
+        let timeline = d.potTimeline(pot.id, current: now, asOf: today)
         let done = timeline.filter { !$0.isPlanned }
-        let plannedCents = planned.filter { $0.date < now.endExclusive }.map { CentsMath.int($0.amount) }
-        let plannedThisMonth = CentsMath.value(CentsMath.sum(plannedCents))
-        let thisMonth = d.allocation(pot.id, in: now)
-        let history = PotHistoryContext(pot: pot, data: d, through: now.adding(PotLayout.lookAheadMonths))
-        // Een positief saldo (op centen) moet bij verwijderen een keuze krijgen: terugzetten of laten vervallen.
-        let hasBalance = CentsMath.int(balance) > 0
+        let upcoming = PotUpcoming.items(d, potID: pot.id, current: now, today: today)
+        let contribution = ContributionInfo(d, id: pot.id, month: now)
+        let history = PotHistoryContext(pot: pot, data: d, through: now)
 
         PageScaffold(title: pot.name) {
             VStack(spacing: Theme.pageSpacing) {
-                balanceBlock(pot, balance: balance, progress: progress, plannedThisMonth: plannedThisMonth)
+                balanceBlock(pot, balance: balance, progress: progress, endOfMonth: endOfMonth)
+
+                upcomingBlock(pot, items: upcoming, balance: balance)
 
                 LazyVGrid(columns: Theme.blockColumns, spacing: Theme.pageSpacing) {
                     moveBlock()
-                    contributionBlock(pot, thisMonth: thisMonth)
+                    contributionBlock(pot, info: contribution)
                     interestBlock(pot, today: today)
                     dateBalanceBlock(pot, balance: balance, today: today)
                 }
 
-                historyBlock(planned: planned, done: done, history: history)
+                historyBlock(done: done, history: history)
 
-                ChipButton(title: "Spaarpot verwijderen", symbol: "trash", role: .destructive) { confirmDelete = true }
+                ChipButton(title: "Spaarpot verwijderen", symbol: "trash", role: .destructive) {
+                    // De proef op een kopie van de gegevens kost wat rekenwerk: alleen als je echt wilt verwijderen.
+                    deleteEffect = PotDeleteEffect(store.data, potID: pot.id, current: store.now, today: store.today)
+                    confirmDelete = true
+                }
             }
         }
         .sheet(item: $action) { act in PotEntrySheet(pot: pot, action: act) }
         .sheet(isPresented: $showEdit) { PotEditSheet(pot: pot) }
         .confirmationDialog("Deze spaarpot verwijderen?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            if hasBalance {
+            if deleteEffect?.hasBalance ?? (CentsMath.int(balance) > 0) {
+                // Eerst de veilige keuze: het geld gaat terug naar je rekening.
                 Button("Saldo terugzetten op je rekening en verwijderen") {
                     let id = pot.id
                     let current = store.now
@@ -430,20 +468,18 @@ struct PotDetailPage: View {
             }
             Button("Annuleren", role: .cancel) {}
         } message: {
-            if hasBalance {
-                Text("Er staat \(Fmt.euro(balance)) op. Zet je het saldo terug, dan komt dat bedrag op je rekening. Laat je het vervallen, dan verdwijnt het uit je vermogen. De boekingen van deze pot verdwijnen in beide gevallen.")
-            } else {
-                Text("De boekingen van deze pot verdwijnen ook.")
-            }
+            Text(deleteEffect?.message ?? "De boekingen van deze pot verdwijnen ook.")
         }
     }
 
     // MARK: Blokken
 
     @ViewBuilder
-    private func balanceBlock(_ pot: Pot, balance: Double, progress: Double?, plannedThisMonth: Double) -> some View {
+    private func balanceBlock(_ pot: Pot, balance: Double, progress: Double?, endOfMonth: Double) -> some View {
         let color = Theme.color(pot.colorIndex)
-        GlassBlock(title: "Saldo", symbol: pot.symbol, tint: color.opacity(0.28)) {
+        // Wat er deze maand nog bij of af gaat: het verschil tussen het saldo aan het eind van de maand en het saldo van nu.
+        let plannedThisMonth = CentsMath.value(CentsMath.int(endOfMonth) - CentsMath.int(balance))
+        GlassBlock(title: "Saldo", symbol: pot.symbol, subtitle: "Saldo van vandaag", tint: color.opacity(0.28)) {
             HStack(spacing: 18) {
                 ZStack {
                     ProgressRing(progress: progress ?? 1, tint: color, lineWidth: 10)
@@ -472,12 +508,99 @@ struct PotDetailPage: View {
                 Spacer(minLength: 0)
             }
             if plannedThisMonth != 0 {
-                Label("Nog deze maand gepland: \(PotFormat.signed(plannedThisMonth))", systemImage: "calendar")
+                Label("Nog deze maand gepland: \(PotFormat.signed(plannedThisMonth)). Verwacht eind \(Fmt.monthNames[store.now.month - 1]): \(Fmt.euro(endOfMonth)).",
+                      systemImage: "calendar")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
             }
             goalText(pot, balance: balance)
         }
+    }
+
+    /// De boekingen van de komende 30 dagen (inleg, uitgaven uit deze pot, rente) met het verwachte saldo na elke boeking.
+    /// Ze komen uit hetzelfde dagoverzicht als "Dag voor dag"; wat vandaag valt zit al in het saldo van nu.
+    @ViewBuilder
+    private func upcomingBlock(_ pot: Pot, items: [PotUpcomingItem], balance: Double) -> some View {
+        GlassBlock(title: "Komende boekingen", symbol: "calendar.badge.clock",
+                   subtitle: "De komende \(PotUpcoming.horizonDays) dagen") {
+            if items.isEmpty {
+                Text("De komende \(PotUpcoming.horizonDays) dagen staat er niets gepland voor deze pot. Het saldo blijft \(Fmt.euro(balance)).")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                PotTileGrid {
+                    StatTile(title: "Saldo nu", value: Fmt.euro(balance))
+                    StatTile(title: "Over \(PotUpcoming.horizonDays) dagen", value: Fmt.euro(items[items.count - 1].balanceAfter),
+                             color: Theme.accent, caption: "Verwacht")
+                }
+                VStack(spacing: 0) {
+                    ForEach(items) { item in
+                        VStack(spacing: 0) {
+                            upcomingRow(item)
+                            if item.id != items.last?.id { Divider() }
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                Text("Het saldo erna is wat er na die boeking in de pot zit, te beginnen bij het saldo van nu. Elke boeking telt mee op zijn eigen dag.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .animation(Theme.motion, value: items)
+    }
+
+    private func upcomingRow(_ item: PotUpcomingItem) -> some View {
+        let color = upcomingColor(item)
+        return HStack(spacing: 10) {
+            SymbolBadge(symbol: upcomingSymbol(item), color: color, size: 34)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                Text(upcomingSubtitle(item))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(PotFormat.bookingAmount(item.amount, isInterest: item.kind == .interest))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .contentTransition(.numericText())
+                Text("saldo \(Fmt.euro(item.balanceAfter))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .contentTransition(.numericText())
+            }
+            .layoutPriority(1)
+        }
+        .padding(.vertical, 8)
+        .animation(Theme.motion, value: item)
+    }
+
+    private func upcomingSubtitle(_ item: PotUpcomingItem) -> String {
+        var parts = [DayText.weekdayShort(item.date), PotFormat.daysAhead(item.daysAhead)]
+        if let detail = item.detail { parts.append(detail) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func upcomingSymbol(_ item: PotUpcomingItem) -> String {
+        switch item.kind {
+        case .interest: return "percent"
+        case .expense: return "cart.fill"
+        default: return "calendar"
+        }
+    }
+
+    private func upcomingColor(_ item: PotUpcomingItem) -> Color {
+        item.amount >= 0 ? Theme.positive : Theme.negative
     }
 
     @ViewBuilder
@@ -493,13 +616,14 @@ struct PotDetailPage: View {
     }
 
     @ViewBuilder
-    private func contributionBlock(_ pot: Pot, thisMonth: Double) -> some View {
+    private func contributionBlock(_ pot: Pot, info: ContributionInfo?) -> some View {
         GlassBlock(title: "Inleg", symbol: "calendar") {
-            PotTileGrid {
-                StatTile(title: "Deze maand erbij", value: Fmt.euro(thisMonth))
-                StatTile(title: "Standaard per maand", value: Fmt.euro(pot.monthlyContribution))
+            // De opbouw van de inleg: de standaardregel (een bedrag of een percentage van je inkomen), wat daar in deze
+            // maand uit volgt en eventuele afwijkingen. Alles uit de rekenmotor (`ContributionInfo`).
+            if let info {
+                ContributionSummary(info: info)
             }
-            if let note = transferNote(pot, thisMonth: thisMonth) {
+            if let note = transferNote(pot, info: info) {
                 Text(note).font(.footnote).foregroundStyle(.secondary)
             }
             ChipGrid {
@@ -581,26 +705,14 @@ struct PotDetailPage: View {
     }
 
     @ViewBuilder
-    private func historyBlock(planned: [PotTimelineItem], done: [PotTimelineItem], history: PotHistoryContext) -> some View {
-        let upcoming = Array(planned.prefix(PotLayout.upcomingLimit))
+    private func historyBlock(done: [PotTimelineItem], history: PotHistoryContext) -> some View {
         let shown = showAllHistory ? done : Array(done.prefix(PotLayout.historyLimit))
-        GlassBlock(title: "Waar is het geld heen gegaan?", symbol: "clock.arrow.circlepath") {
-            if upcoming.isEmpty && done.isEmpty {
+        GlassBlock(title: "Waar is het geld heen gegaan?", symbol: "clock.arrow.circlepath",
+                   subtitle: "Tot en met vandaag") {
+            if done.isEmpty {
                 Text("Nog geen boekingen.").font(.footnote).foregroundStyle(.secondary)
             }
-            if !upcoming.isEmpty {
-                Text("Binnenkort")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                timelineList(upcoming, history: history)
-            }
             if !shown.isEmpty {
-                if !upcoming.isEmpty {
-                    Text("Tot nu toe")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                }
                 timelineList(shown, history: history)
             }
             if done.count > PotLayout.historyLimit {
@@ -652,19 +764,23 @@ struct PotDetailPage: View {
     private func dateRange(_ pot: Pot, today: Date) -> ClosedRange<Date> {
         let cal = YearMonth.calendar
         let lower = min(pot.startMonth.firstDay, cal.startOfDay(for: today))
-        let upper = cal.date(byAdding: .year, value: 50, to: today) ?? today.addingTimeInterval(50 * 365 * 86_400)
+        // Op kalenderjaren gerekend, niet in seconden (schrikkeljaren en zomertijd verschuiven de dag).
+        let upper = cal.date(byAdding: .year, value: 50, to: today) ?? today
         return lower...upper
     }
 
     /// "De inleg gaat op de 25e naar deze pot, je salarisdag."
-    private func transferNote(_ pot: Pot, thisMonth: Double) -> String? {
+    private func transferNote(_ pot: Pot, info: ContributionInfo?) -> String? {
         let d = store.data
         let now = store.now
-        guard thisMonth != 0 || pot.monthlyContribution != 0 else { return nil }
+        // Alleen als er iets wordt ingelegd: deze maand een bedrag, of een standaardregel die niet nul is.
+        guard let info, info.amount != 0 || info.standard != .amount(0) else { return nil }
         let day = d.transferDay(for: pot.id, in: now)
         let usesPayDay = pot.transferDay == nil && d.months[now.key]?.transferDay == nil
         let base = "De inleg gaat op \(PotFormat.dayName(day)) naar deze pot"
-        return usesPayDay ? base + ", je salarisdag." : base + "."
+        guard usesPayDay else { return base + "." }
+        // Bij een salaris om de zoveel weken of dagen is het de eerste uitbetaling van de maand.
+        return base + (d.salary.isMonthly ? ", je salarisdag." : ", de eerste salarisdag van de maand.")
     }
 
     @ViewBuilder
@@ -685,7 +801,11 @@ struct PotDetailPage: View {
             if let date = pot.goalDate {
                 let months = store.now.months(to: YearMonth(date: date))
                 if months > 0 && balance < goal {
-                    let needed = ((goal - balance) / Double(months)).cents
+                    // Hetzelfde rekenwerk als bij de doelen (`GoalMath`): naar boven afgerond op hele euro's, met de
+                    // rente van de pot als die er is, zodat het bedrag het doel zeker haalt.
+                    let needed = GoalMath.wholeMonthlyToReach(target: goal, start: balance,
+                                                              annualReturn: InterestRules.isActive(pot) ? pot.interestRate : 0,
+                                                              months: months)
                     Label("Voor \(Fmt.month(YearMonth(date: date))) heb je \(Fmt.euro(needed)) per maand nodig.", systemImage: "calendar.badge.clock")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -905,6 +1025,10 @@ struct PotEditSheet: View {
     @State private var monthly = 0.0
     @State private var opening = 0.0
     @State private var transferDay: Int?
+    // Inleg: een vast bedrag (`monthly`) of een percentage van het inkomen (0...100, twee decimalen).
+    @State private var mode: ContributionMode = .fixed
+    @State private var percent = 0.0
+    @State private var basis: IncomeBasis = .salary
     // Rente
     @State private var rate = 0.0
     @State private var payout: InterestPayout = .yearly
@@ -943,10 +1067,10 @@ struct PotEditSheet: View {
                 Text("Met een doelbedrag laat de app zien hoe ver je bent en wanneer je er bent.")
             }
             Section {
-                NumberRow(title: "Standaard inleg per maand", value: $monthly)
+                contributionFields
                 Toggle("Eigen overschrijfdag inleg", isOn: animated(Binding(
                     get: { transferDay != nil },
-                    set: { on in transferDay = on ? store.data.salaryDay() : nil }
+                    set: { on in transferDay = on ? store.data.salaryDay(in: store.now) : nil }
                 )))
                 if let day = transferDay {
                     Stepper(value: Binding(get: { day }, set: { transferDay = $0 }), in: 1...31) {
@@ -1029,10 +1153,58 @@ struct PotEditSheet: View {
     }
 
     private var moneyFooter: some View {
-        let payDay = store.data.salaryDay()
+        let d = store.data
+        let payDay = PotFormat.dayName(d.salaryDay(in: store.now))
+        // Bij een salaris om de zoveel weken of dagen is "de salarisdag" de eerste uitbetaling van de maand.
+        let payText = d.salary.isMonthly ? "je salarisdag (\(payDay))" : "de eerste salarisdag van de maand (\(payDay))"
         return VStack(alignment: .leading, spacing: 6) {
-            Text("De standaard inleg komt elke maand in je verdeling; die kun je per maand aanpassen.")
-            Text("Op de overschrijfdag gaat de inleg naar de pot en telt hij mee in het saldo. Zonder eigen dag is dat je salarisdag (\(PotFormat.dayName(payDay))). Een verdeling die je voor één maand maakt, kan een eigen dag hebben; die gaat voor.")
+            if mode == .percentage {
+                Text("Een percentage rekent over het inkomen van die maand: gaat je salaris omhoog, dan gaat de inleg vanzelf mee. In je verdeling kun je het percentage per maand aanpassen.")
+            } else {
+                Text("De standaard inleg komt elke maand in je verdeling; die kun je per maand aanpassen.")
+            }
+            Text("Op de overschrijfdag gaat de inleg naar de pot en telt hij mee in het saldo. Zonder eigen dag is dat \(payText). Een verdeling die je voor één maand maakt, kan een eigen dag hebben; die gaat voor.")
+        }
+    }
+
+    // MARK: Inleg
+
+    /// De inleg: een vast bedrag of een percentage van je inkomen, met de grondslag. Wat het percentage in euro's oplevert
+    /// komt uit de rekenmotor (`ContributionPreview`), precies zoals de verdeling het straks uitrekent.
+    @ViewBuilder
+    private var contributionFields: some View {
+        let preview: ContributionPreview.Result? = mode == .percentage
+            ? ContributionPreview.resolve(store.data, percent: percent, basis: basis, month: store.now)
+            : nil
+        ContributionFields(mode: modeBinding, amount: $monthly, percent: $percent, basis: $basis,
+                           amountTitle: "Standaard inleg per maand", percentTitle: "Percentage van je inkomen",
+                           resolvedAmount: preview?.amount, resolvedNote: preview?.note, footnote: preview?.footnote,
+                           subject: name)
+    }
+
+    private var modeBinding: Binding<ContributionMode> {
+        Binding(
+            get: { mode },
+            set: { newMode in
+                withAnimation(Theme.motion) {
+                    prefill(for: newMode)
+                    mode = newMode
+                }
+            }
+        )
+    }
+
+    /// Bij een andere inlegwijze begint het veld bij wat de inleg nu is: een bedrag wordt het percentage van je salaris dat
+    /// erbij hoort, een percentage wordt het bedrag dat het nu oplevert. Zo verspringt de inleg niet. De rekenmotor doet de
+    /// omrekening (`percent(forAmount:)`, `percentAmount`).
+    private func prefill(for newMode: ContributionMode) {
+        let d = store.data
+        let month = store.now
+        switch newMode {
+        case .percentage:
+            if percent == 0, monthly > 0, let start = d.percent(forAmount: monthly, of: basis, in: month) { percent = start }
+        case .fixed:
+            if monthly == 0, percent > 0 { monthly = d.percentAmount(percent, of: basis, in: month) }
         }
     }
 
@@ -1087,6 +1259,9 @@ struct PotEditSheet: View {
             goal = pot.goalAmount
             goalDate = pot.goalDate
             monthly = pot.monthlyContribution
+            mode = pot.contributionMode
+            percent = pot.contributionPercent
+            basis = pot.contributionBasis
             transferDay = pot.transferDay
             rate = pot.interestRate
             payout = pot.interestPayout
@@ -1114,6 +1289,10 @@ struct PotEditSheet: View {
         p.goalAmount = goal
         p.goalDate = goalDate
         p.monthlyContribution = monthly.cents
+        p.contributionMode = mode
+        // Het percentage zoals de rekenmotor het gebruikt: 0...100 op twee decimalen.
+        p.contributionPercent = AllocationMath.cleanPercent(percent)
+        p.contributionBasis = basis
         p.transferDay = transferDay
         // Afgerond op 0,001%, zodat een getypt percentage geen afrondruis meekrijgt.
         p.interestRate = (rate * 100_000).rounded() / 100_000
