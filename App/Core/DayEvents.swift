@@ -260,6 +260,10 @@ extension FinanceData {
     // MARK: Saldo per dag
 
     /// Saldo aan het EIND van die dag. nil zolang er geen saldo bekend is (voor het eerste meetpunt).
+    ///
+    /// Eén dag kost een berekening van alles vanaf het laatste meetpunt (in een debug-build ongeveer 2 ms, bij jaren
+    /// geschiedenis meer). Voor een lijst met een rij per dag: gebruik `monthLedger(_:asOf:)` (alle dagen van een maand in één
+    /// keer, tientallen keren sneller) of `bankDailySeries(from:to:asOf:)`, en roep dit niet per dag aan.
     func bankBalance(on date: Date) -> Double? {
         let limit = DayMath.nextDayStart(after: date)
         let timeline = BankTimeline(self, firstLimit: limit, lastLimit: limit, events: { self.bankFlowEvents(in: $0) })

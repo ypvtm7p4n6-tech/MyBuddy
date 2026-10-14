@@ -98,10 +98,11 @@ extension FinanceData {
     mutating func fillStandardExpenses(in month: YearMonth) -> Int {
         let missing = missingStandardExpenses(in: month)
         guard !missing.isEmpty else { return 0 }
-        editPlan(month) { plan in
-            for item in missing {
-                plan.expenses.append(MoneyLine(name: item.name, amount: item.amount, isRecurring: true, kind: item.kind))
-            }
+        // Een standaardpost waarvan er al een reeks bestaat die in deze maand is overgeslagen of pas later begint, komt terug
+        // in diezelfde reeks (een tweede reeks zou vanaf de maand erna dubbel staan).
+        for item in missing {
+            addOrResumeRecurringLine(MoneyLine(name: item.name, amount: item.amount, isRecurring: true, kind: item.kind),
+                                     kind: .expense, in: month)
         }
         return missing.count
     }

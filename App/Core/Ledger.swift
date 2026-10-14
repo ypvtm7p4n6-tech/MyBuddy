@@ -24,12 +24,14 @@ struct DayTotals: Identifiable, Equatable {
     var date: Date
     /// Dag van de maand (1...31).
     var day: Int
-    /// Wat er die dag op de bankrekening binnenkomt: salaris en extra inkomsten (plan) plus handmatige stortingen.
+    /// Wat er die dag op de bankrekening binnenkomt: salaris en extra inkomsten (plan) plus handmatige stortingen. Ook een
+    /// terugboeking van een verwijderde spaarpot naar de bank (de pot bestaat niet meer, dus er is geen potkant).
     var inflow: Double
     /// Wat er die dag van de bankrekening afgaat: het bankdeel van uitgaven (plan) plus handmatige opnames.
     var outflow: Double
     /// Wat er die dag naar spaarpotten gaat: geplande inleg plus handmatige overboekingen van bank naar pot, min
-    /// handmatige overboekingen van pot naar bank. Kan negatief zijn.
+    /// handmatige overboekingen van pot naar bank (van spaarpotten die er nog zijn: de potkant staat in `potsTotal`).
+    /// Kan negatief zijn.
     var toPots: Double
     /// Geplande inleg die dag naar beleggingen.
     var toHoldings: Double
@@ -173,8 +175,9 @@ struct MonthLedger: Identifiable, Equatable {
 }
 
 extension FinanceData {
-    /// De cijfers van één kalenderdag. Rekent de hele maand uit en pakt daar de dag uit; heb je meer dagen van
-    /// dezelfde maand nodig, gebruik dan `monthLedger(_:asOf:)`.
+    /// De cijfers van één kalenderdag. Rekent de hele maand uit en pakt daar de dag uit (in een debug-build ongeveer 10 ms
+    /// per aanroep, bij jaren geschiedenis meer); heb je meer dagen van dezelfde maand nodig, bewaar dan één
+    /// `monthLedger(_:asOf:)` in een `let` en lees daar de dagen uit, in plaats van dit per dag aan te roepen.
     func dayTotals(on date: Date, asOf today: Date = Date()) -> DayTotals {
         let cal = YearMonth.calendar
         let month = YearMonth(date: date, calendar: cal)
@@ -249,11 +252,16 @@ extension FinanceData {
             guard cents != 0 else { continue }
             let i = min(max(DayMath.dayNumber(of: entry.date, calendar: cal), 1), n) - 1
             entryItems.append((i, entry.date, cents))
+            // Een overboeking van of naar een spaarpot telt als "naar spaarpotten" zolang die pot er is: de potkant staat dan
+            // in het saldo van de potten. Bestaat de pot niet meer (hij is verwijderd, en zijn boekingen met hem: zie
+            // `deletePot`), dan is de bankkant gewoon geld dat binnenkwam of eruit ging. Anders zou de dag "naar
+            // spaarpotten" tonen terwijl het saldo van de potten die dag niet beweegt.
+            let potExists = entry.potID.map { pot($0) != nil } ?? false
             switch entry.kind {
-            case .deposit, .withdrawal:
-                if cents > 0 { manIn[i] = CentsMath.add(manIn[i], cents) } else { manOut[i] = CentsMath.add(manOut[i], -cents) }
-            case .toPot, .fromPot:
+            case .toPot where potExists, .fromPot where potExists:
                 manPots[i] = CentsMath.add(manPots[i], -cents)
+            case .deposit, .withdrawal, .toPot, .fromPot:
+                if cents > 0 { manIn[i] = CentsMath.add(manIn[i], cents) } else { manOut[i] = CentsMath.add(manOut[i], -cents) }
             }
         }
 

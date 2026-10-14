@@ -22,15 +22,19 @@ import Foundation
 // 3. Afwezigheid is niet meer dubbelzinnig: een maand overslaan zet het reeks-id in `MonthPlan.skippedSeries`; stoppen
 //    vanaf een maand zet het in `MonthPlan.endedSeries` (de "grafsteen"). Zonder zo'n teken komt de regel gewoon terug.
 // 4. "Alleen deze maand" bewerken geeft de regel `isException`: zo'n regel bepaalt de volgende maanden niet. "Deze en alle
-//    volgende maanden" past de regel van die maand en de al opgeslagen latere regels van de reeks aan (alleen de velden
-//    die je veranderde; was de regel een afwijkende maand, dan zijn al zijn velden de nieuwe basis). Afwijkende maanden
-//    erna blijven zoals ze zijn.
+//    volgende maanden" past de regel van die maand en de al opgeslagen latere regels van de reeks aan, per veld: alleen de
+//    velden die je veranderde, en alleen in latere regels die dat veld nog zo hebben als de reeks het had. Een latere regel
+//    die dat veld bewust anders heeft (een geplande verhoging, een afwijkende maand) houdt haar eigen waarde. Was de regel
+//    een afwijkende maand, dan wordt zijn hele regel de nieuwe basis.
 //    Is de regel die je alleen voor deze maand aanpast of verwijdert de basis voor de maanden erna (een eerder gekozen
 //    "deze en alle volgende"), dan krijgt de eerstvolgende maand een eigen kopie van die basis (`carryBaseline`), zodat de
 //    maanden erna niet terugvallen op een oudere basis.
 // 5. Oude data (regels zonder `seriesID`): de reeks wordt afgeleid uit de keten van afgeleide id's
-//    (`line|<vorig id>|<maand>`), zoals de oude motor ze maakte. `migrateRecurringSeries()` schrijft die afleiding weg
-//    (gebeurt in `materialize`); zonder migratie geeft de afleiding hetzelfde antwoord.
+//    (`line|<vorig id>|<maand>`), zoals de oude motor ze maakte. Daarbij is elke EERDERE regel een mogelijke voorganger,
+//    niet alleen die van het vorige opgeslagen plan (de oude motor leidde een maand af van het laatst opgeslagen plan op
+//    het moment dat hij werd opgeslagen). Een regel met een willekeurig id (de allereerste versie van de app) hoort bij de
+//    laatste eerdere regel met dezelfde naam en soort. `migrateRecurringSeries()` schrijft die afleiding weg (gebeurt in
+//    `materialize`); zonder migratie geeft de afleiding hetzelfde antwoord.
 
 /// Reikwijdte van een bewerking of verwijdering van een terugkerende regel.
 enum SeriesScope: String, Codable, CaseIterable, Identifiable {
@@ -184,13 +188,23 @@ struct SeriesIndex {
                 if income[sid] != nil { income[sid]!.skipped.append(month) }
                 if expense[sid] != nil { expense[sid]!.skipped.append(month) }
             }
-            // Alleen terugkerende regels kunnen in de volgende maand worden afgeleid.
-            previousIncome = plan.extraIncome.filter { $0.isRecurring }
-            previousExpense = plan.expenses.filter { $0.isRecurring }
+            // Alleen terugkerende regels kunnen in een latere maand worden afgeleid. ALLE eerdere regels blijven kandidaat,
+            // niet alleen die van het vorige opgeslagen plan: de oude motor leidde een maand af van het laatst opgeslagen
+            // plan OP HET MOMENT dat hij werd opgeslagen. Werd een toekomstige maand eerder opgeslagen dan de maanden
+            // ertussen, dan is zijn regel afgeleid van een regel die niet zijn directe voorganger is.
+            previousIncome += plan.extraIncome.filter { $0.isRecurring }
+            previousExpense += plan.expenses.filter { $0.isRecurring }
         }
     }
 
     /// Geeft elke terugkerende regel zonder reeks-id zijn reeks (zie `init(sorted:)`).
+    ///
+    /// 1. Het id van de regel is de afgeleide (`MoneyLine.seriesLineID`) van een eerdere regel van een reeks: dan hoort hij
+    ///    bij die reeks. Elke reeks wordt per maand maar één keer zo gekoppeld.
+    /// 2. Anders (een willekeurig id van de eerste versie van de app, of een keten waarvan de voorganger is verwijderd):
+    ///    de laatste eerdere regel met dezelfde naam en soort die nog geen opvolger in deze maand heeft, liefst eentje met
+    ///    dezelfde inhoud (bedrag, dag, potdelen).
+    /// 3. Anders begint een nieuwe reeks met het id van de regel zelf.
     private static func link(_ lines: inout [MoneyLine], previous: [MoneyLine], month: YearMonth) {
         guard lines.contains(where: { $0.isRecurring && $0.seriesID == nil }) else { return }
         var derived: [UUID: UUID] = [:]
@@ -198,8 +212,26 @@ struct SeriesIndex {
             guard let sid = c.seriesID else { continue }
             derived[MoneyLine.seriesLineID(c.id, in: month)] = sid
         }
+        var taken = Set<UUID>()
+        for c in lines where c.isRecurring { if let sid = c.seriesID { taken.insert(sid) } }
         for i in lines.indices where lines[i].isRecurring && lines[i].seriesID == nil {
-            lines[i].seriesID = derived[lines[i].id] ?? lines[i].id
+            if let sid = derived[lines[i].id], !taken.contains(sid) {
+                lines[i].seriesID = sid
+                taken.insert(sid)
+            }
+        }
+        for i in lines.indices where lines[i].isRecurring && lines[i].seriesID == nil {
+            let line = lines[i]
+            let candidates = previous.filter { c in
+                c.name == line.name && c.kind == line.kind && c.seriesID.map { !taken.contains($0) } == true
+            }
+            if let c = candidates.last(where: { $0.sameBaseline(as: line) }) ?? candidates.last, let sid = c.seriesID {
+                lines[i].seriesID = sid
+                taken.insert(sid)
+            } else {
+                lines[i].seriesID = line.id
+                taken.insert(line.id)
+            }
         }
     }
 
@@ -412,8 +444,9 @@ extension FinanceData {
     ///
     /// - Eenmalige regel: alleen deze maand, `scope` doet er niet toe.
     /// - Terugkerende regel, `.thisAndFollowing`: de regel van deze maand wordt de regel van de reeks vanaf nu. Wat er
-    ///   anders aan is dan voorheen (naam, bedrag, dag, soort, potdelen) gaat ook in de al opgeslagen latere maanden mee;
-    ///   maanden die niet zijn opgeslagen volgen vanzelf.
+    ///   anders aan is dan voorheen (naam, bedrag, dag, soort, potdelen) gaat ook in de al opgeslagen latere maanden mee,
+    ///   per veld en alleen waar die maanden dat veld nog zo hadden als de reeks het had (een eerder ingestelde verhoging
+    ///   of een afwijkende maand houdt zijn eigen waarde); maanden die niet zijn opgeslagen volgen vanzelf.
     /// - Terugkerende regel, `.thisMonth`: alleen deze maand wijkt af; de reeks gaat er daarna gewoon mee door.
     /// - Een terugkerende regel die niet meer terugkerend is: `.thisAndFollowing` stopt de reeks vanaf deze maand (deze
     ///   regel blijft als eenmalige staan), `.thisMonth` slaat alleen deze maand van de reeks over.
@@ -434,7 +467,14 @@ extension FinanceData {
             if let sid = oldSeries, scope == .thisAndFollowing {
                 stopSeries(sid, from: month, income: isIncome, using: stored)
             }
-            writeLine(new, kind: kind, in: month)
+            // Een eenmalige regel die het id van de regel van de reeks houdt, zou botsen met die regel zodra de maand
+            // met `restoreSkippedLine` weer aan de reeks wordt teruggegeven (twee regels met hetzelfde id). Daarom
+            // krijgt hij dan een eigen, vast id.
+            let originalID = new.id
+            if let sid = oldSeries, scope == .thisMonth, new.id == MoneyLine.seriesLineID(sid, in: month) {
+                new.id = StableID.uuid("oneoff|\(new.id.uuidString)|\(month.key)")
+            }
+            writeLine(new, kind: kind, in: month, replacing: originalID)
             return
         }
 
@@ -443,6 +483,14 @@ extension FinanceData {
         guard let old = existing, oldSeries == sid else {
             // Een nieuwe reeks (of een regel die nog geen reeks had): begint in deze maand.
             new.isException = false
+            // Een regel met het reeks-id van een reeks die al voor deze maand is gestopt komt niet terug in die reeks: het
+            // einde geldt voor alle maanden erna. Hij begint daarom een nieuwe reeks (deze maand, met een vast afgeleid id).
+            // Zo is "dezelfde regel opnieuw toevoegen" in elke maand hetzelfde, ook na een einde. In de maand van het einde
+            // zelf (stoppen en meteen weer toevoegen, een "ongedaan maken") gaat dezelfde reeks gewoon door: het teken
+            // verdwijnt dan (`settleSeries`).
+            if let series = stored.series.series(sid, income: isIncome), let ended = series.endedFrom, ended < month {
+                new.seriesID = MoneyLine.seriesLineID(sid, in: month)
+            }
             writeLine(new, kind: kind, in: month)
             return
         }
@@ -496,18 +544,77 @@ extension FinanceData {
         guard var plan = months[month.key], plan.skippedSeries.contains(seriesID) else { return }
         plan.skippedSeries.removeAll { $0 == seriesID }
         months[month.key] = plan
+        // Was het de eerste maand van de reeks die was overgeslagen, dan staat er vóór deze maand niets om over te nemen:
+        // zet dan de eerste regel van de reeks hier neer (met het vaste afgeleide id van die maand).
+        let stored = storedPlans
+        for isIncome in [true, false] {
+            guard let series = stored.series.series(seriesID, income: isIncome),
+                  series.template(before: month) == nil,
+                  series.endedFrom.map({ month < $0 }) ?? true,
+                  let first = series.occurrences.first(where: { !$0.line.isException }) ?? series.occurrences.first else { continue }
+            var line = first.line
+            line.id = MoneyLine.seriesLineID(seriesID, in: month)
+            line.seriesID = seriesID
+            line.isRecurring = true
+            line.isException = false
+            var restored = months[month.key] ?? MonthPlan()
+            if isIncome { restored.extraIncome.append(line) } else { restored.expenses.append(line) }
+            months[month.key] = restored
+        }
+    }
+
+    // MARK: Een bestaande reeks met dezelfde naam laten doorlopen
+
+    /// De reeks (van deze soort) die bij `name` hoort (hoofdletterongevoelig, op de naam van de laatste regel), in of na
+    /// `month` nog loopt en in `month` zelf geen regel heeft: een reeks die in die maand is overgeslagen, of die pas in een
+    /// latere maand begint. nil als er zo'n reeks niet is.
+    func resumableSeries(named name: String, kind: LineKind, in month: YearMonth) -> SeriesInfo? {
+        func key(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let wanted = key(name)
+        guard !wanted.isEmpty else { return nil }
+        let present = plan(for: month)
+        let presentSeries = Set((kind == .income ? present.extraIncome : present.expenses).compactMap { $0.seriesID })
+        return recurringSeries(kind: kind).first { info in
+            key(info.latest.name) == wanted && !presentSeries.contains(info.seriesID)
+                && (info.lastMonth.map { $0 >= month } ?? true)
+        }
+    }
+
+    /// Voegt een terugkerende regel toe vanaf `month`, tenzij er al een reeks met dezelfde naam is die in of na deze maand
+    /// loopt maar in deze maand geen regel heeft (zie `resumableSeries`): dan begint er geen tweede reeks naast de eerste
+    /// (de regel zou vanaf de maand erna dubbel staan). Was de reeks in deze maand overgeslagen, dan komt hij terug
+    /// (`restoreSkippedLine`); begint hij pas later, dan wordt deze regel de eerste regel van diezelfde reeks. Voor de
+    /// invulhulp met standaardposten en voor het importeren. Geeft de regel zoals hij in `month` staat.
+    @discardableResult
+    mutating func addOrResumeRecurringLine(_ line: MoneyLine, kind: LineKind, in month: YearMonth) -> MoneyLine {
+        guard let info = resumableSeries(named: line.name, kind: kind, in: month) else {
+            return addRecurringLine(line, kind: kind, in: month)
+        }
+        if info.skippedMonths.contains(month) {
+            restoreSkippedLine(seriesID: info.seriesID, in: month)
+            let lines = kind == .income ? plan(for: month).extraIncome : plan(for: month).expenses
+            return lines.first { $0.seriesID == info.seriesID } ?? line
+        }
+        var joined = line
+        joined.isRecurring = true
+        joined.isException = false
+        joined.seriesID = info.seriesID
+        updateLine(joined, kind: kind, in: month, scope: .thisAndFollowing)
+        return joined
     }
 
     // MARK: Bouwstenen
 
     /// Zet `line` in de lijst van `month` (vervangt dezelfde id, anders achteraan) en legt de maand vast.
-    private mutating func writeLine(_ line: MoneyLine, kind: LineKind, in month: YearMonth) {
+    /// `replacing` is het id van de regel die wordt vervangen als dat een ander id is dan dat van `line`.
+    private mutating func writeLine(_ line: MoneyLine, kind: LineKind, in month: YearMonth, replacing: UUID? = nil) {
+        let target = replacing ?? line.id
         editPlan(month) { plan in
             switch kind {
             case .income:
-                if let i = plan.extraIncome.firstIndex(where: { $0.id == line.id }) { plan.extraIncome[i] = line } else { plan.extraIncome.append(line) }
+                if let i = plan.extraIncome.firstIndex(where: { $0.id == target }) { plan.extraIncome[i] = line } else { plan.extraIncome.append(line) }
             case .expense:
-                if let i = plan.expenses.firstIndex(where: { $0.id == line.id }) { plan.expenses[i] = line } else { plan.expenses.append(line) }
+                if let i = plan.expenses.firstIndex(where: { $0.id == target }) { plan.expenses[i] = line } else { plan.expenses.append(line) }
             }
         }
     }
@@ -524,28 +631,34 @@ extension FinanceData {
     }
 
     /// Past de al opgeslagen latere regels van de reeks aan met wat er in `new` anders is dan in `old`.
+    ///
+    /// Per veld (naam, bedrag, soort, dag, delen uit potten) gaat de wijziging alleen mee naar een latere regel die dat veld
+    /// nog heeft zoals de reeks het had (`reference`). Heeft een latere regel dat veld bewust anders (een geplande
+    /// huurverhoging vanaf december die je eerder instelde, of een maand die alleen op dat punt afwijkt), dan blijft dat zo.
+    /// Een afwijkende maand ("alleen deze maand") volgt dus wel de velden waarop ze niet afweek: wijzig je later de dag van de
+    /// reeks, dan krijgt ook die maand de nieuwe dag, en houdt ze haar eigen bedrag.
+    ///
+    /// `reference` is de regel zoals de maanden erna hem hadden voor deze bewerking: `old`; was `old` zelf een afwijkende maand
+    /// (`everything`: haar hele regel wordt nu de nieuwe basis), dan de basis vóór die maand.
     private mutating func propagate(from old: MoneyLine, to new: MoneyLine, series sid: UUID, income isIncome: Bool,
                                     after month: YearMonth, everything: Bool = false, using stored: StoredPlans) {
         guard let series = stored.series.series(sid, income: isIncome) else { return }
-        let changeName = everything || old.name != new.name
-        let changeAmount = everything || old.amount != new.amount
-        let changeKind = everything || old.kind != new.kind
-        let changeDay = everything || old.day != new.day
-        let changeShares = everything || old.potShares != new.potShares
-        guard changeName || changeAmount || changeKind || changeDay || changeShares else { return }
+        let reference = everything ? (series.baseline(before: month)?.line ?? old) : old
+        guard reference.name != new.name || reference.amount != new.amount || reference.kind != new.kind
+                || reference.day != new.day || reference.potShares != new.potShares else { return }
         var later: [String: Set<UUID>] = [:]
-        for occ in series.occurrences where occ.month > month && !occ.line.isException {
+        for occ in series.occurrences where occ.month > month {
             later[occ.month.key, default: []].insert(occ.line.id)
         }
         for (key, ids) in later {
             guard var plan = months[key] else { continue }
             func apply(_ lines: inout [MoneyLine]) {
                 for i in lines.indices where ids.contains(lines[i].id) {
-                    if changeName { lines[i].name = new.name }
-                    if changeAmount { lines[i].amount = new.amount }
-                    if changeKind { lines[i].kind = new.kind }
-                    if changeDay { lines[i].day = new.day }
-                    if changeShares { lines[i].potShares = new.potShares }
+                    if lines[i].name == reference.name { lines[i].name = new.name }
+                    if lines[i].amount == reference.amount { lines[i].amount = new.amount }
+                    if lines[i].kind == reference.kind { lines[i].kind = new.kind }
+                    if lines[i].day == reference.day { lines[i].day = new.day }
+                    if lines[i].potShares == reference.potShares { lines[i].potShares = new.potShares }
                 }
             }
             if isIncome { apply(&plan.extraIncome) } else { apply(&plan.expenses) }

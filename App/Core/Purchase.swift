@@ -308,8 +308,8 @@ extension PurchaseContext {
             context.remainingThisMonth = data.estimatedRemaining(in: current)
             context.expensesExceedIncome = CentsMath.int(income) - CentsMath.int(data.expensesFromBank(in: current)) < 0
         }
-        if data.hasBankBalance {
-            context.bankBalance = data.bankBalanceNow(current: current, today: today)
+        if let balance = data.bankBalanceNowIfKnown(current: current, today: today) {
+            context.bankBalance = balance
             context.bankSurplus = data.bankSurplusAboveBuffer(current: current, today: today)
             context.bankBuffer = data.bankBuffer(current: current)
         }

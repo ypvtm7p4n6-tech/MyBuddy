@@ -350,9 +350,9 @@ extension Pot {
                   interestPayoutDay: try c.decodeIfPresent(Int.self, forKey: .interestPayoutDay) ?? 1,
                   interestPayoutMonth: try c.decodeIfPresent(Int.self, forKey: .interestPayoutMonth) ?? 1,
                   transferDay: try c.decodeIfPresent(Int.self, forKey: .transferDay),
-                  contributionMode: try c.decodeIfPresent(ContributionMode.self, forKey: .contributionMode) ?? .fixed,
+                  contributionMode: c.decodeLenient(ContributionMode.self, forKey: .contributionMode, default: .fixed),
                   contributionPercent: try c.decodeIfPresent(Double.self, forKey: .contributionPercent) ?? 0,
-                  contributionBasis: try c.decodeIfPresent(IncomeBasis.self, forKey: .contributionBasis) ?? .salary)
+                  contributionBasis: c.decodeLenient(IncomeBasis.self, forKey: .contributionBasis, default: .salary))
     }
 
     /// De velden van de inlegwijze worden alleen geschreven als ze afwijken van een vast bedrag: een bestand zonder
@@ -374,7 +374,8 @@ extension Pot {
         try c.encode(interestPayoutMonth, forKey: .interestPayoutMonth)
         try c.encodeIfPresent(transferDay, forKey: .transferDay)
         if contributionMode != .fixed { try c.encode(contributionMode, forKey: .contributionMode) }
-        if contributionPercent != 0 { try c.encode(contributionPercent, forKey: .contributionPercent) }
+        // Een percentage dat geen getal is (NaN of oneindig) wordt als 0 bewaard: de JSON-encoder weigert zulke waarden.
+        if contributionPercent.isFinite, contributionPercent != 0 { try c.encode(contributionPercent, forKey: .contributionPercent) }
         if contributionBasis != .salary { try c.encode(contributionBasis, forKey: .contributionBasis) }
     }
 }
@@ -571,9 +572,9 @@ extension Holding {
                   lastPrice: try c.decodeIfPresent(Double.self, forKey: .lastPrice),
                   lastPriceDate: try c.decodeIfPresent(Date.self, forKey: .lastPriceDate),
                   priceCurrency: try c.decodeIfPresent(String.self, forKey: .priceCurrency),
-                  contributionMode: try c.decodeIfPresent(ContributionMode.self, forKey: .contributionMode) ?? .fixed,
+                  contributionMode: c.decodeLenient(ContributionMode.self, forKey: .contributionMode, default: .fixed),
                   contributionPercent: try c.decodeIfPresent(Double.self, forKey: .contributionPercent) ?? 0,
-                  contributionBasis: try c.decodeIfPresent(IncomeBasis.self, forKey: .contributionBasis) ?? .salary)
+                  contributionBasis: c.decodeLenient(IncomeBasis.self, forKey: .contributionBasis, default: .salary))
     }
 
     func encode(to encoder: Encoder) throws {
@@ -594,7 +595,8 @@ extension Holding {
         try c.encodeIfPresent(lastPriceDate, forKey: .lastPriceDate)
         try c.encodeIfPresent(priceCurrency, forKey: .priceCurrency)
         if contributionMode != .fixed { try c.encode(contributionMode, forKey: .contributionMode) }
-        if contributionPercent != 0 { try c.encode(contributionPercent, forKey: .contributionPercent) }
+        // Een percentage dat geen getal is (NaN of oneindig) wordt als 0 bewaard: de JSON-encoder weigert zulke waarden.
+        if contributionPercent.isFinite, contributionPercent != 0 { try c.encode(contributionPercent, forKey: .contributionPercent) }
         if contributionBasis != .salary { try c.encode(contributionBasis, forKey: .contributionBasis) }
     }
 }

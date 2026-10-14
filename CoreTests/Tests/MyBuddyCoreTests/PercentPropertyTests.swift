@@ -286,6 +286,8 @@ final class PercentPropertyTests: XCTestCase {
             var invested = 0
             var potMonth: [UUID: Int] = [:]
             var percentSum = 0
+            var percentSalarySum = 0   // honderdsten van een procent op de grondslag "alleen salaris"
+            var percentAllSum = 0      // idem op "alle inkomsten"
             var transferDayTotals: [Int: Int] = [:]   // dag -> bedrag naar potten
             var holdingDayTotals: [Int: Int] = [:]
             for e in world.entities {
@@ -295,6 +297,7 @@ final class PercentPropertyTests: XCTestCase {
                 if case .percent(let p) = rule {
                     coverage.percentAllocations += 1
                     percentSum += Int((p.percent * 100).rounded())
+                    if p.basis == .salary { percentSalarySum += Int((p.percent * 100).rounded()) } else { percentAllSum += Int((p.percent * 100).rounded()) }
                     if p.basis == .allIncome { coverage.allIncomeBasis += 1 }
                 } else {
                     coverage.fixedAllocations += 1
@@ -364,7 +367,16 @@ final class PercentPropertyTests: XCTestCase {
 
             // Waarschuwingen.
             let warnings = d.allocationWarnings(in: month)
-            let over100 = percentSum > 10_000
+            // Meer dan 100%: bij één grondslag de som van de percentages. Bij een mengeling van beide grondslagen telt wat de
+            // percentages van het inkomen van die maand werkelijk vragen (exact, in Decimal), zonder inkomen de som.
+            let over100: Bool
+            let incomeAll = Decimal(max(0, allCents))
+            if percentSalarySum == 0 || percentAllSum == 0 || incomeAll == 0 {
+                over100 = percentSum > 10_000
+            } else {
+                over100 = Decimal(percentSalarySum) * Decimal(max(0, salaryCents)) + Decimal(percentAllSum) * incomeAll
+                    > Decimal(10_000) * incomeAll
+            }
             if over100 { coverage.overOneHundred += 1 }
             c.eq(warnings.contains { if case .percentagesOver100 = $0 { return true } else { return false } }, over100,
                  "\(tag): waarschuwing boven 100% \(month.key)")

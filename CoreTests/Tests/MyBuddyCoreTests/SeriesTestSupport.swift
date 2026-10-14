@@ -59,19 +59,32 @@ struct SeriesOracle {
         for k in m..<horizon { months[k] = value }
     }
 
-    /// "Deze en alle volgende maanden": maand `m` en alle latere maanden (behalve afwijkende maanden) krijgen de
-    /// gewijzigde velden. Aanroepers veranderen altijd zowel bedrag als dag, zodat er geen veld "tussendoor" blijft.
+    /// "Deze en alle volgende maanden": maand `m` krijgt de nieuwe regel, en elke latere maand krijgt de velden die veranderden,
+    /// per veld en alleen als die maand dat veld nog had zoals de reeks het had (de referentie). Een latere maand die dat veld
+    /// bewust anders heeft (een eerder ingestelde verhoging, of een afwijkende maand op dat punt) houdt haar eigen waarde.
+    /// De referentie is de maand zelf zoals hij was; was het een afwijkende maand, dan wordt zijn hele regel de nieuwe basis
+    /// en is de referentie de laatste maand ervoor die geen afwijking was. Aanroepers veranderen altijd zowel bedrag als dag,
+    /// zodat er geen veld "tussendoor" blijft.
     mutating func updateFollowing(at m: Int, to new: Value) {
         guard let old = months[m] else { return }
-        // Was het een afwijkende maand, dan wordt zijn hele regel de nieuwe basis; anders gaat alleen mee wat veranderde.
-        let everything = exceptions.contains(m)
+        var reference = old
+        if exceptions.contains(m) {
+            var k = m - 1
+            while k >= 0 {
+                if let value = months[k], !exceptions.contains(k) {
+                    reference = value
+                    break
+                }
+                k -= 1
+            }
+        }
         exceptions.remove(m)
         months[m] = new
         if m + 1 < horizon {
-            for k in (m + 1)..<horizon where months[k] != nil && !exceptions.contains(k) {
-                if everything || old.amount != new.amount { months[k]!.amount = new.amount }
-                if everything || old.day != new.day { months[k]!.day = new.day }
-                if everything || old.fromPot != new.fromPot { months[k]!.fromPot = new.fromPot }
+            for k in (m + 1)..<horizon where months[k] != nil {
+                if months[k]!.amount == reference.amount { months[k]!.amount = new.amount }
+                if months[k]!.day == reference.day { months[k]!.day = new.day }
+                if months[k]!.fromPot == reference.fromPot { months[k]!.fromPot = new.fromPot }
             }
         }
     }

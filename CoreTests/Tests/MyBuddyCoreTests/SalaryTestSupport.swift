@@ -70,8 +70,9 @@ func referenceSalaryPayouts(_ salary: SalarySettings, start: YearMonth, month: Y
     }
     if let override = salaryOverride { return spread(engCents(override), fallback: true) }
     if salary.mode == .hourly, let hours = hoursOverride {
-        // Uren van een maand (ook met een tiende uur): uurloon x uren, op hele centen.
-        return spread(Int(((salary.hourlyRate * hours) * 100).rounded()), fallback: false)
+        // Uren van een maand (ook met een kwartier of tiende uur): uurloon x uren, op hele centen half omhoog, met gehele
+        // getallen uitgerekend (uurloon in centen x uren in honderdsten, zonder kommagetallen).
+        return spread((engCents(salary.hourlyRate) * Int((hours * 100).rounded()) + 50) / 100, fallback: false)
     }
     return days.map { ReferencePayout(day: $0, cents: referencePayoutCents(salary)) }
 }

@@ -36,8 +36,8 @@ struct PairedRemoval: Equatable {
     }
 }
 
-/// Het verloop van de bankrekening op dagniveau: het laatste ingevulde saldo (of een virtuele 0 bij alleen
-/// stortingen) plus alle gebeurtenissen daarna. Eén keer opgebouwd, daarna snel te bevragen voor veel dagen.
+/// Het verloop van de bankrekening op dagniveau: het laatste ingevulde saldo (of een virtuele 0 aan het begin van de dag van
+/// de eerste storting, bij alleen stortingen) plus alle gebeurtenissen daarna. Eén keer opgebouwd, daarna snel te bevragen voor veel dagen.
 ///
 /// Saldo aan het eind van een dag = basis + de gebeurtenissen na de basis en op of voor die dag. Wat "na de basis" is,
 /// hangt af van het soort gebeurtenis:
@@ -141,9 +141,13 @@ struct BankTimeline {
             return Base(date: snap.date, cents: CentsMath.int(snap.balance), planDate: endOfDay)
         }
         if !hasSnapshots, let first = firstEntryDate, first < limit {
-            // Geen meting, alleen een virtuele 0 vlak voor de eerste boeking: niets is "al verwerkt".
+            // Geen meting, alleen een virtuele 0 vlak voor de eerste boeking. Handmatige boekingen tellen vanaf die boeking
+            // mee. Alles uit het plan gaat per KALENDERDAG, ook hier: de virtuele 0 ligt aan het BEGIN van de dag van de
+            // eerste boeking, dus de planboekingen van die dag tellen helemaal mee (ook die van vóór het tijdstip van de
+            // boeking). Anders wijkt het saldo aan het eind van die dag af van wat de dag zelf aan geld ziet komen en gaan.
             let start = first.addingTimeInterval(-1)
-            return Base(date: start, cents: 0, planDate: start)
+            let dayStart = YearMonth.calendar.startOfDay(for: first)
+            return Base(date: start, cents: 0, planDate: DayMath.lastMoment(before: dayStart))
         }
         return nil
     }
@@ -175,6 +179,9 @@ extension FinanceData {
         bankSnapshots.sorted { $0.date < $1.date }
     }
 
+    /// Is er ooit een meetpunt of boeking ingevuld? Dat zegt niet dat het saldo van NU bekend is: een meetpunt dat in de
+    /// toekomst ligt geeft nog geen saldo. Voor "toon het saldo van nu, anders onbekend" is `hasBankBalanceNow` (of
+    /// `bankBalanceNowIfKnown`) het juiste antwoord.
     var hasBankBalance: Bool { !bankSnapshots.isEmpty || !bankEntries.isEmpty }
 
     /// Saldo aan het eind van `month`: het saldo aan het eind van de laatste dag van die maand.
@@ -202,8 +209,19 @@ extension FinanceData {
     /// aan `dayTotals(on: today).bankBalance` (het saldo aan het eind van vandaag) zolang er geen handmatige boeking
     /// later op de dag staat dan `today`.
     func bankBalanceNow(current: YearMonth, today: Date = Date()) -> Double {
-        if YearMonth(date: today) == current { return bankBalance(atMoment: today) ?? 0 }
-        return bankBalance(at: current) ?? 0
+        bankBalanceNowIfKnown(current: current, today: today) ?? 0
+    }
+
+    /// Zoals `bankBalanceNow`, maar nil zolang het saldo van nu niet bekend is: er is geen meetpunt of boeking op of vóór nu
+    /// (ook niet als er alleen een meetpunt in de toekomst ligt). Toon dan "onbekend" in plaats van "€ 0".
+    func bankBalanceNowIfKnown(current: YearMonth, today: Date = Date()) -> Double? {
+        if YearMonth(date: today) == current { return bankBalance(atMoment: today) }
+        return bankBalance(at: current)
+    }
+
+    /// Is het saldo van nu bekend (zie `bankBalanceNowIfKnown`)?
+    func hasBankBalanceNow(current: YearMonth, today: Date = Date()) -> Bool {
+        bankBalanceNowIfKnown(current: current, today: today) != nil
     }
 
     func bankSeries(from start: YearMonth, count: Int, current: YearMonth) -> [BankPoint] {
@@ -310,7 +328,7 @@ extension FinanceData {
 
     /// Wat er boven de buffer op de rekening staat (nooit negatief).
     func bankSurplusAboveBuffer(current: YearMonth, today: Date = Date()) -> Double {
-        guard hasBankBalance else { return 0 }
-        return max(0, (bankBalanceNow(current: current, today: today) - bankBuffer(current: current)).cents)
+        guard let balance = bankBalanceNowIfKnown(current: current, today: today) else { return 0 }
+        return max(0, (balance - bankBuffer(current: current)).cents)
     }
 }

@@ -47,7 +47,23 @@ struct PercentRule: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         percent = try c.decodeIfPresent(Double.self, forKey: .percent) ?? 0
-        basis = try c.decodeIfPresent(IncomeBasis.self, forKey: .basis) ?? .salary
+        basis = c.decodeLenient(IncomeBasis.self, forKey: .basis, default: .salary)
+    }
+
+    /// Een percentage dat geen getal is (NaN of oneindig) wordt als 0 bewaard: de JSON-encoder weigert zulke waarden, en dan
+    /// zouden opslaan, back-up en synchroniseren allemaal falen.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(percent.isFinite ? percent : 0, forKey: .percent)
+        try c.encode(basis, forKey: .basis)
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// Leest een waarde die ontbreekt of die deze versie van de app niet kent (bijvoorbeeld een nieuwe keuze uit een nieuwere
+    /// versie) als `fallback`, in plaats van het hele bestand te laten falen.
+    func decodeLenient<T: Decodable>(_ type: T.Type, forKey key: Key, default fallback: T) -> T {
+        (try? decodeIfPresent(type, forKey: key)) ?? fallback
     }
 }
 
@@ -81,6 +97,27 @@ struct IncomeBases: Equatable {
 
     func cents(for basis: IncomeBasis) -> Int {
         max(0, basis == .salary ? salary : all)
+    }
+}
+
+/// Onthoudt het inkomen per maand van één `FinanceData` zolang een berekening duurt. Niet bewaren: bij een wijziging van
+/// de gegevens klopt hij niet meer; maak voor elke berekening een nieuwe (`FinanceData.incomeBasesCache()`).
+final class IncomeBasesCache {
+    private let data: FinanceData
+    private let stored: StoredPlans
+    private var values: [YearMonth: IncomeBases] = [:]
+
+    fileprivate init(_ data: FinanceData) {
+        self.data = data
+        self.stored = data.storedPlans
+    }
+
+    /// Het inkomen van `month` per grondslag: hetzelfde als `FinanceData.incomeBases(in:)`.
+    func bases(in month: YearMonth) -> IncomeBases {
+        if let known = values[month] { return known }
+        let computed = data.incomeBases(in: month, using: stored)
+        values[month] = computed
+        return computed
     }
 }
 
@@ -175,15 +212,21 @@ extension FinanceData {
     // MARK: Regels per maand
 
     /// De standaardregel van een pot of belegging in een maand (zonder overschrijving). nil als het id niet bestaat.
+    ///
+    /// Maanden vóór de startmaand van de gegevens tellen nergens mee (`monthFigures`, `savedTotal(in:)`): ook de verdeling
+    /// van een pot of belegging daarin is dan niets (een bedrag van nul), ook als de pot zelf al eerder begon (import,
+    /// synchroniseren).
     func defaultAllocationRule(_ id: UUID, in month: YearMonth) -> AllocationRule? {
-        if let pot = pots.first(where: { $0.id == id }) { return pot.defaultRule(in: month) }
-        if let holding = holdings.first(where: { $0.id == id }) { return holding.defaultRule(in: month) }
+        let before = month < startMonth
+        if let pot = pots.first(where: { $0.id == id }) { return before ? .amount(0) : pot.defaultRule(in: month) }
+        if let holding = holdings.first(where: { $0.id == id }) { return before ? .amount(0) : holding.defaultRule(in: month) }
         return nil
     }
 
     /// De regel die in een maand voor een pot of belegging geldt: de overschrijving van die maand (een percentage gaat
     /// voor een bedrag), anders de standaardregel.
     func allocationRule(_ id: UUID, in month: YearMonth) -> AllocationRule {
+        guard month >= startMonth else { return .amount(0) }
         if let stored = months[month.key] {
             if let rule = stored.percentAllocations[id.uuidString] { return .percent(rule) }
             if let value = stored.allocations[id.uuidString] { return .amount(value) }
@@ -215,6 +258,11 @@ extension FinanceData {
         return incomeBases(of: plan(for: month), in: month)
     }
 
+    /// Een nieuwe tussenopslag van het inkomen per maand, voor een lus over veel maanden (zie `IncomeBasesCache`).
+    func incomeBasesCache() -> IncomeBasesCache {
+        IncomeBasesCache(self)
+    }
+
     /// Zoals `incomeBases(in:)`, met vooraf bepaalde opgeslagen plannen en reeksen (sneller in lussen).
     func incomeBases(in month: YearMonth, using stored: StoredPlans) -> IncomeBases {
         guard month >= startMonth else { return IncomeBases() }
@@ -230,6 +278,10 @@ extension FinanceData {
     }
 
     // MARK: Het bedrag, op één plek uitgerekend
+    //
+    // Wie veel maanden achter elkaar leest (de waarde van een belegging door de tijd, een reeks voor een grafiek) maakt één
+    // `IncomeBasesCache` en geeft die door: het inkomen van een maand wordt dan één keer uitgerekend, niet bij elke
+    // pot, belegging of tussenstap opnieuw (dat bouwt telkens het hele maandplan).
 
     /// De verdeling van een pot of belegging in een maand in hele centen. Dit is DE som: `allocation(_:in:)`, de maandcijfers,
     /// de dagboekhouding, de saldi van de spaarpotten en de overschrijving op de overschrijfdag rekenen allemaal zo.
@@ -251,6 +303,15 @@ extension FinanceData {
     func allocationCents<E: ContributionSource>(_ e: E, key: String, in month: YearMonth, storedPlan: MonthPlan?,
                                                 bases: IncomeBases) -> Int {
         allocationCents(e, key: key, in: month, storedPlan: storedPlan, basesFor: { bases })
+    }
+
+    /// Zoals `allocation(_:in:)`, met het inkomen van de maand uit `cache`: precies hetzelfde getal, maar zonder het
+    /// maandplan bij elke aanroep opnieuw te bouwen (voor lussen over veel maanden).
+    func allocation(_ id: UUID, in month: YearMonth, cache: IncomeBasesCache) -> Double {
+        switch allocationRule(id, in: month) {
+        case .amount(let value): return value
+        case .percent(let rule): return CentsMath.value(AllocationMath.cents(of: rule, bases: cache.bases(in: month)))
+        }
     }
 
     /// De verdeling van een pot of belegging (op id) in een maand in hele centen.
@@ -393,14 +454,42 @@ extension FinanceData {
 
     // MARK: Waarschuwingen
 
-    /// De percentages van alle potten en beleggingen die in `month` een percentage hebben, bij elkaar (in procenten).
-    func percentTotal(in month: YearMonth) -> Double {
-        guard month >= startMonth else { return 0 }
-        var hundredths = 0
+    /// De percentages van alle potten en beleggingen die in `month` een percentage hebben, per grondslag opgeteld in
+    /// honderdsten van een procent (12,5% is 1250).
+    private func percentHundredths(in month: YearMonth) -> (salary: Int, allIncome: Int) {
+        guard month >= startMonth else { return (0, 0) }
+        var salary = 0
+        var allIncome = 0
         for id in pots.map(\.id) + holdings.map(\.id) {
-            if case .percent(let rule) = allocationRule(id, in: month) { hundredths += AllocationMath.hundredths(rule.percent) }
+            guard case .percent(let rule) = allocationRule(id, in: month) else { continue }
+            if rule.basis == .salary { salary += AllocationMath.hundredths(rule.percent) } else { allIncome += AllocationMath.hundredths(rule.percent) }
         }
-        return Double(hundredths) / 100
+        return (salary, allIncome)
+    }
+
+    /// De percentages van alle potten en beleggingen die in `month` een percentage hebben, bij elkaar (in procenten), zoals
+    /// ze zijn ingesteld: los van hun grondslag. Of ze samen te veel zijn zegt `allocationWarnings(in:)`.
+    func percentTotal(in month: YearMonth) -> Double {
+        let (salary, allIncome) = percentHundredths(in: month)
+        return Double(salary + allIncome) / 100
+    }
+
+    /// Zijn de percentages van `month` samen meer dan 100%, dan het totaal in procenten (anders nil).
+    ///
+    /// - Allemaal op dezelfde grondslag (alleen salaris, of alle inkomsten): de som van de ingestelde percentages.
+    /// - Een mengeling van beide grondslagen: de optelling van de percentages zou niets zeggen (60% van het salaris en 50% van
+    ///   alle inkomsten is geen 110% als er ook een bonus is). Dan telt wat de percentages van het inkomen van die maand
+    ///   werkelijk vragen, als percentage van alle inkomsten (zonder inkomen: de som van de percentages).
+    private func percentOverrun(in month: YearMonth) -> Double? {
+        let (salary, allIncome) = percentHundredths(in: month)
+        let raw = salary + allIncome
+        if salary == 0 || allIncome == 0 { return raw > 10_000 ? Double(raw) / 100 : nil }
+        let bases = incomeBases(in: month)
+        let all = bases.cents(for: .allIncome)
+        guard all > 0 else { return raw > 10_000 ? Double(raw) / 100 : nil }
+        let weighted = (Double(salary) * Double(bases.cents(for: .salary)) + Double(allIncome) * Double(all)) / Double(all)
+        guard weighted > 10_000 else { return nil }
+        return weighted.rounded(.up) / 100
     }
 
     /// Waar de verdeling van `month` niet klopt: de percentages samen zijn meer dan 100%, of er wordt meer verdeeld dan er
@@ -409,8 +498,7 @@ extension FinanceData {
     func allocationWarnings(in month: YearMonth) -> [AllocationWarning] {
         guard month >= startMonth else { return [] }
         var warnings: [AllocationWarning] = []
-        let total = percentTotal(in: month)
-        if total > 100 { warnings.append(.percentagesOver100(total: total)) }
+        if let total = percentOverrun(in: month) { warnings.append(.percentagesOver100(total: total)) }
         let over = monthFigures(month).overAllocated
         if over > 0 { warnings.append(.overAllocated(by: CentsMath.value(over))) }
         return warnings

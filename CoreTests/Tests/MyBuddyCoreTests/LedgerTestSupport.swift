@@ -326,7 +326,8 @@ func ledgerScenario(seed: UInt64) -> LedgerScenario {
 /// Het banksaldo aan het EIND van de dag `date` in hele centen, rechtstreeks uit de gebeurtenissen van de maanden
 /// (`dayEvents`) en de regels voor meetpunten, zonder `BankTimeline`: het laatste meetpunt tot en met die dag is de
 /// basis; planboekingen op een latere dag dan het meetpunt tellen mee, handmatige boekingen na het meetmoment ook.
-/// Zonder meetpunt is de basis een 0 vlak vóór de eerste handmatige boeking. nil zolang er geen saldo bekend is.
+/// Zonder meetpunt is de basis een 0 vlak vóór de eerste handmatige boeking (voor planboekingen: aan het begin van de dag van
+/// die boeking). nil zolang er geen saldo bekend is.
 func referenceBankBalanceCents(_ d: FinanceData, endOfDay date: Date, events eventsOf: (YearMonth) -> [DayEvent]) -> Int? {
     let cal = YearMonth.calendar
     let limit = DayMath.nextDayStart(after: date, calendar: cal)
@@ -341,10 +342,11 @@ func referenceBankBalanceCents(_ d: FinanceData, endOfDay date: Date, events eve
         let firstPlanMoment = DayMath.nextDayStart(after: snapshot.date, calendar: cal)
         planCounts = { $0 >= firstPlanMoment }
     } else if snapshots.isEmpty, let firstEntry = d.bankEntries.map({ $0.date }).min(), firstEntry < limit {
-        // Een virtuele 0 vlak vóór de eerste boeking: niets is "al verwerkt".
+        // Een virtuele 0 vlak vóór de eerste boeking voor de handmatige boekingen; voor het plan (per kalenderdag) ligt hij
+        // aan het begin van de dag van die boeking: de planboekingen van die hele dag tellen mee.
         entriesAfter = firstEntry.addingTimeInterval(-1)
-        let from = entriesAfter
-        planCounts = { $0 > from }
+        let dayStart = cal.startOfDay(for: firstEntry)
+        planCounts = { $0 >= dayStart }
     } else {
         return nil
     }
@@ -418,4 +420,46 @@ func ledgerPerformanceData(percentages: Bool = false) -> (data: FinanceData, cur
         d.addBankEntry(amount: i % 2 == 0 ? 50 : -30, note: "Boeking", date: start.adding(i * 2).date(day: 14))
     }
     return (d, current)
+}
+
+
+// MARK: - Snelheid van deze machine
+
+/// De snelheidstests meten met de klok. Om ze op een trage of drukke machine (een CI-server) niet onterecht te laten falen,
+/// schalen hun grenzen mee met hoeveel trager de machine nu is dan waarop ze zijn gekozen: een vaste rekenklus (woordenboek,
+/// sorteren, een debug-build zoals de tests zelf) wordt tegen zijn richttijd gelegd. Nooit sneller dan 1: op een snelle
+/// machine blijven de grenzen zoals ze zijn. Met `SKIP_PERF_TESTS=1` worden de tijdmetingen overgeslagen.
+enum MachineSpeed {
+    /// De richttijd van de rekenklus op de machine waarop de grenzen zijn gekozen (mediaan van drie, debug-build).
+    static let referenceSeconds = 0.065
+
+    /// Hoe lang de rekenklus nu duurt (mediaan van drie).
+    static let measuredSeconds: Double = {
+        func work() -> Double {
+            let start = Date()
+            var dictionary: [Int: Int] = [:]
+            var x: UInt64 = 88_172_645_463_325_252
+            var numbers: [Int] = []
+            for i in 0..<60_000 {
+                x ^= x << 13
+                x ^= x >> 7
+                x ^= x << 17
+                dictionary[Int(x % 5_000), default: 0] &+= i
+                if i % 2 == 0 { numbers.append(Int(x % 1_000_000)) }
+            }
+            numbers.sort()
+            precondition(dictionary.count > 0 && !numbers.isEmpty)
+            return Date().timeIntervalSince(start)
+        }
+        let times = (0..<3).map { _ in work() }.sorted()
+        return times[1]
+    }()
+
+    /// Hoeveel trager deze machine nu is dan de richttijd (minstens 1).
+    static let slowdown: Double = max(1, measuredSeconds / referenceSeconds)
+
+    /// Een grens voor een tijdmeting, geschaald naar deze machine.
+    static func limit(_ seconds: Double) -> Double { seconds * slowdown }
+
+    static var skipsTiming: Bool { ProcessInfo.processInfo.environment["SKIP_PERF_TESTS"] == "1" }
 }

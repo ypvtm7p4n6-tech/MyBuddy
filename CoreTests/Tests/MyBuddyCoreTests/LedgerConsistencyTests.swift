@@ -223,7 +223,13 @@ final class LedgerConsistencyTests: XCTestCase {
                 // Een waarschuwing bij te veel verdeeld is een berekende eigenschap, geen crash.
                 let warnings = d.allocationWarnings(in: month)
                 f.eq(warnings.isEmpty, d.allocationWarning(in: month) == nil, "waarschuwing: \(what)")
-                if d.percentTotal(in: month) > 100 {
+                // Bij één grondslag: de som van de percentages boven 100% geeft een waarschuwing. (Bij een mengeling van beide
+                // grondslagen telt wat ze van het inkomen werkelijk vragen: `PercentPropertyTests` rekent dat na.)
+                var bases = Set<IncomeBasis>()
+                for id in d.pots.map(\.id) + d.holdings.map(\.id) {
+                    if case .percent(let rule) = d.allocationRule(id, in: month) { bases.insert(rule.basis) }
+                }
+                if bases.count < 2, d.percentTotal(in: month) > 100 {
                     f.ok(warnings.contains { if case .percentagesOver100 = $0 { return true } else { return false } }, "meer dan 100%: \(what)")
                 }
             }

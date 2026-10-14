@@ -195,7 +195,7 @@ extension FinanceData {
         // De besparing is wat er van de bank afgaat: een uitgave die uit een spaarpot komt levert je maandbudget niets op
         // en wordt dus niet voorgesteld (toepassen zou "niets te doen" melden).
         let topExpenses = plan(for: current).expenses
-            .filter { $0.amount >= Self.minimumExpenseForAccelerator && $0.isRecurring }
+            .filter { $0.amount >= Self.minimumExpenseForAccelerator && $0.isRecurring && !$0.isException }
             .map { (line: $0, effect: expenseCutEffect(of: $0)) }
             .filter { $0.effect.freed > 0 }
             .sorted { $0.line.amount > $1.line.amount }.prefix(3)
@@ -509,8 +509,11 @@ fileprivate struct AcceleratorRevert {
     var recordedKeys: Set<String>
     /// Per pot of belegging: de standaardinleg (een vast bedrag of een percentage) vóór en na het terugzetten.
     var allocation: [String: (pre: AllocationRule, post: AllocationRule)]
-    /// Bedrag van de verlaagde uitgaveregel vóór en na het terugzetten.
-    var expenseAmount: (pre: Double, post: Double)?
+    /// Per maand (sleutel "2026-10") het bedrag van de verlaagde uitgaveregel vóór en na het terugzetten. Elke maand heeft
+    /// zijn eigen paar: verschilde de reeks later van bedrag (een huurverhoging), dan is het terug te zetten bedrag niet
+    /// voor elke maand hetzelfde. Een maand die na het toepassen is ontstaan, nam het bedrag van zijn voorganger over en
+    /// krijgt dus ook diens teruggezette bedrag (zie `restorePlans`).
+    var expenseAmounts: [String: (pre: Double, post: Double)] = [:]
 }
 
 fileprivate extension MonthPlan {
@@ -536,6 +539,12 @@ fileprivate extension MonthPlan {
 }
 
 fileprivate enum AcceleratorMath {
+    /// Wat 10% minder op een uitgave van `amount` oplevert (op hele centen). Eén plek: het voorstel, het toepassen en het
+    /// herstellen (dat het verlaagde bedrag van een overgeslagen maand daaruit terugrekent) gebruiken dit.
+    static func cutAmount(of amount: Double) -> Double {
+        (amount * 0.10).cents
+    }
+
     /// Verdeelt `total` cent naar verhouding van de gewichten, zonder dat er een cent zoekraakt.
     static func distribute(cents total: Int, weights: [Int]) -> [Int] {
         guard !weights.isEmpty else { return [] }
@@ -604,7 +613,11 @@ fileprivate enum AcceleratorMath {
     static func seriesLineIDs(plans: [String: MonthPlan], containing lineID: UUID, income: Bool) -> [String: UUID] {
         let stored = StoredPlans(plans)
         let all = income ? stored.series.income : stored.series.expense
-        guard let series = all.values.first(where: { series in series.occurrences.contains { $0.line.id == lineID } }) else {
+        // `lineID` is een regel van de reeks, of het reeks-id zelf (de regel kan sindsdien in een maand zijn overgeslagen,
+        // zodat hij daar niet meer staat; het reeks-id van een nieuwe reeks is het id van zijn eerste regel).
+        guard let series = all.values.first(where: { series in
+            series.id == lineID || series.occurrences.contains { $0.line.id == lineID }
+        }) else {
             return [:]
         }
         var result: [String: UUID] = [:]
@@ -664,7 +677,7 @@ fileprivate enum AcceleratorMath {
                     changed = true
                 }
             }
-            if let lineID = expenseLines[key], let amounts = revert.expenseAmount,
+            if let lineID = expenseLines[key], let amounts = revert.expenseAmounts[key],
                let i = plan.expenses.firstIndex(where: { $0.id == lineID }), plan.expenses[i].amount == amounts.pre {
                 plan.expenses[i].amount = amounts.post
                 changed = true
@@ -858,7 +871,13 @@ extension FinanceData {
         for (key, plan) in new.months {
             if let before = old.months[key] {
                 if before != plan {
-                    let changedLines = before.expenses.filter { line in plan.expenses.first(where: { $0.id == line.id }) != line }
+                    // Vergelijk met het plan zoals de maand het had, ook met de regels van reeksen die er zelf niet in
+                    // stonden (een maand met alleen een teken "overgeslagen" of "gestopt", of die de regel nog afleidde):
+                    // `editPlan` zet die regels er nu in, en herstellen heeft hun oude bedrag nodig.
+                    let completedBefore = YearMonth(key: key).map { old.plan(for: $0) } ?? before
+                    let changedLines = completedBefore.expenses.filter { line in
+                        plan.expenses.first(where: { $0.id == line.id }) != line
+                    }
                     backup.plans[key] = before.acceleratorBackupCopy(allocationIDs: touched, keepExpenses: changedLines)
                 }
             } else {
@@ -1078,7 +1097,7 @@ extension FinanceData {
     /// vrijkomt van de bankrekening (`freed`). Een deel dat uit een spaarpot komt, levert je maandbudget niets op.
     /// Zowel het voorstel (`accelerators(for:)`) als het toepassen gebruiken dit, zodat ze nooit uiteenlopen.
     fileprivate func expenseCutEffect(of line: MoneyLine) -> (cut: Double, smaller: MoneyLine, freed: Double) {
-        let cut = (line.amount * 0.10).cents
+        let cut = AcceleratorMath.cutAmount(of: line.amount)
         var smaller = line
         smaller.amount = (line.amount - cut).cents
         let freed = CentsMath.value(expenseSplit(of: line).bankCents - expenseSplit(of: smaller).bankCents)
@@ -1096,6 +1115,12 @@ extension FinanceData {
         }
         guard line.isRecurring else {
             run.message = "\(line.name.isEmpty ? "Deze uitgave" : line.name) komt maar één keer voor. Verlagen levert je doel geen vaste maandinleg op."
+            return
+        }
+        // Een maand die alleen voor zichzelf is aangepast ("alleen deze maand") bepaalt de volgende maanden niet: 10% van dat
+        // bedrag verlagen laat de maanden erna op het oude bedrag staan, of haalt er het verkeerde bedrag af.
+        guard !line.isException else {
+            run.message = "\(line.name.isEmpty ? "Deze uitgave" : line.name) wijkt in \(Fmt.month(current)) af van de vaste uitgave (alleen deze maand aangepast). Pas de uitgave eerst aan voor deze en alle volgende maanden, dan kun je haar verlagen."
             return
         }
         // Alleen wat van de bank afgaat komt vrij voor je doel; een deel uit een spaarpot niet.
@@ -1644,11 +1669,25 @@ extension FinanceData {
         if let oldSettings = backup.settings { settings = oldSettings }
         if let oldSalary = backup.salary { salary = oldSalary }
         let revert = restorePlans(of: record, fields: fields, contributionBefore: contributionBefore)
+        removeMarkersOfGoneSeries(of: record)
 
         let ids = AcceleratorIDs.entries(of: record.id)
         bankEntries.removeAll { ids.contains($0.id) }
         potEntries.removeAll { ids.contains($0.id) }
         return revert
+    }
+
+    /// Is de inkomstenreeks van "extra uren" na het herstellen helemaal weg, dan horen de tekens "overgeslagen" en "gestopt"
+    /// die de gebruiker er eerder bij zette ook weg: ze horen bij een reeks die er niet meer is.
+    private mutating func removeMarkersOfGoneSeries(of record: AppliedAccelerator) {
+        guard case .hours = AcceleratorKind(id: record.acceleratorID) else { return }
+        let sid = AcceleratorIDs.entry(record.id, "hours")
+        guard storedPlans.series.income[sid] == nil else { return }
+        for key in Array(months.keys) {
+            guard let plan = months[key], plan.skippedSeries.contains(sid) || plan.endedSeries.contains(sid) else { continue }
+            months[key]?.skippedSeries.removeAll { $0 == sid }
+            months[key]?.endedSeries.removeAll { $0 == sid }
+        }
     }
 
     /// Sleutels van de maandplannen die een toepassing raakte, oplopend op maand.
@@ -1661,13 +1700,89 @@ extension FinanceData {
         -> (expense: [String: UUID], income: [String: UUID]) {
         switch AcceleratorKind(id: record.acceleratorID) {
         case .expense(let lineID):
-            return (AcceleratorMath.lineIDs(plans: plans, first: lineID, income: false), [:])
+            var chain = AcceleratorMath.lineIDs(plans: plans, first: lineID, income: false)
+            // De regel van de toepassingsmaand kan sindsdien zijn overgeslagen of weg zijn: zoek de reeks dan via het
+            // reeks-id dat in de bewaarde regel stond.
+            if chain.isEmpty, let sid = expenseSeriesID(of: record) {
+                chain = AcceleratorMath.lineIDs(plans: plans, first: sid, income: false)
+            }
+            return (chain, [:])
         case .hours:
             return ([:], AcceleratorMath.lineIDs(plans: plans, first: AcceleratorIDs.entry(record.id, "hours"),
                                                  income: true))
         default:
             return ([:], [:])
         }
+    }
+
+    /// Het reeks-id van de uitgave die een uitgave-versneller verlaagde, uit de bewaarde regels (nil bij een toepassing van
+    /// vóór de reeksen: daar volgt herstellen de keten van id's).
+    private static func expenseSeriesID(of record: AppliedAccelerator) -> UUID? {
+        guard case .expense(let lineID) = AcceleratorKind(id: record.acceleratorID) else { return nil }
+        for plan in record.before.plans.values {
+            if let line = plan.expenses.first(where: { $0.id == lineID }), let sid = line.seriesID { return sid }
+        }
+        return nil
+    }
+
+    /// Per maand vanaf de toepassingsmaand: het bedrag van de verlaagde regel vóór en na het terugzetten (zie
+    /// `AcceleratorRevert.expenseAmounts`). De maanden worden op volgorde doorlopen: een maand die de toepassing zelf
+    /// aanraakte krijgt zijn bewaarde bedrag terug; een maand die daarna is ontstaan nam het bedrag van zijn voorganger over
+    /// en krijgt het teruggezette bedrag van die voorganger, zolang hij er nog gelijk aan is (anders paste de gebruiker hem
+    /// zelf aan, dan blijft hij zoals hij is). Was de regel in de toepassingsmaand zelf sindsdien overgeslagen, dan komt het
+    /// verlaagde bedrag van die maand uit de bewaarde regel (10% minder, zoals bij het toepassen).
+    private func expenseRevertAmounts(of record: AppliedAccelerator, chain: [String: UUID], recorded: Set<String>,
+                                      applyMonth: YearMonth, seriesID: UUID?) -> [String: (pre: Double, post: Double)] {
+        guard case .expense = AcceleratorKind(id: record.acceleratorID) else { return [:] }
+        let chainMonths = chain.keys.compactMap { YearMonth(key: $0) }
+        let recordedMonths = recorded.compactMap { YearMonth(key: $0) }
+        let ordered = Set(chainMonths + recordedMonths).filter { $0 >= applyMonth }.sorted()
+        var amounts: [String: (pre: Double, post: Double)] = [:]
+        var carry: (pre: Double, post: Double)?
+        // Het bedrag dat de versneller van elke regel van de reeks afhaalde: 10% van de regel in de toepassingsmaand (de
+        // eerste maand met een bewaarde regel), voor elke maand hetzelfde bedrag.
+        var appliedCut: Double?
+        for month in ordered {
+            let key = month.key
+            let current = chain[key].flatMap { id in months[key]?.expenses.first { $0.id == id } }
+            var post: Double?
+            var baseAmount: Double?
+            var baseIsException = false
+            if recorded.contains(key) {
+                // Een maand die er vóór het toepassen niet was, nam zijn regel over van de maand ervoor: de eerste zo'n maand
+                // (de toepassingsmaand) is het afgeleide plan, een latere volgt zijn voorganger.
+                let base = record.before.plans[key] ?? (carry == nil ? synthesizedPlan(for: month) : nil)
+                let line = base.flatMap { base in
+                    chain[key].flatMap { id in base.expenses.first { $0.id == id } }
+                        ?? seriesID.flatMap { sid in base.expenses.first { $0.seriesID == sid } }
+                }
+                baseAmount = line?.amount
+                baseIsException = line?.isException ?? false
+                post = baseAmount
+                if appliedCut == nil, let baseAmount, !baseIsException { appliedCut = AcceleratorMath.cutAmount(of: baseAmount) }
+            }
+            if let current {
+                let target: Double
+                if let post {
+                    target = post
+                } else if let carry, current.amount == carry.pre {
+                    target = carry.post
+                } else {
+                    target = current.amount
+                }
+                amounts[key] = (current.amount, target)
+                // Een afwijkende maand ("alleen deze maand") bepaalt de volgende maanden niet: die nemen hun bedrag over van de
+                // laatste regel die dat wel doet.
+                if !current.isException { carry = (current.amount, target) }
+            } else if let baseAmount, !baseIsException {
+                // De regel van deze maand staat er niet meer (overgeslagen): de maanden erna nemen het verlaagde bedrag van
+                // die regel over (een eigen kopie als nieuwe basis, of de regel ervoor). Een overgeslagen afwijkende maand
+                // bepaalde de volgende maanden niet en zegt dus niets.
+                let cut = appliedCut ?? AcceleratorMath.cutAmount(of: baseAmount)
+                carry = ((baseAmount - min(cut, baseAmount)).cents, baseAmount)
+            }
+        }
+        return amounts
     }
 
     private mutating func restorePlans(of record: AppliedAccelerator, fields: AcceleratorFields,
@@ -1679,8 +1794,9 @@ extension FinanceData {
                                 + record.before.holdings.map(\.id).filter { holding($0) != nil }.map(\.uuidString))
         let lineChains = Self.chains(of: record, plans: months)
 
-        var revert = AcceleratorRevert(applyMonth: YearMonth(date: record.date), recordedKeys: Set(keys),
-                                       allocation: [:], expenseAmount: nil)
+        var revert = AcceleratorRevert(applyMonth: YearMonth(date: record.date), recordedKeys: Set(keys), allocation: [:])
+        revert.expenseAmounts = expenseRevertAmounts(of: record, chain: lineChains.expense, recorded: Set(keys),
+                                                     applyMonth: revert.applyMonth, seriesID: Self.expenseSeriesID(of: record))
         for idString in allocationIDs {
             if let id = UUID(uuidString: idString), let before = contributionBefore[idString],
                let after = contributionRule(of: id), before != after {
@@ -1693,11 +1809,6 @@ extension FinanceData {
             let stored = record.before.plans[key]
             // Een maand die er eerst niet was, ging terug naar het afgeleide plan; staat er daarna niets anders in, dan verdwijnt hij.
             let base = stored ?? synthesizedPlan(for: month)
-            if revert.expenseAmount == nil, let lineID = lineChains.expense[key],
-               let i = current.expenses.firstIndex(where: { $0.id == lineID }),
-               let j = base.expenses.firstIndex(where: { $0.id == lineID }) {
-                revert.expenseAmount = (current.expenses[i].amount, base.expenses[j].amount)
-            }
             AcceleratorMath.restoreSlots(in: &current, from: base, allocationIDs: allocationIDs,
                                          expenseLineID: lineChains.expense[key], incomeLineID: lineChains.income[key])
             if stored == nil, current == synthesizedPlan(for: month) {

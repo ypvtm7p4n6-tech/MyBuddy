@@ -204,12 +204,41 @@ extension SalarySettings {
         }
     }
 
+    /// Uurloon × uren, op hele centen (half omhoog), exact in decimalen: uurloon en uren worden gerekend zoals de gebruiker
+    /// ze typte (55,94 × 10,75 × 3 is 1804,065 en dus 1804,07, niet 1804,06 doordat de kommagetallen in de computer net onder
+    /// de helft uitkomen). `multiplier` en `divisor` zijn gehele getallen (het aantal weken, en 7 bij een cyclus in dagen).
+    /// Bij onleesbare of absurde getallen valt het terug op gewoon rekenen met afronden. Alleen voor een salaris om de zoveel
+    /// weken of dagen: het maandelijkse schema rekent zoals het altijd deed.
+    static func exactHourlyPay(rate: Double, hours: Double, multiplier: Int = 1, divisor: Int = 1) -> Double {
+        func decimal(_ value: Double) -> Decimal? {
+            guard value.isFinite else { return nil }
+            let text = "\(value)"
+            guard !text.contains("e"), !text.contains("E") else { return nil }
+            return Decimal(string: text)
+        }
+        if divisor > 0, let r = decimal(rate), let h = decimal(hours), abs(rate) < 1e6, abs(hours) < 1e6 {
+            var exact = r * h * Decimal(multiplier)
+            if divisor != 1 { exact = exact / Decimal(divisor) }
+            var rounded = Decimal()
+            NSDecimalRound(&rounded, &exact, 2, .plain)
+            // Via hele centen naar een Double: `NSDecimalNumber.doubleValue` geeft op sommige platforms 1804,0700000000002.
+            let cents = NSDecimalNumber(decimal: rounded * 100).int64Value
+            return Double(cents) / 100
+        }
+        return (rate * hours * Double(multiplier) / Double(max(divisor, 1))).cents
+    }
+
     /// Wat één uitbetaling oplevert, in euro's op hele centen, zonder overschrijving van een maand. Vast: het bedrag
     /// "per uitbetaling". Uurloon: uurloon × uren van één cyclus.
     func payoutAmount() -> Double {
         switch mode {
         case .fixed: return fixedMonthly.cents
-        case .hourly: return (hourlyRate * hoursPerCycle).cents
+        case .hourly:
+            switch schedule {
+            case .monthly: return (hourlyRate * hoursPerCycle).cents
+            case .weeks: return Self.exactHourlyPay(rate: hourlyRate, hours: hoursPerWeek, multiplier: cycleInterval)
+            case .days: return Self.exactHourlyPay(rate: hourlyRate, hours: hoursPerWeek, multiplier: cycleInterval, divisor: 7)
+            }
         }
     }
 
@@ -400,7 +429,7 @@ extension FinanceData {
         }
         if let override = p.salaryOverride { return spread(CentsMath.int(override.cents), fallbackDay: true) }
         if salary.mode == .hourly, let hours = p.hoursOverride {
-            return spread(CentsMath.int((salary.hourlyRate * hours).cents), fallbackDay: false)
+            return spread(CentsMath.int(SalarySettings.exactHourlyPay(rate: salary.hourlyRate, hours: hours)), fallbackDay: false)
         }
         let each = CentsMath.int(salary.payoutAmount())
         return days.map { ($0, each) }

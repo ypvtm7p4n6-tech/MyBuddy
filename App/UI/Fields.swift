@@ -34,6 +34,9 @@ struct NumberRow: View {
     var unit: NumberUnit = .euro
     var maxDigits: Int = 2
     var allowsNegative: Bool = false
+    /// Het bereik dat het veld toelaat (bijvoorbeeld 0...100 voor een percentage). Een getal daarbuiten wordt meteen
+    /// teruggezet op de dichtstbijzijnde grens. nil = geen grens.
+    var range: ClosedRange<Double>? = nil
 
     @State private var text = ""
     @FocusState private var focused: Bool
@@ -55,7 +58,10 @@ struct NumberRow: View {
         }
         .onAppear { text = display(value) }
         .onChange(of: text) { _, newText in
-            guard let newValue = NumberRow.value(from: newText, unit: unit) else { return }
+            guard let parsed = NumberRow.value(from: newText, unit: unit) else { return }
+            let newValue = NumberRow.clamped(parsed, to: range)
+            // Buiten het bereik: het veld toont meteen de grens, zodat je geen 150% ziet staan.
+            if newValue != parsed { text = display(newValue) }
             if abs(newValue - value) > 1e-9 { value = newValue }
         }
         .onChange(of: focused) { _, isFocused in
@@ -76,9 +82,80 @@ struct NumberRow: View {
         return parsed / unit.scale
     }
 
+    /// `value` binnen `range` gebracht (zonder bereik ongewijzigd).
+    static func clamped(_ value: Double, to range: ClosedRange<Double>?) -> Double {
+        guard let range else { return value }
+        return min(max(value, range.lowerBound), range.upperBound)
+    }
+
     private func display(_ v: Double) -> String {
         guard v.isFinite, v != 0 else { return "" }
         return Fmt.input(v * unit.scale, maxDigits: maxDigits)
+    }
+}
+
+/// Invulveld voor een geheel getal binnen een bereik, met een stapper ernaast: "Om de 4 weken". Typen mag (bij een
+/// schema om de zoveel dagen is 1...366 stap voor stap te veel), de stapper ook. Wat buiten het bereik valt of geen
+/// getal is, verandert niets of wordt op de grens gezet.
+struct IntStepperRow: View {
+    let title: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    /// Eenheid achter het getal: "weken", "dagen".
+    var unit: String = ""
+
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+            Spacer(minLength: 12)
+            TextField("1", text: $text)
+                .multilineTextAlignment(.trailing)
+                #if os(iOS)
+                .keyboardType(.numberPad)
+                #endif
+                .focused($focused)
+                .frame(minWidth: 44, maxWidth: 70)
+            if !unit.isEmpty {
+                Text(unit)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Stepper("", value: clampedValue, in: range)
+                .labelsHidden()
+        }
+        .onAppear { text = IntStepperRow.display(value, in: range) }
+        .onChange(of: text) { _, newText in
+            guard let parsed = IntStepperRow.value(from: newText, in: range) else { return }
+            if parsed != value { value = parsed }
+        }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { text = IntStepperRow.display(value, in: range) }
+        }
+        .onChange(of: value) { _, _ in
+            if !focused { text = IntStepperRow.display(value, in: range) }
+        }
+    }
+
+    /// De waarde voor de stapper, altijd binnen het bereik (ook als de opgeslagen waarde er buiten valt).
+    private var clampedValue: Binding<Int> {
+        Binding(get: { min(max(value, range.lowerBound), range.upperBound) },
+                set: { value = min(max($0, range.lowerBound), range.upperBound) })
+    }
+
+    /// Het getal bij een getypte tekst, op de grenzen van het bereik gezet. nil als de tekst geen getal (meer) is, bijvoorbeeld
+    /// halverwege het typen of bij letters: dan blijft de huidige waarde staan. Leeg is de ondergrens.
+    static func value(from text: String, in range: ClosedRange<Int>) -> Int? {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return range.lowerBound }
+        guard let parsed = AmountParser.parse(text), parsed.isFinite else { return nil }
+        return SafeInt.clamped(parsed, to: range)
+    }
+
+    /// De tekst die bij een waarde hoort (altijd binnen het bereik).
+    static func display(_ value: Int, in range: ClosedRange<Int>) -> String {
+        "\(min(max(value, range.lowerBound), range.upperBound))"
     }
 }
 
@@ -118,7 +195,13 @@ struct OptionalNumberRow: View {
 struct OptionalDateRow: View {
     let title: String
     @Binding var date: Date?
-    var defaultDate: Date = Date().addingTimeInterval(365 * 86_400)
+    /// Standaard een jaar vanaf nu, op kalenderdagen gerekend (een jaar is niet 365 x 86.400 seconden: schrikkeljaar en
+    /// zomertijd verschuiven de dag).
+    var defaultDate: Date = OptionalDateRow.oneYearFromNow()
+
+    static func oneYearFromNow(now: Date = Date()) -> Date {
+        YearMonth.calendar.date(byAdding: .year, value: 1, to: now) ?? now
+    }
 
     var body: some View {
         Toggle(title, isOn: Binding(
@@ -134,16 +217,65 @@ struct OptionalDateRow: View {
     }
 }
 
+/// Een keuze in een lijstje met één antwoord: bolletje, titel en uitleg.
+struct ChoiceRow: View {
+    let title: String
+    let detail: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Theme.accent : Color.secondary)
+                    .contentTransition(.symbolEffect(.replace))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.subheadline.weight(.semibold))
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .tile(tint: isSelected ? Theme.accent : nil)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(Theme.quickMotion, value: isSelected)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 // MARK: - Sheets
 
-/// Standaard opzet voor invulschermen: titel, annuleren en bewaren.
+/// Een vraag bij "Bewaar": in plaats van meteen op te slaan vraagt het blad eerst iets, bijvoorbeeld voor welke maanden
+/// een wijziging van een terugkerende regel geldt. Elke keuze slaat op (met zijn eigen actie) en sluit het blad;
+/// "Annuleer" laat het blad open.
+struct SaveChoices {
+    struct Option: Identifiable {
+        let id: String
+        let title: String
+        var role: ButtonRole? = nil
+        let action: () -> Void
+    }
+
+    var title: String
+    var message: String? = nil
+    var options: [Option]
+}
+
+/// Standaard opzet voor invulschermen: titel, annuleren en bewaren. Met `saveChoices` vraagt "Bewaar" eerst om een keuze
+/// (zie `SaveChoices`) en wordt `onSave` niet gebruikt.
 struct SheetScaffold<Content: View>: View {
     let title: String
     var saveTitle = "Bewaar"
     var canSave = true
     let onSave: () -> Void
+    var saveChoices: SaveChoices? = nil
     @ViewBuilder var content: Content
     @Environment(\.dismiss) private var dismiss
+    @State private var asking = false
 
     var body: some View {
         NavigationStack {
@@ -161,11 +293,26 @@ struct SheetScaffold<Content: View>: View {
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button(saveTitle) {
-                            onSave()
-                            dismiss()
+                            if saveChoices != nil {
+                                asking = true
+                            } else {
+                                onSave()
+                                dismiss()
+                            }
                         }
                         .disabled(!canSave)
                     }
+                }
+                .confirmationDialog(saveChoices?.title ?? "", isPresented: $asking, titleVisibility: .visible) {
+                    ForEach(saveChoices?.options ?? []) { option in
+                        Button(option.title, role: option.role) {
+                            option.action()
+                            dismiss()
+                        }
+                    }
+                    Button("Annuleer", role: .cancel) {}
+                } message: {
+                    if let message = saveChoices?.message { Text(message) }
                 }
         }
         #if os(macOS)

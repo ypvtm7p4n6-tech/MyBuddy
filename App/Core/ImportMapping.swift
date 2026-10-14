@@ -2228,8 +2228,8 @@ extension FinanceData {
                         record(.skippedExisting)
                     }
                 } else {
-                    addRecurringLine(MoneyLine(name: name, amount: amount, isRecurring: true, kind: .fixed, day: day),
-                                     kind: .income, in: target)
+                    addOrResumeRecurringLine(MoneyLine(name: name, amount: amount, isRecurring: true, kind: .fixed, day: day),
+                                             kind: .income, in: target)
                     record(.added)
                 }
 
@@ -2245,8 +2245,8 @@ extension FinanceData {
                         record(.skippedExisting)
                     }
                 } else {
-                    addRecurringLine(MoneyLine(name: name, amount: amount, isRecurring: true, kind: kind, day: day),
-                                     kind: .expense, in: target)
+                    addOrResumeRecurringLine(MoneyLine(name: name, amount: amount, isRecurring: true, kind: kind, day: day),
+                                             kind: .expense, in: target)
                     record(.added)
                 }
 

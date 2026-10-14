@@ -222,7 +222,8 @@ extension FinanceData {
         CentsMath.value(CentsMath.sum(pots.map { CentsMath.int(potBalanceNow($0.id, current: current, today: today)) }))
     }
 
-    /// Totaal van alle spaarpotten aan het eind van `date`.
+    /// Totaal van alle spaarpotten aan het eind van `date`. Elke aanroep rekent de potten opnieuw uit: voor alle dagen van een
+    /// maand is `monthLedger(_:asOf:)` (`days[n].potsTotal`) de snelle weg, niet deze functie per dag.
     func totalSaved(asOf date: Date) -> Double {
         CentsMath.value(CentsMath.sum(pots.map { CentsMath.int(potBalance($0.id, asOf: date)) }))
     }

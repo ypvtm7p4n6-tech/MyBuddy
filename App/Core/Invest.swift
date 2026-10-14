@@ -30,14 +30,14 @@ extension FinanceData {
     // MARK: Waarde per maand
 
     /// Waarde op een moment in het verleden of nu: laatste meetpunt + inleg daarna.
-    private func historicState(_ h: Holding, at month: YearMonth) -> HoldingState? {
+    private func historicState(_ h: Holding, at month: YearMonth, cache: IncomeBasesCache) -> HoldingState? {
         let snaps = h.snapshots.sorted { $0.date < $1.date }
         guard let snap = snaps.last(where: { $0.date < month.endExclusive }) else { return nil }
         var value = snap.value
         var invested = snap.invested
         var m = YearMonth(date: snap.date).adding(1)
         while m <= month {
-            let a = allocation(h.id, in: m)
+            let a = allocation(h.id, in: m, cache: cache)
             value += a
             invested += a
             m = m.adding(1)
@@ -47,14 +47,20 @@ extension FinanceData {
 
     /// Waarde aan het eind van `month`. Na de huidige maand: verwachte groei plus geplande inleg.
     func holdingState(_ h: Holding, at month: YearMonth, current: YearMonth) -> HoldingState? {
-        if month <= current { return historicState(h, at: month) }
-        guard let base = historicState(h, at: current) else { return nil }
+        holdingState(h, at: month, current: current, cache: incomeBasesCache())
+    }
+
+    /// Zoals hierboven, met het inkomen per maand uit `cache`. Een inleg als percentage van het inkomen rekent per maand
+    /// over dat inkomen; zonder cache zou elke tussenstap het maandplan opnieuw bouwen (kwadratisch in het aantal maanden).
+    private func holdingState(_ h: Holding, at month: YearMonth, current: YearMonth, cache: IncomeBasesCache) -> HoldingState? {
+        if month <= current { return historicState(h, at: month, cache: cache) }
+        guard let base = historicState(h, at: current, cache: cache) else { return nil }
         var value = base.value
         var invested = base.invested
         let rm = Growth.monthlyRate(annual: h.netReturn)
         var m = current.adding(1)
         while m <= month {
-            let a = allocation(h.id, in: m)
+            let a = allocation(h.id, in: m, cache: cache)
             value = value * (1 + rm) + a
             invested += a
             m = m.adding(1)
@@ -73,11 +79,13 @@ extension FinanceData {
     // MARK: Portefeuille
 
     func portfolioValue(current: YearMonth) -> Double {
-        holdings.reduce(0) { $0 + holdingValueNow($1, current: current) }.cents
+        let cache = incomeBasesCache()
+        return holdings.reduce(0) { $0 + (holdingState($1, at: current, current: current, cache: cache)?.value ?? 0) }.cents
     }
 
     func portfolioInvested(current: YearMonth) -> Double {
-        holdings.reduce(0) { $0 + (holdingStateNow($1, current: current)?.invested ?? 0) }.cents
+        let cache = incomeBasesCache()
+        return holdings.reduce(0) { $0 + (holdingState($1, at: current, current: current, cache: cache)?.invested ?? 0) }.cents
     }
 
     func portfolioGain(current: YearMonth) -> Double {
@@ -87,12 +95,13 @@ extension FinanceData {
     /// Waarde van (een deel van) de portefeuille per maand. Maanden zonder enig meetpunt worden overgeslagen.
     func portfolioSeries(from start: YearMonth, count: Int, current: YearMonth, only ids: Set<UUID>? = nil) -> [PortfolioPoint] {
         let selected = holdings.filter { ids == nil || ids!.contains($0.id) }
+        let cache = incomeBasesCache()
         return start.range(count: count).compactMap { m in
             var value = 0.0
             var invested = 0.0
             var any = false
             for h in selected {
-                if let s = holdingState(h, at: m, current: current) {
+                if let s = holdingState(h, at: m, current: current, cache: cache) {
                     value += s.value
                     invested += s.invested
                     any = true
@@ -142,9 +151,10 @@ extension FinanceData {
         guard let i = holdings.firstIndex(where: { $0.id == updated.id }) else { return }
         let old = holdings[i]
         holdings[i] = updated
-        if old.monthlyContribution != updated.monthlyContribution, current >= updated.startMonth {
-            setAllocation(updated.id, in: current, amount: updated.monthlyContribution)
-        }
+        // Een nieuwe standaardinleg geldt ook meteen voor de lopende maand (zoals bij `updatePot`): een ander vast bedrag,
+        // maar ook een andere inlegwijze (vast bedrag of percentage), een ander percentage of een andere grondslag. Een
+        // wijziging die de inleg niet raakt laat de lopende maand met rust.
+        syncCurrentMonth(updated.id, with: old.contributionRule, current: current)
         // Aantal of ingelegd bedrag gewijzigd bij een gevolgde belegging: nieuw meetpunt met de laatste koers.
         let changed = old.units != updated.units || old.investedTotal != updated.investedTotal
         if changed, updated.isTracked, let price = updated.lastPrice, let units = updated.units {
@@ -156,6 +166,8 @@ extension FinanceData {
         holdings.removeAll { $0.id == id }
         for key in Array(months.keys) {
             months[key]?.allocations.removeValue(forKey: id.uuidString)
+            // Ook een eigen percentage van een maand (variabel percentage) hoort bij de belegging en verdwijnt met haar.
+            months[key]?.percentAllocations.removeValue(forKey: id.uuidString)
         }
         homeHoldingIDs = homeHoldingIDs?.filter { $0 != id }
     }

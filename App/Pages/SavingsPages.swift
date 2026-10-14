@@ -187,6 +187,48 @@ struct DayPickerRow: View {
 
 // MARK: - Salaris en inkomsten
 
+/// Korte teksten voor het salarisschema. Alleen tekst: alle bedragen en data komen uit de rekenmotor.
+enum SalaryScheduleText {
+    /// "Elke 4 weken, volgende op 23 oktober": de eerste letter een hoofdletter.
+    static func capitalized(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return String(first).uppercased() + String(text.dropFirst())
+    }
+
+    /// Het aantal weken van een cyclus zoals het in een rekensom staat: "4 weken", "1 week", "10 ÷ 7 weken" (bij dagen).
+    static func weeksText(schedule: SalarySchedule, interval: Int) -> String {
+        switch schedule {
+        case .monthly: return "52 ÷ 12 weken"
+        case .weeks: return interval == 1 ? "1 week" : "\(interval) weken"
+        case .days: return "\(interval) ÷ 7 weken"
+        }
+    }
+
+    /// "1 uitbetaling", "2 uitbetalingen".
+    static func payoutCount(_ count: Int) -> String {
+        count == 1 ? "1 uitbetaling" : "\(count) uitbetalingen"
+    }
+
+    /// De eenheid achter het interval: "week" of "weken", "dag" of "dagen".
+    static func unit(schedule: SalarySchedule, interval: Int) -> String {
+        switch schedule {
+        case .monthly: return ""
+        case .weeks: return interval == 1 ? "week" : "weken"
+        case .days: return interval == 1 ? "dag" : "dagen"
+        }
+    }
+
+    /// Het schema dat bij het omschakelen als beginwaarde hoort: elke 4 weken of elke 14 dagen (gangbaar voor een
+    /// salaris om de zoveel weken of dagen).
+    static func startInterval(for schedule: SalarySchedule) -> Int {
+        switch schedule {
+        case .monthly: return 1
+        case .weeks: return 4
+        case .days: return 14
+        }
+    }
+}
+
 struct IncomePage: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
@@ -205,69 +247,262 @@ struct IncomePage: View {
                       })
     }
 
+    /// Om de hoeveel weken of dagen. De rekenmotor klemt het op 1...52 (weken) of 1...366 (dagen).
+    private var intervalBinding: Binding<Int> {
+        Binding(get: { store.data.salary.cycleInterval },
+                set: { value in
+                    let current = store.data.salary.schedule
+                    store.mutate { $0.salary.setSchedule(current, interval: value) }
+                })
+    }
+
+    /// Een datum waarop je salaris binnenkomt (of kwam): de uitbetalingen vallen om de zoveel weken of dagen voor en na deze
+    /// dag. Is er nog geen ingesteld, dan toont de kiezer de datum waar de rekenmotor van uitgaat.
+    private var anchorBinding: Binding<Date> {
+        Binding(get: { store.data.salary.anchorDate ?? store.data.salaryAnchor().date() },
+                set: { value in store.mutate { $0.salary.anchorDate = value } })
+    }
+
+    /// Schakelt het schema om. Een schema om de zoveel weken of dagen heeft een bekende uitbetaaldatum nodig: dat is de
+    /// volgende uitbetaling van het huidige schema (je weet meestal wanneer je het eerstvolgende salaris krijgt).
+    private func changeSchedule(to schedule: SalarySchedule) {
+        let today = store.today
+        withAnimation(Theme.motion) {
+            store.mutate { data in
+                guard data.salary.schedule != schedule else { return }
+                var anchor: CalendarDay?
+                if schedule != .monthly, data.salary.anchor == nil {
+                    let next = data.nextPayDate(after: today) ?? today
+                    anchor = CalendarDay(date: next)
+                }
+                data.salary.setSchedule(schedule, interval: SalaryScheduleText.startInterval(for: schedule), anchor: anchor)
+            }
+        }
+    }
+
+    /// Eén uitbetaling van de gekozen maand, voor de lijst.
+    private struct PayoutLine: Identifiable {
+        let id: String
+        let date: Date
+        let amount: Double
+        let isPlanned: Bool
+    }
+
     var body: some View {
         let d = store.data
         let month = router.focusMonth
         let plan = d.plan(for: month)
-        let s = d.salary
-        let payDay = min(d.salaryDay(), month.dayCount)
+        let today = store.today
+        // De uitbetalingen en het maandtotaal komen uit dezelfde bron als "Inkomen" op alle andere schermen.
+        let payouts: [PayoutLine] = d.salaryPayouts(in: month, plan: plan)
+            .filter { $0.cents != 0 }
+            .map { payout in
+                let date = month.date(day: payout.day)
+                return PayoutLine(id: payout.id, date: date, amount: CentsMath.value(payout.cents),
+                                  isPlanned: DayMath.isPlanned(date, asOf: today))
+            }
+        let total = d.salaryAmount(in: month, plan: plan)
 
         PageScaffold(title: "Salaris & inkomsten") {
             VStack(spacing: Theme.pageSpacing) {
-                GlassBlock(title: "Standaard salaris", symbol: "eurosign.circle.fill",
-                           subtitle: "Netto, zoals het op je rekening komt") {
-                    Picker("Soort", selection: salary(\.mode)) {
-                        ForEach(SalaryMode.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                salaryBlock(d.salary)
+                scheduleBlock(d, today: today)
+                MonthPickerBlock()
+                monthBlock(d, month: month, plan: plan, payouts: payouts, total: total)
+                MoneyLinesBlock(kind: .income, month: month)
+            }
+        }
+    }
 
-                    switch s.mode {
-                    case .fixed:
-                        NumberRow(title: "Per maand", value: salary(\.fixedMonthly))
-                    case .hourly:
-                        NumberRow(title: "Uurloon", value: salary(\.hourlyRate))
-                        NumberRow(title: "Uren per week", value: salary(\.hoursPerWeek), unit: .plain("uur"))
-                        Text("\(Fmt.euroExact(s.hourlyRate)) × \(Fmt.input(s.hoursPerWeek)) uur × 52 ÷ 12 = \(Fmt.euro(s.monthlyAmount())) per maand")
+    // MARK: Standaard salaris
+
+    private func hourlyFormula(_ s: SalarySettings) -> String {
+        let hours = Fmt.input(s.hoursPerWeek)
+        if s.isMonthly {
+            return "\(Fmt.euroExact(s.hourlyRate)) × \(hours) uur × 52 ÷ 12 = \(Fmt.euro(s.payoutAmount())) per maand"
+        }
+        let weeks = SalaryScheduleText.weeksText(schedule: s.schedule, interval: s.cycleInterval)
+        return "\(Fmt.euroExact(s.hourlyRate)) × \(hours) uur × \(weeks) = \(Fmt.euro(s.payoutAmount())) per uitbetaling"
+    }
+
+    @ViewBuilder
+    private func salaryBlock(_ s: SalarySettings) -> some View {
+        GlassBlock(title: "Standaard salaris", symbol: "eurosign.circle.fill",
+                   subtitle: "Netto, zoals het op je rekening komt") {
+            Picker("Soort", selection: salary(\.mode)) {
+                ForEach(SalaryMode.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            switch s.mode {
+            case .fixed:
+                NumberRow(title: s.isMonthly ? "Per maand" : "Per uitbetaling", value: salary(\.fixedMonthly))
+            case .hourly:
+                NumberRow(title: "Uurloon", value: salary(\.hourlyRate))
+                NumberRow(title: "Uren per week", value: salary(\.hoursPerWeek), unit: .plain("uur"))
+                Text(hourlyFormula(s))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !s.isMonthly {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
+                    if s.mode == .hourly {
+                        StatTile(title: "Per uitbetaling", value: Fmt.euro(s.payoutAmount()))
+                    }
+                    StatTile(title: "Gemiddeld per maand", value: Fmt.euro(s.averageMonthlyAmount()), caption: "voor schattingen")
+                }
+                Text("Voor schattingen (toekomstschatting, aankoopcheck, buffer en doelen) rekent de app met het gemiddelde per maand. Een echte maand telt precies de uitbetalingen die erin vallen.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: Schema
+
+    @ViewBuilder
+    private func scheduleBlock(_ d: FinanceData, today: Date) -> some View {
+        let s = d.salary
+        GlassBlock(title: "Wanneer krijg je salaris?", symbol: "calendar.badge.clock",
+                   subtitle: SalaryScheduleText.capitalized(d.salaryScheduleSummary(asOf: today))) {
+            VStack(spacing: 8) {
+                ChoiceRow(title: "Maandelijks", detail: "Op een vaste dag van de maand, bijvoorbeeld de 25e.",
+                          isSelected: s.schedule == .monthly) { changeSchedule(to: .monthly) }
+                ChoiceRow(title: "Om de zoveel weken", detail: "Bijvoorbeeld elke week, om de 2 weken of om de 4 weken.",
+                          isSelected: s.schedule == .weeks) { changeSchedule(to: .weeks) }
+                ChoiceRow(title: "Om de zoveel dagen", detail: "Bijvoorbeeld elke 14 dagen of elke 30 dagen.",
+                          isSelected: s.schedule == .days) { changeSchedule(to: .days) }
+            }
+
+            switch s.schedule {
+            case .monthly:
+                DayPickerRow(title: "Dag van de maand", day: payDayBinding)
+                Text("Op deze dag staat je salaris op je bankrekening. Extra inkomsten zonder eigen dag komen ook dan binnen, en de overschrijvingen naar je spaarpotten en beleggingen gaan standaard op deze dag. Is een maand korter, dan geldt de laatste dag van die maand.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            case .weeks:
+                IntStepperRow(title: "Elke", value: intervalBinding, range: 1...52,
+                              unit: SalaryScheduleText.unit(schedule: s.schedule, interval: s.cycleInterval))
+                anchorRow(s)
+            case .days:
+                IntStepperRow(title: "Elke", value: intervalBinding, range: 1...366,
+                              unit: SalaryScheduleText.unit(schedule: s.schedule, interval: s.cycleInterval))
+                anchorRow(s)
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.warning)
+                Text("Een ander schema geldt ook voor afgelopen maanden: je overzicht en saldo's van eerdere maanden kunnen daardoor veranderen.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// De datum van een uitbetaling en uitleg bij een schema om de zoveel weken of dagen.
+    @ViewBuilder
+    private func anchorRow(_ s: SalarySettings) -> some View {
+        DatePicker("Datum van een uitbetaling", selection: anchorBinding, displayedComponents: .date)
+            .datePickerStyle(.compact)
+            .environment(\.locale, Fmt.locale)
+        Text("Kies een dag waarop je salaris binnenkwam of binnenkomt, ook al is dat lang geleden. Vanaf die dag telt de app \(s.cycleDescription) door, vooruit en terug. Daardoor vallen er in een maand soms 0, 1, 2 of meer uitbetalingen, gemiddeld \(Fmt.input(s.averagePayoutsPerYear, maxDigits: 1)) per jaar. Het maandtotaal is de som van de uitbetalingen. Extra inkomsten zonder eigen dag en de overschrijvingen naar je spaarpotten gaan standaard op de eerste uitbetaling van de maand.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        if let cycle = s.cycleDays, cycle > 28 {
+            DayPickerRow(title: "Salarisdag zonder uitbetaling", day: payDayBinding)
+            Text("Valt er in een maand geen uitbetaling, dan geldt deze dag als salarisdag voor extra inkomsten en overschrijvingen.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Deze maand
+
+    @ViewBuilder
+    private func monthBlock(_ d: FinanceData, month: YearMonth, plan: MonthPlan, payouts: [PayoutLine],
+                            total: Double) -> some View {
+        let s = d.salary
+        let subtitle: String = {
+            if month < d.startMonth { return "Voor je startmaand telt er geen salaris mee" }
+            switch payouts.count {
+            case 0: return "Geen salaris deze maand"
+            case 1: return "Komt binnen op \(d.salaryPayoutDaysText(in: month))"
+            default: return "\(SalaryScheduleText.payoutCount(payouts.count)): \(d.salaryPayoutDaysText(in: month))"
+            }
+        }()
+        GlassBlock(title: "Salaris deze maand", symbol: "calendar", subtitle: subtitle) {
+            HStack {
+                Text(Fmt.month(month)).foregroundStyle(.secondary)
+                Spacer()
+                BigAmount(value: total, font: .system(.title2, design: .rounded, weight: .bold))
+            }
+            if !payouts.isEmpty && !s.isMonthly {
+                VStack(spacing: 10) {
+                    ForEach(payouts) { payout in
+                        HStack(spacing: 10) {
+                            SymbolBadge(symbol: "briefcase.fill", color: Theme.positive, size: 30)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(DayText.weekdayShort(payout.date)).font(.subheadline.weight(.semibold))
+                                Text(payout.isPlanned ? "Salaris · gepland" : "Salaris")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Text("+ " + Fmt.euro(payout.amount))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Theme.positive)
+                                .contentTransition(.numericText())
+                                .animation(Theme.motion, value: payout.amount)
+                        }
+                        .opacity(payout.isPlanned ? 0.8 : 1)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .padding(10)
+                .tile()
+            }
+            if !s.isMonthly {
+                if payouts.isEmpty && month >= d.startMonth {
+                    Text("In \(Fmt.month(month)) valt er geen uitbetaling: je salaris komt \(s.cycleDescription) binnen en deze maand zit daar tussenin.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else if payouts.count >= 2 {
+                    Text("Deze maand krijg je \(payouts.count) keer salaris. Het maandtotaal is de som van de uitbetalingen en telt overal zo mee: in je overzicht, bij \"nog te verdelen\" en bij een inleg als percentage van je inkomen.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else if payouts.count == 1 {
+                    Text("Deze maand krijg je 1 keer salaris. In een maand met een extra uitbetaling is je inkomen hoger.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            switch s.mode {
+            case .fixed:
+                Toggle("Afwijkend bedrag deze maand", isOn: overrideEnabled(month))
+                if plan.salaryOverride != nil {
+                    NumberRow(title: s.isMonthly ? "Salaris" : "Totaal van de maand", value: overrideAmount(month))
+                    if !s.isMonthly {
+                        Text("Dit totaal wordt gelijk verdeeld over de uitbetalingen van deze maand.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
-
-                GlassBlock(title: "Salarisdag", symbol: "calendar.badge.clock",
-                           subtitle: "Wanneer komt je salaris binnen?") {
-                    DayPickerRow(title: "Dag van de maand", day: payDayBinding)
-                    Text("Op deze dag staat je salaris op je bankrekening. Extra inkomsten zonder eigen dag komen ook dan binnen, en de overschrijvingen naar je spaarpotten en beleggingen gaan standaard op deze dag. Is een maand korter, dan geldt de laatste dag van die maand.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                MonthPickerBlock()
-
-                GlassBlock(title: "Salaris deze maand", symbol: "calendar",
-                           subtitle: d.salaryAmount(in: month) > 0
-                               ? "Komt binnen op \(DayText.ordinal(payDay))"
-                               : "Geen salaris deze maand") {
-                    HStack {
-                        Text(Fmt.month(month)).foregroundStyle(.secondary)
-                        Spacer()
-                        BigAmount(value: d.salaryAmount(in: month), font: .system(.title2, design: .rounded, weight: .bold))
-                    }
-                    switch s.mode {
-                    case .fixed:
-                        Toggle("Afwijkend bedrag deze maand", isOn: overrideEnabled(month))
-                        if plan.salaryOverride != nil {
-                            NumberRow(title: "Salaris", value: overrideAmount(month))
-                        }
-                    case .hourly:
-                        Toggle("Andere uren dan gemiddeld", isOn: hoursOverrideEnabled(month))
-                        if plan.hoursOverride != nil {
-                            NumberRow(title: "Gewerkte uren", value: hoursAmount(month), unit: .plain("uur"))
-                        }
+            case .hourly:
+                Toggle("Andere uren dan gemiddeld", isOn: hoursOverrideEnabled(month))
+                if plan.hoursOverride != nil {
+                    NumberRow(title: s.isMonthly ? "Gewerkte uren" : "Gewerkte uren (hele maand)",
+                              value: hoursAmount(month), unit: .plain("uur"))
+                    if !s.isMonthly {
+                        Text("De uren worden gelijk verdeeld over de uitbetalingen van deze maand.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
-
-                MoneyLinesBlock(kind: .income, month: month)
             }
         }
     }
@@ -279,7 +514,8 @@ struct IncomePage: View {
                 set: { on in
                     withAnimation(Theme.motion) {
                         store.mutate { data in
-                            let fallback = data.salary.fixedMonthly
+                            // Begin bij wat het schema voor deze maand oplevert (het totaal van de uitbetalingen).
+                            let fallback = data.scheduledSalary(in: month)
                             data.editPlan(month) { $0.salaryOverride = on ? fallback : nil }
                         }
                     }
@@ -296,7 +532,8 @@ struct IncomePage: View {
                 set: { on in
                     withAnimation(Theme.motion) {
                         store.mutate { data in
-                            let fallback = data.salary.defaultMonthlyHours.rounded()
+                            // Begin bij de uren die het schema voor deze maand betaalt.
+                            let fallback = data.salaryHours(in: month).cents
                             data.editPlan(month) { $0.hoursOverride = on ? fallback : nil }
                         }
                     }

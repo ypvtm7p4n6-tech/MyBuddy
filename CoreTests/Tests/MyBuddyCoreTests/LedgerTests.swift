@@ -696,7 +696,8 @@ final class LedgerTests: XCTestCase {
     /// richtwaarde van 15 ms, en de mediaan van vijf metingen na een warme start, zodat een druk moment op de machine de
     /// test niet laat falen): hij moet alleen een kwadratische herberekening per dag (zoals `bankBalance(on:)` per dag)
     /// of per maand geschiedenis betrappen.
-    func testMonthLedgerStaysFastOverFiveYears() {
+    func testMonthLedgerStaysFastOverFiveYears() throws {
+        try XCTSkipIf(MachineSpeed.skipsTiming, "tijdmetingen overgeslagen (SKIP_PERF_TESTS)")
         for percentages in [false, true] {
             let (d, current) = ledgerPerformanceData(percentages: percentages)
             let what = percentages ? "met percentages" : "met vaste bedragen"
@@ -725,17 +726,18 @@ final class LedgerTests: XCTestCase {
                     XCTAssertEqual(ledger.toHoldings, 8 * 79.88, accuracy: 0.001)
                 }
             }
-            XCTAssertLessThan(worst, 0.060, "mediaan van 5 keer, per maand, \(what) (richtwaarde 15 ms op een gewone machine)")
+            XCTAssertLessThan(worst, MachineSpeed.limit(0.060), "mediaan van 5 keer, per maand, \(what) (richtwaarde 15 ms op een gewone machine, machine \(MachineSpeed.slowdown)x trager)")
             // Een heel jaar achter elkaar.
             let start = Date()
             for month in current.adding(-11).range(count: 12) { _ = d.monthLedger(month, asOf: today) }
-            XCTAssertLessThan(Date().timeIntervalSince(start), 1.0, what)
+            XCTAssertLessThan(Date().timeIntervalSince(start), MachineSpeed.limit(1.0), what)
         }
     }
 
     /// Hetzelfde met een salaris dat elke week binnenkomt (naast de negen inkomstenregels): vier of vijf uitbetalingen per
     /// maand, elk een eigen gebeurtenis. De maand mag niet merkbaar trager worden en alles sluit.
-    func testMonthLedgerStaysFastWithAWeeklySalary() {
+    func testMonthLedgerStaysFastWithAWeeklySalary() throws {
+        try XCTSkipIf(MachineSpeed.skipsTiming, "tijdmetingen overgeslagen (SKIP_PERF_TESTS)")
         var (d, current) = ledgerPerformanceData(percentages: true)
         d.salary.fixedMonthly = 400   // per uitbetaling
         d.salary.setSchedule(.weeks, interval: 1, anchor: CalendarDay(year: 2021, month: 11, day: 5))
@@ -759,9 +761,9 @@ final class LedgerTests: XCTestCase {
             XCTAssertEqual(ledger?.income, Double(paydays.count) * 400 + 9 * 355, month.key)
             XCTAssertEqual(ledger?.days.filter { $0.events.contains { $0.kind == .salary } }.map(\.day), paydays, month.key)
         }
-        XCTAssertLessThan(worst, 0.080, "mediaan van 5 keer, per maand (richtwaarde 15 ms op een gewone machine)")
+        XCTAssertLessThan(worst, MachineSpeed.limit(0.080), "mediaan van 5 keer, per maand (richtwaarde 15 ms op een gewone machine, machine \(MachineSpeed.slowdown)x trager)")
         let start = Date()
         for month in current.adding(-11).range(count: 12) { _ = d.monthLedger(month, asOf: today) }
-        XCTAssertLessThan(Date().timeIntervalSince(start), 1.2)
+        XCTAssertLessThan(Date().timeIntervalSince(start), MachineSpeed.limit(1.2))
     }
 }
