@@ -244,7 +244,8 @@ extension FinanceData {
     /// Het bedrag in euro's van een regel in een maand.
     func amount(of rule: AllocationRule, in month: YearMonth) -> Double {
         switch rule {
-        case .amount(let value): return value
+        // Op hele centen, zoals `allocationCents` en de sommen (een bedrag met meer dan twee decimalen komt uit import of oude bestanden).
+        case .amount(let value): return CentsMath.value(CentsMath.int(value))
         case .percent(let percent): return CentsMath.value(AllocationMath.cents(of: percent, bases: incomeBases(in: month)))
         }
     }
@@ -309,7 +310,7 @@ extension FinanceData {
     /// maandplan bij elke aanroep opnieuw te bouwen (voor lussen over veel maanden).
     func allocation(_ id: UUID, in month: YearMonth, cache: IncomeBasesCache) -> Double {
         switch allocationRule(id, in: month) {
-        case .amount(let value): return value
+        case .amount(let value): return CentsMath.value(CentsMath.int(value))
         case .percent(let rule): return CentsMath.value(AllocationMath.cents(of: rule, bases: cache.bases(in: month)))
         }
     }
@@ -419,6 +420,11 @@ extension FinanceData {
     /// maar alleen als de inlegwijze echt veranderde en de pot of belegging al bestaat. Eerdere maanden blijven
     /// zoals ze waren: die zijn vastgelegd (`materialize`) of volgen de standaard van hun tijd niet meer.
     ///
+    /// Maanden NA de lopende maand die al zijn vastgelegd (door een eenmalige uitgave, een eigen salaris, een overschrijfdag:
+    /// elke bewerking legt de standaardinleg van dat moment vast) krijgen de nieuwe standaard ook, maar alleen als ze nog de
+    /// OUDE standaard hadden. Een eigen afwijking van de gebruiker voor zo'n maand (een ander bedrag of percentage) blijft.
+    /// Zonder dit zou "elke maand 10%" in een bewerkte toekomstige maand bij het oude bedrag blijven staan, als "Afwijkend".
+    ///
     /// Wie een pot of belegging zelf wijzigt (`updatePot`, `updateHolding`) en daarbij de inlegwijze verandert, roept
     /// dit aan om de lopende maand mee te laten gaan.
     mutating func syncCurrentMonth(_ id: UUID, with before: AllocationRule?, current: YearMonth) {
@@ -432,6 +438,34 @@ extension FinanceData {
             case .amount(let value): plan.allocations[id.uuidString] = value.cents
             case .percent(let rule): plan.percentAllocations[id.uuidString] = rule
             }
+        }
+        guard let before else { return }
+        let key = id.uuidString
+        for monthKey in Array(months.keys) {
+            guard let month = YearMonth(key: monthKey), month > current, month >= start, var plan = months[monthKey] else { continue }
+            let stored: AllocationRule? = plan.percentAllocations[key].map { AllocationRule.percent($0) }
+                ?? plan.allocations[key].map { AllocationRule.amount($0) }
+            // Vergelijk een vast bedrag op hele centen: een vastgelegd bedrag staat op centen, het oude bedrag kan er meer hebben.
+            guard let stored, FinanceData.sameRule(stored, before) else { continue }
+            plan.allocations.removeValue(forKey: key)
+            plan.percentAllocations.removeValue(forKey: key)
+            switch after {
+            case .amount(let value): plan.allocations[key] = value.cents
+            case .percent(let rule): plan.percentAllocations[key] = rule
+            }
+            months[monthKey] = plan
+        }
+    }
+
+    /// Zijn twee regels dezelfde inleg? Een vast bedrag telt op hele centen, een percentage op twee decimalen.
+    private static func sameRule(_ a: AllocationRule, _ b: AllocationRule) -> Bool {
+        switch (a, b) {
+        case (.amount(let x), .amount(let y)):
+            return CentsMath.int(x) == CentsMath.int(y)
+        case (.percent(let x), .percent(let y)):
+            return x.basis == y.basis && AllocationMath.hundredths(x.percent) == AllocationMath.hundredths(y.percent)
+        default:
+            return false
         }
     }
 

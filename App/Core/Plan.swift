@@ -379,7 +379,8 @@ extension FinanceData {
     /// dat daar in deze maand uit volgt (zie `allocationCents`). Overal waar de app een verdeling leest, komt dit getal.
     func allocation(_ id: UUID, in month: YearMonth) -> Double {
         switch allocationRule(id, in: month) {
-        case .amount(let value): return value
+        // Een vast bedrag met meer dan twee decimalen (import, oud bestand) telt overal op hele centen, zoals de som.
+        case .amount(let value): return CentsMath.value(CentsMath.int(value))
         case .percent(let rule): return CentsMath.value(AllocationMath.cents(of: rule, bases: incomeBases(in: month)))
         }
     }

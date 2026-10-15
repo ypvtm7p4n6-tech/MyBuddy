@@ -455,6 +455,35 @@ extension FinanceData {
         return CentsMath.value(CentsMath.sum(salaryPayDays(in: month).map { _ in each }))
     }
 
+    /// Legt het salaris van alle maanden VOOR `current` vast (als eigen salaris van die maand), zodat een wijziging van de
+    /// salarisinstellingen daarna alleen de lopende en de komende maanden verandert. Zonder dit rekent elke maand sinds de
+    /// startmaand met de nieuwe instellingen: een ander schema, bedrag of aantal uren maakt dan uitbetalingen die nooit
+    /// zijn gekomen en verandert het inkomen, de inleg en de saldo's van het verleden. De totalen van het verleden blijven
+    /// precies zoals ze waren (ook de dagen als het schema en de salarisdag niet veranderen); een maand die al een eigen
+    /// salaris heeft blijft ongemoeid. Roep dit aan VOOR je `salary` wijzigt. Meerdere keren aanroepen verandert niets meer.
+    ///
+    /// Is er in het verleden niets te beschermen (er werd nog geen salaris gerekend), dan gebeurt er niets: een gebruiker
+    /// die nu pas zijn salaris invult krijgt het dan ook in de maanden sinds zijn start, zoals altijd.
+    mutating func freezeSalaryHistory(before current: YearMonth) {
+        guard startMonth < current else { return }
+        let stored = storedPlans
+        var totals: [(month: YearMonth, total: Double)] = []
+        var month = startMonth
+        var count = 0
+        while month < current && count < 1_200 {
+            let p = plan(for: month, using: stored)
+            if p.salaryOverride == nil {
+                totals.append((month, CentsMath.value(salaryCents(in: month, plan: p))))
+            }
+            month = month.adding(1)
+            count += 1
+        }
+        guard totals.contains(where: { $0.total != 0 }) else { return }
+        for item in totals {
+            editPlan(item.month) { $0.salaryOverride = item.total }
+        }
+    }
+
     /// Het aantal uren dat `month` betaalt: de overschreven uren van de maand, anders de uren van het schema (het gemiddelde
     /// per maand bij het maandelijkse schema; anders het aantal uitbetalingen van de maand × uren per cyclus). Een goede
     /// beginwaarde voor "andere uren in deze maand".
@@ -506,7 +535,7 @@ extension FinanceData {
     func estimatedAmount(of rule: AllocationRule, in month: YearMonth) -> Double {
         guard !salary.isMonthly else { return amount(of: rule, in: month) }
         switch rule {
-        case .amount(let value): return value
+        case .amount(let value): return CentsMath.value(CentsMath.int(value))
         case .percent(let percent):
             return CentsMath.value(AllocationMath.cents(of: percent, bases: estimatedIncomeBases(in: month)))
         }
