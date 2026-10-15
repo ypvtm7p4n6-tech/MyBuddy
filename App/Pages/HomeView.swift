@@ -155,6 +155,12 @@ struct RemainingHeader: View {
                     MiniFigure(title: board.hasPotExpenses ? "Bankuitgaven" : "Uitgaven", value: board.expensesFromBank)
                     MiniFigure(title: "Verdeeld", value: board.allocated)
                 }
+                // Bij een salaris om de zoveel weken of dagen is het inkomen de som van de uitbetalingen van deze maand.
+                if let salaryNote = board.salaryNote {
+                    Text(salaryNote)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 // Uitgaven uit een spaarpot kosten dit maandbudget niets: zonder uitleg tellen de drie tegels niet op.
                 if board.hasPotExpenses {
                     Text("Bankuitgaven is wat van je rekening gaat. In totaal geef je \(Fmt.euro(board.expensesTotal)) uit, waarvan \(Fmt.euro(board.fromPots)) uit een spaarpot. Dat telt niet mee in dit bedrag.")

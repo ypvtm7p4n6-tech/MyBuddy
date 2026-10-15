@@ -320,7 +320,7 @@ struct PotRowCard: View {
                             Spacer(minLength: 0)
                         }
                     }
-                    if let line = contributionLine(d, month: now) {
+                    if let line = ContributionInfo.listLine(d, id: pot.id, month: now) {
                         Text(line)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -338,13 +338,6 @@ struct PotRowCard: View {
             .glassCard(interactive: true)
         }
         .buttonStyle(.plain)
-    }
-
-    /// "Inleg 10% van je salaris, € 300 deze maand" voor een pot die een percentage van het inkomen inlegt. Een vast
-    /// bedrag krijgt geen extra regel (de pagina van de pot laat het zien). Het bedrag is dat van de verdeling (`allocation`).
-    private func contributionLine(_ d: FinanceData, month: YearMonth) -> String? {
-        guard let rule = d.contributionRule(of: pot.id), rule.isPercent else { return nil }
-        return "Inleg \(rule.summary), \(Fmt.euro(d.allocation(pot.id, in: month))) deze maand"
     }
 }
 
@@ -547,6 +540,8 @@ struct PotDetailPage: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // Dezelfde boekingen staan, samen met die van je rekening, op de pagina Dag voor dag.
+            ChipLink(title: "Dag voor dag bekijken", symbol: "calendar", destination: .cashflow)
         }
         .animation(Theme.motion, value: items)
     }
@@ -623,7 +618,7 @@ struct PotDetailPage: View {
             if let info {
                 ContributionSummary(info: info)
             }
-            if let note = transferNote(pot, info: info) {
+            if let note = info?.transferNote(to: "naar deze pot") {
                 Text(note).font(.footnote).foregroundStyle(.secondary)
             }
             ChipGrid {
@@ -767,20 +762,6 @@ struct PotDetailPage: View {
         // Op kalenderjaren gerekend, niet in seconden (schrikkeljaren en zomertijd verschuiven de dag).
         let upper = cal.date(byAdding: .year, value: 50, to: today) ?? today
         return lower...upper
-    }
-
-    /// "De inleg gaat op de 25e naar deze pot, je salarisdag."
-    private func transferNote(_ pot: Pot, info: ContributionInfo?) -> String? {
-        let d = store.data
-        let now = store.now
-        // Alleen als er iets wordt ingelegd: deze maand een bedrag, of een standaardregel die niet nul is.
-        guard let info, info.amount != 0 || info.standard != .amount(0) else { return nil }
-        let day = d.transferDay(for: pot.id, in: now)
-        let usesPayDay = pot.transferDay == nil && d.months[now.key]?.transferDay == nil
-        let base = "De inleg gaat op \(PotFormat.dayName(day)) naar deze pot"
-        guard usesPayDay else { return base + "." }
-        // Bij een salaris om de zoveel weken of dagen is het de eerste uitbetaling van de maand.
-        return base + (d.salary.isMonthly ? ", je salarisdag." : ", de eerste salarisdag van de maand.")
     }
 
     @ViewBuilder
@@ -1180,6 +1161,13 @@ struct PotEditSheet: View {
                            amountTitle: "Standaard inleg per maand", percentTitle: "Percentage van je inkomen",
                            resolvedAmount: preview?.amount, resolvedNote: preview?.note, footnote: preview?.footnote,
                            subject: name)
+        // Samen meer dan 100% van je inkomen, of meer dan er te verdelen is: de motor meldt het al voor je bewaart.
+        if mode == .percentage {
+            ForEach(ContributionPreview.warnings(store.data, pot: draftPot(), month: store.now), id: \.message) { warning in
+                AllocationWarningLabel(warning: warning)
+                    .transition(.opacity)
+            }
+        }
     }
 
     private var modeBinding: Binding<ContributionMode> {

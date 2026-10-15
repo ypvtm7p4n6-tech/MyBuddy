@@ -484,7 +484,9 @@ func accountPrefsID(auth: AuthStore, cloud: CloudAccount?) -> String {
 enum RemainingShortfall {
     /// Waar komt het tekort vandaan: true = de uitgaven zijn hoger dan het inkomen, false = je verdeelde te veel.
     static func isSpending(income: Double, bankExpenses: Double) -> Bool {
-        CentsMath.int(income) - CentsMath.int(bankExpenses) < 0
+        // Dezelfde regel als overal: wat er te verdelen is (`MonthFigures.available`) is negatief. Schermen met de cijfers van
+        // een maand of periode lezen dat liever rechtstreeks (`MonthBoard.spendingExceedsIncome`).
+        MonthFigures(income: CentsMath.int(income), expenses: CentsMath.int(bankExpenses)).available < 0
     }
 }
 

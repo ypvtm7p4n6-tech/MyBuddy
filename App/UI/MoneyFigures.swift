@@ -1,6 +1,6 @@
 import Foundation
-// In de app zit alles in één module. In de testpakket (CoreTests) staat dit bestand als symlink tussen de tests en leest
-// het de rekenmotor via `@testable import`.
+// In de app zit alles in één module. In het testpakket (CoreTests/Tests/MyBuddyCoreTests) staat dit bestand als symlink
+// tussen de tests en leest het de rekenmotor via `@testable import`; de tests staan in MoneyFiguresTests.swift.
 #if canImport(MyBuddyCore)
 @testable import MyBuddyCore
 #endif
@@ -26,9 +26,13 @@ import Foundation
 //   Spaarpot op een datum        dag     potBalance(_:asOf:) (het saldo aan het eind van die dag)
 //   Vermogen eind maand          maand   netWorth(at:current:), label `MoneyLabels.netWorthEnd(of:)`
 //   Beleggingen                  maand   portfolioValue / portfolioInvested / holdingStateNow (per maand, niet per dag)
-//   Inleg van een pot/belegging  maand   allocation(_:in:) (het bedrag van die maand, ook bij een percentage)
+//   Inleg van een pot/belegging  maand   allocation(_:in:) (het bedrag van die maand, ook bij een percentage), met de opbouw
+//                                        en de overschrijfdag in `ContributionInfo`
 //   Inleg voor SCHATTINGEN       gem.    estimatedAllocation(_:in:), monthlyInvestment(current:) en estimatedMonthlyIncome(in:):
 //                                        bij een salaris om de zoveel weken of dagen een GEMIDDELDE maand (zie SalarySchedule.swift)
+//   Komende boekingen van een pot 30 dgn dayEvents(in:asOf:), alleen de events van die pot, door te tellen vanaf potBalanceNow
+//                                        (`PotUpcoming`); op de laatste boeking van een dag is dat potBalance(_:asOf:)
+//   Waarschuwing verdeling       maand   allocationWarnings(in:); in een invulformulier vooraf op een kopie (`ContributionPreview`)
 //
 // "nu" rekent altijd per kalenderdag met `store.today`: wat vandaag valt telt de hele dag mee, wat later komt niet.
 
@@ -42,15 +46,25 @@ import Foundation
 struct MonthBoard: Equatable {
     let month: YearMonth
     let figures: MonthFigures
+    /// Bij een salaris om de zoveel weken of dagen: wanneer het salaris in deze maand binnenkomt ("Salaris komt binnen op de
+    /// 2e en de 30e."). Het inkomen hierboven is de som van die uitbetalingen. nil bij het maandelijkse schema.
+    let salaryNote: String?
 
     init(_ data: FinanceData, month: YearMonth) {
         self.month = month
         self.figures = data.monthFigures(month)
+        if data.salary.isMonthly || month < data.startMonth {
+            salaryNote = nil
+        } else {
+            let days = data.salaryPayoutDaysText(in: month)
+            salaryNote = days.isEmpty ? "Deze maand komt er geen salaris binnen." : "Salaris komt binnen op \(days)."
+        }
     }
 
     init(month: YearMonth, figures: MonthFigures) {
         self.month = month
         self.figures = figures
+        self.salaryNote = nil
     }
 
     var income: Double { CentsMath.value(figures.income) }
@@ -131,6 +145,20 @@ enum MoneyLabels {
 
 // MARK: - Inleg van een pot of belegging
 
+/// Waar de overschrijfdag van een inleg vandaan komt (zie `FinanceData.transferDay(for:in:)`).
+enum TransferDayOrigin: Equatable {
+    /// De verdeling van die maand heeft een eigen dag.
+    case month
+    /// De spaarpot of belegging heeft een eigen overschrijfdag.
+    case own
+    /// Je salarisdag (het maandelijkse schema).
+    case salaryDay
+    /// Bij een salaris om de zoveel weken of dagen: de eerste uitbetaling van die maand.
+    case firstSalaryDay
+    /// Bij een salaris om de zoveel weken of dagen komt er die maand geen salaris binnen: de ingestelde salarisdag.
+    case salaryDayFallback
+}
+
 /// Hoe de inleg van een spaarpot of belegging in een maand is opgebouwd: de standaardregel, wat er in die maand geldt
 /// (een vast bedrag of een percentage van het inkomen van die maand), het inkomen waarover het percentage rekent en wat
 /// het in een gemiddelde maand is. Alle getallen komen uit de rekenmotor.
@@ -148,6 +176,10 @@ struct ContributionInfo: Equatable {
     var averageAmount: Double?
     /// Waar de verdeling van `month` niet klopt (percentages samen boven 100%, of meer verdeeld dan er is).
     var warnings: [AllocationWarning]
+    /// De dag van `month` waarop de inleg wordt overgeboekt (`transferDay(for:in:)`).
+    var transferDay: Int
+    /// Waar die dag vandaan komt: de verdeling van de maand, een eigen dag, of de salarisdag.
+    var transferOrigin: TransferDayOrigin
 
     /// nil als het id geen spaarpot of belegging is.
     init?(_ data: FinanceData, id: UUID, month: YearMonth) {
@@ -165,6 +197,36 @@ struct ContributionInfo: Equatable {
             averageAmount = nil
         }
         warnings = data.allocationWarnings(in: month)
+        transferDay = data.transferDay(for: id, in: month)
+        // Dezelfde volgorde als `transferDay(for:in:)`: de verdeling van de maand, dan de pot of belegging zelf, dan de salarisdag.
+        if data.months[month.key]?.transferDay != nil {
+            transferOrigin = .month
+        } else if (data.pot(id)?.transferDay ?? data.holding(id)?.transferDay) != nil {
+            transferOrigin = .own
+        } else if data.salary.isMonthly {
+            transferOrigin = .salaryDay
+        } else if data.salaryPayDays(in: month).isEmpty {
+            transferOrigin = .salaryDayFallback
+        } else {
+            transferOrigin = .firstSalaryDay
+        }
+    }
+
+    /// Of er iets wordt ingelegd: deze maand een bedrag, of een standaardregel die niet nul is.
+    var hasContribution: Bool { amount != 0 || standard != .amount(0) }
+
+    /// "De inleg gaat op de 25e naar deze pot, je salarisdag." `target` is waar het naartoe gaat ("naar deze pot", "van je
+    /// rekening naar deze belegging"). nil als er niets wordt ingelegd. Bij een salaris om de zoveel weken of dagen is de
+    /// salarisdag de eerste uitbetaling van de maand, en zonder uitbetaling die maand de ingestelde salarisdag.
+    func transferNote(to target: String) -> String? {
+        guard hasContribution else { return nil }
+        let base = "De inleg gaat op de \(transferDay)e \(target)"
+        switch transferOrigin {
+        case .month, .own: return base + "."
+        case .salaryDay: return base + ", je salarisdag."
+        case .firstSalaryDay: return base + ", de eerste salarisdag van de maand."
+        case .salaryDayFallback: return base + ", je ingestelde salarisdag. Deze maand komt er geen salaris binnen."
+        }
     }
 
     /// Het bedrag van deze maand in euro's.
@@ -210,13 +272,27 @@ struct ContributionInfo: Equatable {
     var hasNoBase: Bool { isPercent && (base ?? 0) <= 0 }
 }
 
-/// De uitkomst van een percentage voor in een invulformulier: "= € 300 in oktober", vóór het bewaren. Rekent met de
+extension ContributionInfo {
+    /// De regel onder een spaarpot of belegging in een lijst: "Inleg 10% van je salaris, € 300 deze maand". Alleen voor een
+    /// pot of belegging met een percentage (als standaard of in deze maand); een vast bedrag krijgt geen extra regel, want
+    /// de pagina zelf laat het zien. Licht van aard (geen waarschuwingen), want een lijst bouwt hem voor elke rij.
+    static func listLine(_ data: FinanceData, id: UUID, month: YearMonth) -> String? {
+        let rule = data.allocationRule(id, in: month)
+        guard rule.isPercent || data.contributionRule(of: id)?.isPercent == true else { return nil }
+        let amount = Fmt.euro(data.allocation(id, in: month))
+        if rule.isPercent { return "Inleg \(rule.summary), \(amount) deze maand" }
+        // De standaard is een percentage, maar deze maand heeft een eigen bedrag.
+        return "Deze maand een eigen bedrag van \(amount)"
+    }
+}
+
+/// De uitkomst van een percentage voor in een invulformulier: "= € 300" per maand, vóór het bewaren. Rekent met de
 /// rekenmotor (`percentAmount`), precies zoals de verdeling het straks doet.
 enum ContributionPreview {
     struct Result: Equatable {
-        /// Wat het percentage in `month` oplevert.
+        /// Wat het percentage in `month` oplevert (per maand: elke maand rekent opnieuw met het inkomen van die maand).
         var amount: Double
-        /// "10% van € 3.000 salaris in oktober".
+        /// "Per maand: 10% van € 3.000 salaris in oktober", naast "= € 300" in het invulveld.
         var note: String
         /// Uitleg onder het veld (er is geen inkomen, of het salaris komt niet elke maand even vaak binnen). nil = geen.
         var footnote: String?
@@ -229,7 +305,7 @@ enum ContributionPreview {
         let base = CentsMath.value(baseCents)
         let what = basis == .salary ? "salaris" : "inkomsten"
         let monthName = Fmt.monthNames[min(max(month.month, 1), 12) - 1]
-        let note = "\(Fmt.percent(clean / 100, digits: 2)) van \(Fmt.euro(base)) \(what) in \(monthName)"
+        let note = "Per maand: \(Fmt.percent(clean / 100, digits: 2)) van \(Fmt.euro(base)) \(what) in \(monthName)"
 
         var parts: [String] = []
         if baseCents <= 0 {
@@ -243,6 +319,22 @@ enum ContributionPreview {
             parts.append("Je salaris komt niet elke maand even vaak binnen. In een gemiddelde maand is het \(Fmt.euro(average)).")
         }
         return Result(amount: amount, note: note, footnote: parts.isEmpty ? nil : parts.joined(separator: " "))
+    }
+
+    /// De waarschuwingen van `month` zoals ze zijn nadat deze spaarpot is bewaard: de percentages samen boven 100% van het
+    /// inkomen, of meer verdeeld dan er te verdelen is. Rekent op een kopie van de gegevens met precies dezelfde stappen als
+    /// bewaren (`updatePot`, `addPot`), dus het scherm waarschuwt vooraf met wat de motor straks ook meldt.
+    static func warnings(_ data: FinanceData, pot: Pot, month: YearMonth) -> [AllocationWarning] {
+        var trial = data
+        if trial.pot(pot.id) != nil { trial.updatePot(pot, current: month) } else { trial.addPot(pot) }
+        return trial.allocationWarnings(in: month)
+    }
+
+    /// Zoals `warnings(_:pot:month:)`, voor een belegging.
+    static func warnings(_ data: FinanceData, holding: Holding, month: YearMonth) -> [AllocationWarning] {
+        var trial = data
+        if trial.holding(holding.id) != nil { trial.updateHolding(holding, current: month) } else { trial.addHolding(holding) }
+        return trial.allocationWarnings(in: month)
     }
 }
 

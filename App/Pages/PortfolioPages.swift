@@ -125,6 +125,15 @@ struct HoldingRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(holding.name).font(.subheadline.weight(.semibold)).lineLimit(1)
                     Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    // Een inleg als percentage van je inkomen: wat het deze maand is (zoals bij een spaarpot).
+                    if let line = ContributionInfo.listLine(store.data, id: holding.id, month: store.now) {
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .contentTransition(.numericText())
+                    }
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 2) {
@@ -255,7 +264,7 @@ struct HoldingDetailPage: View {
                     if let contribution {
                         ContributionSummary(info: contribution)
                     }
-                    if let note = transferNote(holding, info: contribution) {
+                    if let note = contribution?.transferNote(to: "van je rekening naar deze belegging") {
                         Text(note).font(.footnote).foregroundStyle(.secondary)
                     }
                     ChipGrid {
@@ -320,20 +329,6 @@ struct HoldingDetailPage: View {
                 Text("Ook de meetpunten en de geplande inleg verdwijnen.")
             }
         }
-    }
-
-    /// "De inleg gaat op de 25e van je rekening naar deze belegging, je salarisdag."
-    private func transferNote(_ holding: Holding, info: ContributionInfo?) -> String? {
-        let d = store.data
-        let now = store.now
-        // Alleen als er iets wordt ingelegd: deze maand een bedrag, of een standaardregel die niet nul is.
-        guard let info, info.amount != 0 || info.standard != .amount(0) else { return nil }
-        let day = d.transferDay(for: holding.id, in: now)
-        let usesPayDay = holding.transferDay == nil && d.months[now.key]?.transferDay == nil
-        let base = "De inleg gaat op \(PotFormat.dayName(day)) van je rekening naar deze belegging"
-        guard usesPayDay else { return base + "." }
-        // Bij een salaris om de zoveel weken of dagen is het de eerste uitbetaling van de maand.
-        return base + (d.salary.isMonthly ? ", je salarisdag." : ", de eerste salarisdag van de maand.")
     }
 
     @ViewBuilder
@@ -428,6 +423,8 @@ struct HoldingEditSheet: View {
     @State private var searchError: String?
     @State private var preview: String?
     @State private var loaded = false
+    /// Vaste id voor een nieuwe belegging, zodat de voorvertoning van de waarschuwingen en het bewaren dezelfde belegging zijn.
+    @State private var draftID = UUID()
 
     private var hasTicker: Bool { !ticker.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -573,6 +570,13 @@ struct HoldingEditSheet: View {
                            amountTitle: "Inleg per maand", percentTitle: "Percentage van je inkomen",
                            resolvedAmount: preview?.amount, resolvedNote: preview?.note, footnote: preview?.footnote,
                            subject: name)
+        // Samen meer dan 100% van je inkomen, of meer dan er te verdelen is: de motor meldt het al voor je bewaart.
+        if mode == .percentage {
+            ForEach(ContributionPreview.warnings(store.data, holding: draftHolding(), month: store.now), id: \.message) { warning in
+                AllocationWarningLabel(warning: warning)
+                    .transition(.opacity)
+            }
+        }
     }
 
     private var modeBinding: Binding<ContributionMode> {
@@ -662,11 +666,12 @@ struct HoldingEditSheet: View {
 
     // MARK: Opslaan
 
-    private func save() {
-        let now = store.now
+    /// De belegging zoals hij na bewaren is: voor de voorvertoning en om te bewaren.
+    private func draftHolding() -> Holding {
         let trimmedTicker = ticker.trimmingCharacters(in: .whitespaces)
         let tracked = !trimmedTicker.isEmpty
-        var h = holding ?? Holding(name: "", startMonth: now)
+        var h = holding ?? Holding(name: "", startMonth: store.now)
+        if holding == nil { h.id = draftID }
         h.name = name.trimmingCharacters(in: .whitespaces)
         h.kind = kind
         h.ticker = tracked ? trimmedTicker : nil
@@ -680,7 +685,13 @@ struct HoldingEditSheet: View {
         h.contributionPercent = AllocationMath.cleanPercent(percent)
         h.contributionBasis = basis
         h.transferDay = transferDay
-        let result = h
+        return h
+    }
+
+    private func save() {
+        let now = store.now
+        let result = draftHolding()
+        let tracked = result.ticker != nil
 
         if holding == nil {
             let initial: Double? = (!tracked && manualValue > 0) ? manualValue : nil
