@@ -1,6 +1,6 @@
 # HIG-notities voor MyBuddy
 
-Peildatum: 15 oktober 2026. Opgesteld door de HIG-onderzoeker (alleen documenten; er is niets in `App/` of `CoreTests/` aangepast).
+Peildatum: 15 oktober 2026. Opgesteld door de HIG-onderzoeker (alleen documenten; er is niets in `App/` of `CoreTests/` aangepast). Regelnummers en tellingen zijn op 15 oktober 2026 (16:55) opnieuw nagelopen tegen `HEAD` (ca0c945); het herstelwerk in `App/` loopt door, dus ze kunnen alweer verschuiven: zoek op het patroon, niet op het nummer.
 Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels voor deze SwiftUI-app (iPhone, iPad, Mac; iOS 18+/macOS 15+, iOS 26-API's alleen achter `#available`).
 
 ## 0. Status van de bron en leeswijzer
@@ -18,8 +18,11 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 - `[B:onderwerp]` = gelezen in de officiele HIG-pagina `https://developer.apple.com/design/human-interface-guidelines/<onderwerp>`. Uitzonderingen: `[B:adopting-liquid-glass]` = `https://developer.apple.com/documentation/TechnologyOverviews/adopting-liquid-glass`; `[B:swiftui-glass]` = `https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views`.
 - `[A:symbool]` = gelezen in Apple's API-documentatie (vooral beschikbaarheid, of wat een API doet).
 - `[K]` = kennis, afleiding of eigen meting; niet in een gelezen bron. Dat geldt ook voor alle getallen die ik zelf als drempel voorstel.
+- `[P]` = gereproduceerd met een proefscript tegen `App/Core` (`/tmp/hig-probe`, uitvoerbaar met `swift build --scratch-path /tmp/sb-hig-probe` en dan `/tmp/sb-hig-probe/debug/probe`).
 
 **Vorm van een regel:** `ID REGEL: ... / TOETS: ... [bron]`. In TOETS staat waar je op zoekt (`grep -rn "<patroon>" App/`) of wat je test.
+
+**Aantal regels:** de opdracht vroeg 3 tot 8 regels per onderwerp. Negen onderwerpen hebben er meer (9 tot 12: GLS, CHT, ACC, TAB, SHT, SET, LST, WRT, MAC), omdat ze voor deze app zwaar wegen (glas, toegankelijkheid, navigatie, grafieken, instellingen). Ze zijn niet samengevoegd zodat de ID's stabiel blijven voor wie ernaar verwijst; de eerste regels van elk onderwerp zijn de kern.
 
 **Waar de app niet op hoeft te letten:** watchOS, tvOS en visionOS komen in de HIG voor, maar zijn hier weggelaten.
 
@@ -61,7 +64,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 
 ### 2.2 Typography (TYP)
 
-- **TYP-1** REGEL: Gebruik de ingebouwde tekststijlen (`.largeTitle`, `.title`, `.headline`, `.body`, `.callout`, `.footnote`, `.caption`); die schalen mee met Dynamic Type. / TOETS: `grep -rn "\.font(\.system(size" App/` heeft nu 5 treffers (`RootView.swift:101`, `Components.swift:239`, `HomeView.swift:325`, `PurchasePages.swift:516,631`); vervang door een tekststijl of `@ScaledMetric`. `[B:typography]`
+- **TYP-1** REGEL: Gebruik de ingebouwde tekststijlen (`.largeTitle`, `.title`, `.headline`, `.body`, `.callout`, `.footnote`, `.caption`); die schalen mee met Dynamic Type. / TOETS: `grep -rn "\.font(\.system(size" App/` heeft nu 5 treffers (`RootView.swift:101`, `Components.swift:239`, `HomeView.swift:328`, `PurchasePages.swift:516,631`); vervang door een tekststijl of `@ScaledMetric`. `[B:typography]`
 - **TYP-2** REGEL: Test met de grootste toegankelijkheidsformaten; laat layouts meegroeien: gestapeld in plaats van naast elkaar, minder kolommen, rijen die hoger worden. / TOETS: zoek `isAccessibilitySize` (nu 0 treffers) en `ViewThatFits` (1); elke `HStack` met label plus bedrag moet bij `.accessibility3` stapelen (`AnyLayout`/`ViewThatFits`). `[B:typography, layout]`
 - **TYP-3** REGEL: Houd afkappen minimaal; geen afgekapte tekst in scrollende gebieden. / TOETS: `grep -rn "minimumScaleFactor" App/` (49 treffers): toegestaan voor een kerngetal per scherm (`BigAmount`), niet voor labels, titels en uitleg; die mogen wrappen. Grens voor 'te klein' is 11 pt (iOS). `[B:typography, accessibility]`
 - **TYP-4** REGEL: Standaardgrootte is 17 pt op iOS/iPadOS en 13 pt op macOS; minimum 11 pt (iOS) en 10 pt (macOS). macOS ondersteunt geen Dynamic Type. / TOETS: `.caption2` (11 pt) alleen voor bijzaken; geen essentiele informatie kleiner dan `.footnote`; op macOS niet de iOS-maten kopieren. `[B:typography, accessibility]`
@@ -72,7 +75,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 
 ### 2.3 Color (COL)
 
-- **COL-1** REGEL: Gebruik semantische systeemkleuren (`.primary`, `.secondary`, `Color(.systemBackground)`, `secondarySystemGroupedBackground`, `.separator`) voor tekst en achtergronden en geef ze geen andere betekenis (geen scheidingskleur als tekstkleur). / TOETS: `grep -rn "Color(hex" App/` (26): alleen in `Theme.swift` en assets; `.white`/`.black` als tekstkleur (5 treffers op `.white`) alleen op een gekleurde achtergrond. `[B:color]`
+- **COL-1** REGEL: Gebruik semantische systeemkleuren (`.primary`, `.secondary`, `Color(.systemBackground)`, `secondarySystemGroupedBackground`, `.separator`) voor tekst en achtergronden en geef ze geen andere betekenis (geen scheidingskleur als tekstkleur). / TOETS: `grep -rn "Color(hex" App/` (26): alleen in `Theme.swift` en assets; `.white`/`.black` als tekstkleur (3 treffers op `foregroundStyle(.white)`: `Fields.swift:417`, `HomeView.swift:506,553`) alleen op een gekleurde achtergrond. `[B:color]`
 - **COL-2** REGEL: Elke eigen kleur heeft een licht, een donker en een hoog-contrast-variant van beide; ook een app met een vaste weergave levert licht en donker, voor het aanpassen van Liquid Glass. / TOETS: `Theme.accent/positive/negative/warning` (`Theme.swift:60-63`) hebben licht en donker maar geen hoog-contrast; verplaats naar Color Sets in `Assets.xcassets` met de appearances Any/Dark/High Contrast. `[B:color, dark-mode]`
 - **COL-3** REGEL: Tekstcontrast minimaal 4,5:1 (tot en met 17 pt), 3:1 bij 18 pt of vet; streef naar 7:1 voor kleine tekst; lukt dat niet, dan een sterkere variant bij Verhoog contrast. / TOETS: zie de meting hieronder en draai `/tmp/hig-research/contrast.py`; controleer in Xcode met Accessibility Inspector. `[B:accessibility, dark-mode]`
 
@@ -87,7 +90,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 
 - **COL-4** REGEL: Vertrouw nooit alleen op kleur voor status of betekenis: positief/negatief altijd met teken (+/min), symbool of tekst; zelfde voor reeksen in een grafiek. / TOETS: zoek `Theme.positive`, `Theme.negative` en `Theme.warning`: staat er een teken, symbool of woord bij? Test met `accessibilityDifferentiateWithoutColor` (nu 0 treffers). `[B:color, accessibility, toggles]`
 - **COL-5** REGEL: Een kleur, een betekenis: de accentkleur betekent "interactief". / TOETS: `foregroundStyle(Theme.accent)` op niet-interactieve elementen (bijvoorbeeld het symbool in `GlassBlock.header`, `Components.swift:78`) vermijden of bewust houden; een globale `.tint(Theme.accent)` staat al op de wortel (`MyBuddyApp.swift:37`). `[B:color]`
-- **COL-6** REGEL: Kleur op Liquid Glass spaarzaam: kleur de achtergrond van de primaire actie, niet de symbolen of tekst, en niet van meerdere bedieningselementen. / TOETS: `glassCard(tint:)` en `GlassBlock(tint:)` met `Theme.olive.opacity(0.3)` (bijvoorbeeld `PortfolioPages.swift:26`) weg; hooguit een `.glassProminent`-knop per scherm. `[B:color, materials, buttons]`
+- **COL-6** REGEL: Kleur op Liquid Glass spaarzaam: kleur de achtergrond van de primaire actie, niet de symbolen of tekst, en niet van meerdere bedieningselementen. / TOETS: `glassCard(tint:)` en `GlassBlock(tint:)` met `Theme.olive.opacity(0.3)` (bijvoorbeeld `PortfolioPages.swift:29`) weg; hooguit een `.glassProminent`-knop per scherm. `[B:color, materials, buttons]`
 - **COL-7** REGEL: Kleuren in grafieken moeten ook voor kleurenblinden te onderscheiden zijn en tegen de achtergrond zichtbaar. / TOETS (meting `[K]`, Machado-simulatie, kleurverschil deltaE76 onder 15 = lastig te onderscheiden):
   - flow-kleuren: deuteranopie `flowExpenses`/`flowSaved` 6,9 (normaal 53,8); protanopie `flowVariable`/`flowSaved` 10,6.
   - `Theme.palette`: deuteranopie `[0]`/`[3]` 1,3, `[1]`/`[5]` 8,4, `[4]`/`[5]` 13,0; protanopie `[4]`/`[5]` 9,9; tritanopie `[0]`/`[6]` 12,7, `[1]`/`[4]` 10,4.
@@ -121,7 +124,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 ### 2.6 SF Symbols (SYM)
 
 - **SYM-1** REGEL: Gebruik SF Symbols voor interface-pictogrammen, en de standaardsymbolen voor standaardacties: `plus` (toevoegen), `xmark` (annuleren/sluiten), `checkmark` (klaar), `trash` (verwijderen), `ellipsis` (meer), `square.and.arrow.up` (delen), `person.crop.circle` (account), `magnifyingglass`, `line.3.horizontal.decrease` (filter), `pencil` (hernoemen), `arrow.uturn.backward` (ongedaan maken). / TOETS: toolbar- en menuacties gebruiken deze namen; geen emoji of PNG als pictogram. `[B:icons]`
-- **SYM-2** REGEL: Symbolen schalen mee met de tekst; vermijd vaste puntgroottes. / TOETS: `.font(.system(size:` op een symbool (`RootView.swift:101`, `Components.swift:239`, `HomeView.swift:325`); gebruik `Label`, een tekststijl of `@ScaledMetric`. `[B:sf-symbols, typography]`
+- **SYM-2** REGEL: Symbolen schalen mee met de tekst; vermijd vaste puntgroottes. / TOETS: `.font(.system(size:` op een symbool (`RootView.swift:101`, `Components.swift:239`, `HomeView.swift:328`); gebruik `Label`, een tekststijl of `@ScaledMetric`. `[B:sf-symbols, typography]`
 - **SYM-3** REGEL: Gewicht van symbool en tekst gelijk houden, tenzij een van beide moet opvallen. / TOETS: `.font(.subheadline.weight(.semibold))` op een symbool naast `.headline`-tekst (`Components.swift:77-81`): bewust kiezen. `[B:icons]`
 - **SYM-4** REGEL: Lever een geselecteerde variant (gevuld) alleen zelf als het nodig is; standaardcomponenten (tabbalk, toolbar) regelen dat. / TOETS: `AppTab.symbol(selected:)` (`Router.swift:16`) vervalt bij `TabView`. `[B:icons, tab-bars]`
 - **SYM-5** REGEL: Rendering mode bewust: monochroom/hierarchisch met systeemkleuren; multicolor alleen als de kleur betekenis heeft. / TOETS: `symbolRenderingMode` komt niet voor; standaard is goed. `[B:sf-symbols]`
@@ -153,7 +156,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 
 - **TAB-1** REGEL: Een tabbalk is voor navigatie tussen secties op het hoogste niveau, niet voor acties (acties horen in een toolbar). / TOETS: geen tab die een actie uitvoert (bijvoorbeeld "Voorbeelddata laden"). `[B:tab-bars]`
 - **TAB-2** REGEL: De tabbalk blijft zichtbaar bij het navigeren in een sectie (uitzondering: een modaal scherm erover); schakel tabs nooit uit of verberg ze; is een sectie leeg, leg uit waarom. / TOETS: `RootView.swift:20` verbergt de tabbalk bij een zichtbaar toetsenbord; de native tabbalk regelt dit zelf. `[B:tab-bars]`
-- **TAB-3** REGEL: Houd het aantal tabs klein (3 tot 5 op iPhone) en vermijd de "Meer"-tab. / TOETS: nu 3 (goed); bij een vierde tab (bijvoorbeeld Instellingen of Zoeken) niet over 5. `[B:tab-bars]`
+- **TAB-3** REGEL: Gebruik zo weinig tabs als nodig en vermijd de overloop-tab "Meer" (iOS/iPadOS); minder tabs is makkelijker te overzien, en bij een complexe structuur past een sidebar of een tabbalk die in een sidebar kan veranderen. / TOETS: nu 3 tabs (goed); een vierde of vijfde tab alleen als die dagelijks nodig is. De HIG noemt geen getal; "hoogstens 5 op een iPhone" is `[K]`. `[B:tab-bars]`
 - **TAB-4** REGEL: Elke tab een label van een woord en een gevuld SF Symbol. Voor deze Nederlandse app horen de labels Nederlands te zijn. / TOETS: `AppTab.title` (`Router.swift:8-14`) is "Home", "Savings", "Tools"; voorstel `[K]`: "Overzicht", "Sparen", "Hulpmiddelen" (of een andere vaste Nederlandse eenwoord-set). `[B:tab-bars, writing]`
 - **TAB-5** REGEL: Gebruik de native tabbalk: `TabView { Tab("Naam", systemImage: "...") { ... } }` met `.tabViewStyle(.sidebarAdaptable)` (iOS 18/macOS 15). Gedrag volgens Apple: iPhone onderbalk, iPad bovenbalk die in een sidebar kan veranderen, macOS altijd een sidebar. / TOETS: `grep -rn "TabView" App/` = 0 en de zelfgebouwde `GlassTabBar`; vervangen. `[A:swiftui/tabviewstyle/sidebaradaptable, B:tab-bars, sidebars]`
 - **TAB-6** REGEL: Bewaar de navigatiestatus per tab; wisselen tussen tabs wist het pad niet. Opnieuw tikken op de actieve tab brengt je terug naar de hoofdpagina. / TOETS: `Router.select` (`Router.swift:66-73`) zet het pad van de nieuwe tab leeg ook bij wisselen van een andere tab; wis alleen als `newTab == tab`. `[B:tab-bars]` (bewaren) / `[K]` (opnieuw tikken)
@@ -233,21 +236,21 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 - **LST-6** REGEL: Bij te lange namen een ellips in het midden (`.truncationMode(.middle)`) of laat de tekst wrappen. / TOETS: namen van potten/beleggingen in rijen. `[B:lists-and-tables]`
 - **LST-7** REGEL: Gebruik de standaard rijhoogte en -padding (op iOS 26 groter); krimp ze niet. / TOETS: `listRowInsets` en vaste rijhoogtes opsporen. `[B:adopting-liquid-glass]`
 - **LST-8** REGEL: Contextmenu: weinig items, de belangrijkste eerst, destructief laatst en als destructief gemarkeerd, onbeschikbare items verbergen (niet dimmen), overal consequent, en alles ook in de hoofd-UI. / TOETS: 2 `contextMenu`-treffers tegen tientallen rijsoorten; maak het een patroon via een gedeelde `View`-extensie. `[B:context-menus]`
-- **LST-9** REGEL: Een lege lijst krijgt een lege staat (EMP-1). / TOETS: `EmptyHint` (15 plekken) is de eigen versie. `[B:writing]`
+- **LST-9** REGEL: Een lege lijst krijgt een lege staat (EMP-1). / TOETS: `EmptyHint` (14 plekken) is de eigen versie. `[B:writing]`
 
 ### 2.17 Grafieken (CHT)
 
 - **CHT-1** REGEL: Een grafiek is er om een boodschap te laten zien; kies gangbare typen (lijn voor verloop in de tijd, staaf voor vergelijken of een som per periode, sector spaarzaam). Houd het eenvoudig en laat details op verzoek zien. / TOETS: boven elke grafiek staat een kop of een zin met de kernboodschap ("Je buffer groeit naar 5.000 euro in mei"), niet alleen de bloktitel. `[B:charting-data, charts]`
 - **CHT-2** REGEL: Elke grafiek is toegankelijk: labels die waarden en onderdelen beschrijven en elementen waarmee VoiceOver kan interacteren. Swift Charts geeft standaard een element per mark en een Audio Graph; verbeter dat met een titel en samenvatting (`AXChartDescriptorRepresentable`/`.accessibilityChartDescriptor`, iOS 15/macOS 12) en `accessibilityLabel`/`accessibilityValue` op marks. Labels: context plus waarde plus eenheid ("januari 2026: 1.250 euro", niet "1/26: 1250"), geen subjectieve woorden ("snel", "bijna"), beschrijf wat het betekent, niet welke kleur; verberg de zichtbare as- en tick-labels voor VoiceOver. Voor een kleine grafiek (sparkline) volstaat een samenvattend label. / TOETS: `grep -rn "accessibilityChartDescriptor" App/` = 0; van de 8 grafiekviews hebben alleen `BufferChart` (`BufferPages.swift:526`) en `DayBalanceChart` (`CashflowPages.swift:315`) een samenvattend label. `[B:charts]` `[A:swiftui/axchartdescriptorrepresentable, charts/chartcontent]`
 - **CHT-3** REGEL: Kies de as bewust: vast bereik als min en max betekenis hebben (percentage 0 tot 100), dynamisch als de waarden sterk wisselen; staafgrafieken beginnen bij nul, lijngrafieken mogen een andere ondergrens hebben als het verloop telt; gangbare tickreeksen (0, 5, 10); niet te veel rasterlijnen. / TOETS: `Charts.swift:89` `includesZero: false` voor lijnen is goed; elke `BarMark` heeft `includesZero: true` (staat nu standaard). `[B:charts]`
-- **CHT-4** REGEL: Gebruik een reeks per kleur en dezelfde kleur voor dezelfde grootheid door de hele app, ook tussen de kleine en de grote versie van dezelfde gegevens. / TOETS: `Theme.flow*` zijn gedeeld (goed); `BufferChart`, `ProjectionPage`, `GoalCurveChart` en `SavingsGoalChart` kiezen eigen kleuren (`Theme.warning`, `Theme.flowExpenses`, ...): een tabel `grootheid -> kleur` vastleggen. `[B:charting-data]`
+- **CHT-4** REGEL: Gebruik een reeks per kleur en dezelfde kleur voor dezelfde grootheid door de hele app, ook tussen de kleine en de grote versie van dezelfde gegevens. / TOETS: `Theme.flow*` zijn gedeeld (goed); `BufferChart`, `ProjectionPage`, `GoalCurveChart` en `SavingsGoalChart` kiezen eigen kleuren (`Theme.warning`, `Theme.flowExpenses`, ...): een tabel `grootheid -> kleur` vastleggen. `AllocationDonut` kleurt per positie (`Theme.color($0)`, `Charts.swift:158-159`) terwijl de sectoren op waarde zijn gesorteerd: een beleggingssoort wisselt van kleur zodra de volgorde verandert; kleur per `HoldingKind` vastleggen. `[B:charting-data]` / `[K]` (eigen leeswerk)
 - **CHT-5** REGEL: Gebruik niet alleen kleur: vorm, patroon of lijnstijl erbij; geef aangrenzende gekleurde vlakken een scheiding. / TOETS: bij twee of meer reeksen `.symbol(by:)`, `.lineStyle(by:)` of directe labels aan de lijn; gestapelde staven een dunne witte rand of `.cornerRadius`; zie COL-7 voor de meting. `[B:charts, accessibility]`
 - **CHT-6** REGEL: Interactie is optioneel; kritieke informatie staat zonder interactie zichtbaar. Maak het raakvlak het hele plotgebied (scrubben, `chartXSelection`, iOS 17/macOS 14) met een `RuleMark` en annotatie. / TOETS: naast elke grafiek staat de kernwaarde als tekst (laatste waarde, totaal). `[B:charts]` `[A:swiftui/view/chartxselection(value:)]`
-- **CHT-7** REGEL: Een grafiek zonder gegevens toont een lege staat met uitleg en actie; een grafiek met een punt toont dat punt plus tekst; pas vanaf twee punten een lijn. / TOETS: `PortfolioPages.swift:63` toont bij `series.count <= 1` alleen een voetnoot (`:69`); `series` komt uit `portfolioSeries` (`Invest.swift:96`), dat maanden zonder meetpunt overslaat: zie of een nieuwe belegging met een meetpunt toch een zichtbare grafiek geeft. `[K]` (afleiding uit HIG-regel over lege staten: `[B:writing]`)
+- **CHT-7** REGEL: Een grafiek zonder gegevens toont een lege staat met uitleg en actie; een grafiek met een punt toont dat punt plus tekst; pas vanaf twee punten een lijn. / TOETS: `PortfolioPages.swift:66-75` toont "Groei" alleen bij `series.count > 1` en anders een voetnoot (`:72-74`); `series` komt uit `portfolioSeries` (`Invest.swift:152-170`), dat maanden zonder meetpunt overslaat (`guard any`) en na de huidige maand verwachte punten toevoegt. Een belegging zonder enig meetpunt geeft dus een lege reeks: een gevolgde belegging krijgt bij toevoegen geen beginwaarde (`PortfolioPages.swift:705-707`: `initial` is nil als `tracked`) en dus pas een punt als `refreshPrices` slaagt; een handmatige belegging met waarde 0 ook niet. `TimeLineChart` (`Charts.swift:58-95`) tekent bij een werkelijk punt alleen een `PointMark`. De voetnoot ("groeit mee zodra er meer meetpunten zijn") klopt dan niet: er is er nog geen. Gereproduceerd: een gevolgde belegging zonder koers en een handmatige met waarde 0 geven 0 punten; met een beginwaarde of een eerste koers 13 punten (1 werkelijk, 12 verwacht). Test ook: meerdere punten en koersophaling mislukt. `[P]` (HIG-regel over lege staten: `[B:writing]`)
 - **CHT-8** REGEL: Houd grafiekgegevens robuust. / TOETS `[K]` (Swift Charts-praktijk):
   - alleen eindige waarden (`isFinite`); NaN en oneindig geven lege of gebroken grafieken;
   - unieke, stabiele `id`'s per punt;
-  - `domain: lo...hi` alleen met `lo < hi`; een omgekeerd bereik crasht (`CashflowPages.swift:300` `floorValue...ceilingValue`, `BufferPages.swift:512` `0...topValue`);
+  - `domain: lo...hi` alleen met `lo < hi`; een omgekeerd bereik of NaN laat Swift crashen (`CashflowPages.swift:303` `floorValue...ceilingValue`, `BufferPages.swift:512` `0...topValue`); beide zijn nu veilig doordat `pad >= 50` (`CashflowPages.swift:261`) en `topValue >= 1,05` (`BufferPages.swift:498-502`) gelden: houd die ondergrens;
   - meerdere reeksen in een `LineMark` apart houden met `series:` of `foregroundStyle(by:)`, anders verbindt Charts alle punten tot een lijn;
   - bij `unit: .month` datums op de eerste van de maand;
   - een expliciete `.frame(height:)` in een `ScrollView`.
@@ -303,7 +306,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 
 **Stappers en schuifregelaars (STP)**
 
-- **STP-1** REGEL: Een stapper staat naast het veld dat de waarde toont; combineer hem met een tekstveld bij grote waardenbereiken. / TOETS: 14 `Stepper`-plekken: elk met zichtbare waarde. `[B:steppers]`
+- **STP-1** REGEL: Een stapper staat naast het veld dat de waarde toont; combineer hem met een tekstveld bij grote waardenbereiken. / TOETS: 6 `Stepper`-plekken: elk met zichtbare waarde. `[B:steppers]`
 - **STP-2** REGEL: Een schuifregelaar: minimum links (leading), maximum rechts; combineer hem met een tekstveld (en stapper) bij brede bereiken en toon de exacte waarde. / TOETS: 3 `Slider`-plekken tonen de waarde numeriek. `[B:sliders]`
 
 **Schakelaars (TGL)**
@@ -314,7 +317,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 
 **Segmenten (SEG)**
 
-- **SEG-1** REGEL: Een gesegmenteerde besturing voor nauw verwante keuzes of subweergaven (Maand, Half jaar, Jaar; 6 maanden, 1 jaar, 3 jaar); op iPhone hoogstens ongeveer 5 segmenten; alleen tekst of alleen pictogrammen; gelijke breedte; zelfstandig naamwoord als label; niet voor navigatie tussen secties (dat is de tabbalk). / TOETS: `Picker(...).pickerStyle(.segmented)` (aanwezig bij `PortfolioPages.swift:56-61`) met `.labelsHidden()`: geef de picker een toegankelijkheidslabel. `[B:segmented-controls]`
+- **SEG-1** REGEL: Een gesegmenteerde besturing voor nauw verwante keuzes of subweergaven (Maand, Half jaar, Jaar; 6 maanden, 1 jaar, 3 jaar); op iPhone hoogstens ongeveer 5 segmenten; alleen tekst of alleen pictogrammen; gelijke breedte; zelfstandig naamwoord als label; niet voor navigatie tussen secties (dat is de tabbalk). / TOETS: `Picker(...).pickerStyle(.segmented)` (aanwezig bij `PortfolioPages.swift:59-65`) met `.labelsHidden()`: geef de picker een toegankelijkheidslabel. `[B:segmented-controls]`
 
 ### 2.22 Knoppen (BTN)
 
@@ -336,17 +339,17 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 
 ### 2.24 Verversen en laden (RFR/LOD)
 
-- **RFR-1** REGEL: Trek-om-te-verversen (`.refreshable`) op scrollende lijsten met gegevens die kunnen verversen; en ververs ook automatisch; geef een titel alleen als die iets toevoegt (bijvoorbeeld wanneer het laatst). / TOETS: `grep -rn "refreshable" App/` (1: `PortfolioPages.swift:93`): ook op Home en de koersgevoelige pagina's (belegging-detail); de koersen worden al bij openen opgehaald. `[B:progress-indicators]`
-- **RFR-2** REGEL: Toon de status "laatst bijgewerkt" in de context, niet als pop-up. / TOETS: `priceStatus` (`PortfolioPages.swift:99`) doet dat (goed). `[B:feedback, progress-indicators]`
+- **RFR-1** REGEL: Trek-om-te-verversen (`.refreshable`) op scrollende lijsten met gegevens die kunnen verversen; en ververs ook automatisch; geef een titel alleen als die iets toevoegt (bijvoorbeeld wanneer het laatst). / TOETS: `grep -rn "refreshable" App/` (1: `PortfolioPages.swift:96`): ook op Home en de koersgevoelige pagina's (belegging-detail); de koersen worden al bij openen opgehaald. `[B:progress-indicators]`
+- **RFR-2** REGEL: Toon de status "laatst bijgewerkt" in de context, niet als pop-up. / TOETS: `priceStatus` (`PortfolioPages.swift:102`) doet dat (goed). `[B:feedback, progress-indicators]`
 - **LOD-1** REGEL: Toon zo snel mogelijk iets (gecachte gegevens, placeholders) en laad op de achtergrond; blokkeer de interface niet. / TOETS: `.redacted(reason: .placeholder)` (nu 0) tijdens de eerste koersen; geen schermvullende spinner. `[B:loading]`
 - **LOD-2** REGEL: Een determinate voortgangsindicator als de duur bekend is (`ProgressView(value:total:)`), een spinner als die onbekend is; wissel niet van spinner naar balk; bied annuleren aan bij lange acties. / TOETS: de import in `BackupUI.swift`: `ProgressView(value:)` (nu 0) en een Annuleer-knop. `[B:progress-indicators]`
-- **LOD-3** REGEL: Beschrijf de voortgang concreet ("Koersen ophalen…"), niet "Laden". / TOETS: `PortfolioPages.swift:104` (goed). `[B:progress-indicators]`
-- **LOD-4** REGEL: Een storing bij ophalen is een inline melding (`NoticeBanner`, 5 plekken), geen alert. / TOETS: `store.priceMessage`. `[B:alerts, feedback]`
+- **LOD-3** REGEL: Beschrijf de voortgang concreet ("Koersen ophalen…"), niet "Laden". / TOETS: `PortfolioPages.swift:107` (goed). `[B:progress-indicators]`
+- **LOD-4** REGEL: Een storing bij ophalen is een inline melding (`NoticeBanner`, 4 plekken), geen alert. / TOETS: `store.priceMessage`. `[B:alerts, feedback]`
 
 ### 2.25 Lege staten (EMP)
 
-- **EMP-1** REGEL: Een lege staat gebruikt `ContentUnavailableView` (iOS 17/macOS 14) met een label, een beschrijving en een actieknop; `ContentUnavailableView.search` voor "geen resultaten". Apple raadt hem aan voor "een netwerkfout, een lijst zonder items, een zoekopdracht zonder resultaat". / TOETS: `grep -rn "ContentUnavailableView" App/` = 0; de eigen `EmptyHint` (15 plekken) is ofwel een dunne wrapper om `ContentUnavailableView` ofwel vervangen. `[A:swiftui/contentunavailableview]` `[B:writing]`
-- **EMP-2** REGEL: Geef op een leeg scherm een duidelijke volgende stap met een knop of link; toon geen cruciale informatie die later verdwijnt. / TOETS: elke `EmptyHint` heeft `actionTitle` (`PortfolioPages.swift:28-30` goed). `[B:writing]`
+- **EMP-1** REGEL: Een lege staat gebruikt `ContentUnavailableView` (iOS 17/macOS 14) met een label, een beschrijving en een actieknop; `ContentUnavailableView.search` voor "geen resultaten". Apple raadt hem aan voor "een netwerkfout, een lijst zonder items, een zoekopdracht zonder resultaat". / TOETS: `grep -rn "ContentUnavailableView" App/` = 0; de eigen `EmptyHint` (14 plekken) is ofwel een dunne wrapper om `ContentUnavailableView` ofwel vervangen. `[A:swiftui/contentunavailableview]` `[B:writing]`
+- **EMP-2** REGEL: Geef op een leeg scherm een duidelijke volgende stap met een knop of link; toon geen cruciale informatie die later verdwijnt. / TOETS: elke `EmptyHint` heeft `actionTitle` (`PortfolioPages.swift:31-33` goed). `[B:writing]`
 - **EMP-3** REGEL: Is een tab-sectie leeg, laat de tab staan en leg uit waarom. / TOETS: geen tab die verdwijnt als er geen potten zijn. `[B:tab-bars]`
 - **EMP-4** REGEL: Een grafiek zonder gegevens is een lege staat, geen lege assen (zie CHT-7). / TOETS: elke chartview begint met een `guard`/`if` naar `ContentUnavailableView`. `[B:charts]` / `[K]`
 - **EMP-5** REGEL: Een foutstaat (geen verbinding) krijgt een knop "Probeer opnieuw". / TOETS: `ContentUnavailableView` met `actions:`. `[A:swiftui/contentunavailableview]`
@@ -378,7 +381,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 
 ### 2.29 macOS (MAC)
 
-- **MAC-1** REGEL: Laat mensen het venster verkleinen, vergroten en verplaatsen; stel een minimumgrootte in. Een enkel venster (`Window`) is toegestaan als er een reden is (hier: een store per gegevensbestand, `MyBuddyApp.swift:22-24`). / TOETS: `Window("MyBuddy", id: "main")` met `.defaultSize` en `windowResizability` is aanwezig; zorg dat de titel de sectie noemt (NAV-3). `[B:windows, designing-for-macos]`
+- **MAC-1** REGEL: Laat mensen het venster verkleinen, vergroten en verplaatsen; stel een minimumgrootte in. Een enkel venster (`Window`) is toegestaan als er een reden is (hier: een store per gegevensbestand, `MyBuddyApp.swift:22-24`). / TOETS: `Window("MyBuddy", id: "main")` met `.defaultSize` (`MyBuddyApp.swift:27`) en een `.frame(minWidth: 480, minHeight: 640)` op de inhoud (`:39`) is aanwezig; `windowResizability` is niet gezet (controleer op de Mac dat het venster niet kleiner kan dan dat minimum, `[K]`); zorg dat de titel de sectie noemt (NAV-3). `[B:windows, designing-for-macos]`
 - **MAC-2** REGEL: Plaats alle commando's in de menubalk; ondersteun de standaardmenu's (App, Archief, Bewerken, Weergave, Venster, Help) en zet app-eigen commando's in een eigen menu; "Instellingen…" staat in het App-menu. / TOETS: `grep -rn "\.commands\|CommandMenu\|CommandGroup" App/` = 0: voeg toe: `CommandGroup(replacing: .newItem)` (Nieuwe regel, Cmd+N), `CommandMenu("Gegevens")` (Importeren, Exporteren), Weergave-items per tab (Cmd+1/2/3). `[B:the-menu-bar, designing-for-macos]`
 - **MAC-3** REGEL: Instellingen via de `Settings`-scene; Cmd+komma werkt dan vanzelf. / TOETS: zie SET-4 en SET-5. `[B:settings]` `[A:swiftui/settings]`
 - **MAC-4** REGEL: Navigatie als sidebar (niet als onderbalk), geen kritieke elementen onderaan het venster of de sidebar. / TOETS: zie TAB-5, LAY-8, SID-4. `[B:sidebars, layout]` `[A:swiftui/tabviewstyle/sidebaradaptable]`
@@ -401,7 +404,7 @@ Doel: de Apple Human Interface Guidelines vertaald naar korte, toetsbare regels 
 - **WRT-1** REGEL: Duidelijk, kort, actief; knoppen en links met een werkwoord; "tik" op een touchscreen en "klik" met de muis; geen "Klik hier". / TOETS: `grep -rn "Klik\|klik\|Tik\|tik" App/` en kijk of de tekst bij het platform past (op de Mac "klik"). `[B:writing]`
 - **WRT-2** REGEL: Een woord per begrip, in de hele app: spaarpot, belegging, doel, blok, bank. Stel een termenlijst op. / TOETS: `Portefeuille` komt nog voor naast `Beleggingen`; "Savings", "Tools", "Home" staan in een Nederlandse app. `[B:writing]`
 - **WRT-3** REGEL: Kies per soort element een hoofdletterstijl en houd die vast; voor het Nederlands zinshoofdletter. / TOETS: zie MNU-5. `[B:writing]` / `[K]`
-- **WRT-4** REGEL: Gebruik bezittelijke voornaamwoorden spaarzaam ("Beleggingen", niet "Mijn beleggingen"); en nooit "wij". / TOETS: `PortfolioPages.swift:81` "Mijn beleggingen"; "je" in lopende tekst mag, maar niet wisselen van perspectief. `[B:writing]` (bijgewerkt 16 december 2025)
+- **WRT-4** REGEL: Gebruik bezittelijke voornaamwoorden spaarzaam ("Beleggingen", niet "Mijn beleggingen"); en nooit "wij". / TOETS: `PortfolioPages.swift:84` "Mijn beleggingen"; "je" in lopende tekst mag, maar niet wisselen van perspectief. `[B:writing]` (bijgewerkt 16 december 2025)
 - **WRT-5** REGEL: Voor lege schermen een volgende stap met knop. / TOETS: zie EMP-2. `[B:writing]`
 - **WRT-6** REGEL: Foutmeldingen dichtbij het probleem, zonder blaam, en zeg wat te doen ("Kies een bedrag van 0 tot 100 procent", niet "Ongeldige invoer"); geen "Oeps". / TOETS: foutteksten in `Core` en `Pages` nalopen. `[B:writing]`
 - **WRT-7** REGEL: Instellinglabels praktisch; beschrijf wat het doet als het aan staat. / TOETS: zie SET-7. `[B:writing]`
@@ -497,21 +500,22 @@ Peildatum 15 oktober 2026. Een ander herstelwerk wijzigt tegelijk bestanden in `
 | Instellingen als sheet | `.sheet(isPresented: $router.showSettings)`; geen `Settings`-scene; geen `.commands` | `RootView.swift:26`, `Router.swift:57`, `Components.swift:38`, `MyBuddyApp.swift:20-32` |
 | Sheet vanuit sheet | wachtwoord- en verwijdersheets vanuit Instellingen | `CloudViews.swift:115-116`, `AuthView.swift:636-637` |
 | Account niet apart | `AccountAndSyncSections` is de eerste sectie in de lange instellingenlijst | `SettingsView.swift:21` |
-| Vaste lettergroottes | 5 plekken | `RootView.swift:101`, `Components.swift:239`, `HomeView.swift:325`, `PurchasePages.swift:516,631` |
+| Vaste lettergroottes | 5 plekken | `RootView.swift:101`, `Components.swift:239`, `HomeView.swift:328`, `PurchasePages.swift:516,631` |
 | Dynamic Type niet beheerd | 0 `isAccessibilitySize`, 0 `ScaledMetric`, 0 `dynamicTypeSize`, 49 `minimumScaleFactor` | app-breed |
 | Beweging | 0 `accessibilityReduceMotion`, 0 `accessibilityReduceTransparency`; paginabrede animaties | `Components.swift:23-25`, `RootView.swift:64-67` |
 | Haptiek | 0 `sensoryFeedback` | app-breed |
 | Raakdoel | `Theme.buttonHeight = 42` | `Theme.swift:39` |
 | Sectiekoppen in hoofdletters | `SectionLabel` met `uppercased()` | `Components.swift:137` |
 | Swipe-acties, tooltips, hover | 0 `swipeActions`, 0 `.help(`, 0 `hoverEffect` | app-breed |
-| Lege staten | 0 `ContentUnavailableView`; 15 `EmptyHint` | app-breed |
+| Lege staten | 0 `ContentUnavailableView`; 14 `EmptyHint` | app-breed |
 | Contrast (tekstkleuren licht) | `warning` 2,5 tot 3,4:1; `negative` 3,3 tot 4,5:1; `accent` 3,7 tot 5,0:1 | `Theme.swift:60-63`; meting in 2.3 |
 | Kleurenblindheid | `flowExpenses`/`flowSaved` (deuteranopie) en `palette[0]`/`[3]` vrijwel gelijk | `Theme.swift:66-82`; meting in COL-7 |
 | Grafiek-toegankelijkheid | 8 grafiekviews; 2 samenvattende labels (`BufferChart`, `DayBalanceChart`); 0 `accessibilityChartDescriptor`; 0 labels per mark | `BufferPages.swift:526`, `CashflowPages.swift:315` |
-| Grafiekbereik | `floorValue...ceilingValue` en `0...topValue` zonder expliciete `lo < hi`-guard | `CashflowPages.swift:300`, `BufferPages.swift:512` |
-| Grafiek Beleggingen | de "Groei"-grafiek verschijnt alleen bij meer dan een punt; anders een voetnoot | `PortfolioPages.swift:17, 63-71`, `Invest.swift:96-113` |
+| Grafiekbereik | `floorValue...ceilingValue` en `0...topValue` zijn veilig door `pad >= 50` en `topValue >= 1,05`; alleen NaN zou crashen (geen `isFinite`-controle) | `CashflowPages.swift:261-264, 303`, `BufferPages.swift:498-512` |
+| Grafiek Beleggingen | "Groei" verschijnt alleen bij `series.count > 1`, anders een voetnoot. `portfolioSeries` slaat maanden zonder meetpunt over; een gevolgde belegging krijgt bij toevoegen geen beginwaarde (`initial` is nil) en heeft dus geen punt tot `refreshPrices` slaagt; een handmatige belegging met waarde 0 ook niet. Gereproduceerd met `/tmp/hig-probe` (`portfolioSeries` tegen `App/Core`): zonder meetpunt 0 punten, met een beginwaarde of een eerste koers 13 (1 werkelijk, 12 verwacht). De voetnoot zegt dan ten onrechte "zodra er meer meetpunten zijn" | `PortfolioPages.swift:20, 66-75, 705-707`, `Invest.swift:152-170`, `Charts.swift:58-95` |
+| Grafiekkleur per positie | `AllocationDonut` kleurt met `Theme.color(index)` terwijl de sectoren op waarde zijn gesorteerd: een soort wisselt van kleur als de volgorde wisselt | `Charts.swift:158-159` |
 | Contextmenu als enige ingang | "Volgorde aanpassen" alleen via lang indrukken | `BlockOrder.swift` |
-| Bezittelijk voornaamwoord | "Mijn beleggingen" | `PortfolioPages.swift:81` |
+| Bezittelijk voornaamwoord | "Mijn beleggingen" | `PortfolioPages.swift:84` |
 | Al goed | `Fmt` met locale; `#if os(iOS)` om `keyboardType`; `#available(iOS 26, macOS 26)` in `Glass.swift`; `confirmationDialog` met `role: .destructive`; concentrische radii (`Theme.tileRadius`); `Window` voor een venster op macOS; geen `preferredColorScheme`; Keychain voor geheimen | respectievelijk |
 
 ---
@@ -525,6 +529,6 @@ Peildatum 15 oktober 2026. Een ander herstelwerk wijzigt tegelijk bestanden in `
 5. `confirmationDialog` op iPad/macOS verankeren aan een knop en `presentationSizing(.form)` hangen af van gedrag op een echt apparaat.
 6. Nederlandse hoofdlettergebruik: de HIG beschrijft titel-hoofdletters voor het Engels; de zinshoofdletter voor het Nederlands (Apple's eigen NL-interface) is `[K]`.
 7. Welke SF Symbols-namen nieuw zijn in SF Symbols 7 (zoals `document.on.document` uit de HIG-tabel) heb ik niet kunnen nagaan zonder de SF Symbols-app; houd voor iOS 18 de oude namen aan.
-8. Voor de grafiek bij Beleggingen: CHT-7 en CHT-8 zijn controlepunten op basis van Swift Charts-praktijk (`[K]`), niet het resultaat van een reproductie; de oorzaak van de storing moet een andere fase in de code aanwijzen.
+8. Voor de grafiek bij Beleggingen: de oorzaak "geen meetpunt, dus geen punten, dus alleen een voetnoot" is met `/tmp/hig-probe` gereproduceerd op `portfolioSeries` (Core), maar dat bewijst niet dat het de enige oorzaak is: of de gebruiker een belegging zonder meetpunt heeft, en of de koersophaling (netwerk) slaagt, is hier niet te zien. Een grafiek met 1 werkelijk punt plus 12 verwachte punten toont een stip en een stippellijn; of dat voor de gebruiker "werkt" is een ontwerpvraag. De rest van de keten (`TimeLineChart`, SwiftUI) kan hier niet worden uitgevoerd.
 9. De HIG zegt niets specifieks over de plek van een "Instellingen"-knop op iOS. De voorgestelde vorm (een toolbar-knop op de tab-hoofdpagina's naar een volledige pagina, met Account als eerste rij) is afgeleid uit `[B:settings, sheets, managing-accounts]` plus de indeling van Apple's eigen Instellingen-app (`[K]`).
-10. Opgehaalde bronbestanden en scripts: `/tmp/hig-research/hig-txt/*.txt` (tekst per HIG-pagina), `/tmp/hig-research/contrast.py` (contrast en kleurenblindheid), `/tmp/hig-research/api.py` (beschikbaarheid), `/tmp/hig-research/hig2txt.py` (JSON naar tekst). Dit zijn tijdelijke bestanden buiten de repo.
+10. Opgehaalde bronbestanden en scripts: `/tmp/hig-probe` (proef `portfolioSeries`), `/tmp/hig-research/hig-txt/*.txt` (tekst per HIG-pagina), `/tmp/hig-research/contrast.py` (contrast en kleurenblindheid), `/tmp/hig-research/api.py` (beschikbaarheid), `/tmp/hig-research/hig2txt.py` (JSON naar tekst). Dit zijn tijdelijke bestanden buiten de repo.
