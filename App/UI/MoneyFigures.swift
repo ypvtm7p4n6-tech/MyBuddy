@@ -25,7 +25,11 @@ import Foundation
 //   Spaarpot eind maand          maand   potBalance(_:at:); totaal: totalSaved(asOf:) op de laatste dag
 //   Spaarpot op een datum        dag     potBalance(_:asOf:) (het saldo aan het eind van die dag)
 //   Vermogen eind maand          maand   netWorth(at:current:), label `MoneyLabels.netWorthEnd(of:)`
-//   Beleggingen                  maand   portfolioValue / portfolioInvested / holdingStateNow (per maand, niet per dag)
+//   Beleggingen NU               nu      portfolioValue / portfolioInvested / portfolioGain / holdingStateNow / valueByKind met
+//                                        `today:` (per kalenderdag: een inleg telt vanaf zijn overschrijfdag); de grafiek
+//                                        (`portfolioSeries(..., today:)`) eindigt in hetzelfde getal
+//   Beleggingen eind maand       maand   dezelfde functies zonder `today:`: de start voor toekomstschatting, doelen en versnellers
+//                                        (die rekenen per maand verder) en het Vermogen aan het eind van de maand
 //   Inleg van een pot/belegging  maand   allocation(_:in:) (het bedrag van die maand, ook bij een percentage), met de opbouw
 //                                        en de overschrijfdag in `ContributionInfo`
 //   Inleg voor SCHATTINGEN       gem.    estimatedAllocation(_:in:), monthlyInvestment(current:) en estimatedMonthlyIncome(in:):

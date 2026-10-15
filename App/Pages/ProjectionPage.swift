@@ -41,6 +41,18 @@ struct ProjectionPage: View {
                 })
     }
 
+    /// "Gebruik mijn beleggingen" start bij je beleggingen aan het EIND van deze maand (de schatting rekent per maand
+    /// verder, vanaf volgende maand). Staat er nog een inleg van deze maand te wachten, dan is dat meer dan wat je vandaag
+    /// hebt: zeg dat erbij, zodat het getal niet tegenspreekt wat Home en Beleggingen tonen.
+    private var startNote: String? {
+        let d = store.data
+        let now = store.now
+        let monthEnd = CentsMath.int(d.portfolioValue(current: now))
+        let today = CentsMath.int(d.portfolioValue(current: now, today: store.today))
+        guard monthEnd > today else { return nil }
+        return "Gebruik mijn beleggingen telt de inleg van deze maand die nog moet worden overgeschreven al mee (\(Fmt.euro(CentsMath.value(monthEnd - today)))). Vandaag heb je \(Fmt.euro(CentsMath.value(today)))."
+    }
+
     var body: some View {
         let inflation = store.data.settings.inflation
         let months = unit.months(horizon)
@@ -88,6 +100,11 @@ struct ProjectionPage: View {
                     Toggle("In koopkracht van vandaag", isOn: $inflationAdjusted)
                     if inflationAdjusted {
                         Text("Bedragen zijn gecorrigeerd voor \(Fmt.percent(inflation)) inflatie per jaar. Je past dat aan in Instellingen.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let note = startNote {
+                        Text(note)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

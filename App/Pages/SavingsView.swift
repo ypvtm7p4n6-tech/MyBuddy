@@ -254,10 +254,12 @@ struct PortfolioBlock: View {
     var body: some View {
         let d = store.data
         let now = store.now
-        let value = d.portfolioValue(current: now)
-        let invested = d.portfolioInvested(current: now)
-        let gain = d.portfolioGain(current: now)
-        let series = d.portfolioSeries(from: now.adding(-6), count: 13, current: now).map { TimePoint($0) }
+        // Wat je nu hebt, per kalenderdag (zoals de bank en de spaarpotten), net als op Home.
+        let today = store.today
+        let value = d.portfolioValue(current: now, today: today)
+        let invested = d.portfolioInvested(current: now, today: today)
+        let gain = d.portfolioGain(current: now, today: today)
+        let series = d.portfolioSeries(from: now.adding(-6), count: 13, current: now, today: today).map { TimePoint($0) }
         LinkedBlock(title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis",
                     subtitle: d.holdings.isEmpty ? nil : "\(d.holdings.count) \(d.holdings.count == 1 ? "belegging" : "beleggingen")",
                     destination: .portfolio) {

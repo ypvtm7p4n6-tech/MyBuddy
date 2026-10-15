@@ -388,10 +388,13 @@ struct InvestBlock: View {
     var body: some View {
         let d = store.data
         let now = store.now
-        let value = d.portfolioValue(current: now)
-        let gain = d.portfolioGain(current: now)
-        let invested = d.portfolioInvested(current: now)
-        let series = d.portfolioSeries(from: now.adding(-6), count: 13, current: now).map { TimePoint($0) }
+        // Wat je nu hebt, per kalenderdag (zoals de bank en de spaarpotten): een inleg die nog moet worden overgeschreven telt
+        // pas mee vanaf zijn overschrijfdag. Het laatste echte punt van de grafiek is hetzelfde getal.
+        let today = store.today
+        let value = d.portfolioValue(current: now, today: today)
+        let gain = d.portfolioGain(current: now, today: today)
+        let invested = d.portfolioInvested(current: now, today: today)
+        let series = d.portfolioSeries(from: now.adding(-6), count: 13, current: now, today: today).map { TimePoint($0) }
         let tiles = d.homeHoldings()
         GlassBlock(title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis",
                    subtitle: d.holdings.isEmpty ? nil : "Groei van je beleggingen",
@@ -444,7 +447,7 @@ struct HoldingTile: View {
     let holding: Holding
 
     var body: some View {
-        let state = store.data.holdingStateNow(holding, current: store.now)
+        let state = store.data.holdingStateNow(holding, current: store.now, today: store.today)
         let color = Theme.color(holdingColorIndex)
         NavigationLink(value: Destination.holding(holding.id)) {
             HStack(spacing: 10) {

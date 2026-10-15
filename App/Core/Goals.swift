@@ -139,7 +139,9 @@ extension FinanceData {
     }
 
     /// Uitgangspunten van een doel. Bij financiering uit een spaarpot is `start` het saldo van nu (`today`, zoals
-    /// `potBalanceNow`): de inleg van de 25e telt pas vanaf de 25e mee, en niet al op de 9e. De maandinleg is die van een
+    /// `potBalanceNow`): de inleg van de 25e telt pas vanaf de 25e mee, en niet al op de 9e. Bij financiering uit de
+    /// beleggingen is dat de waarde van nu per kalenderdag (`portfolioValue(current:today:)`), dezelfde als op Home en bij
+    /// Beleggingen; de inleg van deze maand die nog moet komen zit dan in de maandinleg. De maandinleg is die van een
     /// GEMIDDELDE maand (`estimatedAllocation`): bij een salaris om de zoveel weken of dagen en een inleg als percentage van
     /// het inkomen is een maand met twee uitbetalingen geen maat voor "elke maand".
     func goalInputs(for goal: LifeGoal, current: YearMonth, today: Date = Date()) -> GoalInputs {
@@ -152,7 +154,7 @@ extension FinanceData {
 
         switch goal.funding {
         case .portfolio:
-            start = portfolioValue(current: current)
+            start = portfolioValue(current: current, today: today)
             monthly = monthlyInvestment(current: current)
         case .pot(let id):
             start = potBalanceNow(id, current: current, today: today)

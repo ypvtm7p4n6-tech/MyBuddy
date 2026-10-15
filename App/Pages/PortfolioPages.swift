@@ -11,11 +11,14 @@ struct PortfolioPage: View {
     var body: some View {
         let d = store.data
         let now = store.now
-        let value = d.portfolioValue(current: now)
-        let invested = d.portfolioInvested(current: now)
-        let gain = d.portfolioGain(current: now)
-        let series = d.portfolioSeries(from: now.adding(-monthsBack), count: monthsBack + 13, current: now).map { TimePoint($0) }
-        let slices = d.valueByKind(current: now)
+        // Wat je nu hebt, per kalenderdag (zoals de bank en de spaarpotten): een inleg die nog moet worden overgeschreven telt
+        // pas mee vanaf zijn overschrijfdag. Het laatste echte punt van de grafiek is hetzelfde getal.
+        let today = store.today
+        let value = d.portfolioValue(current: now, today: today)
+        let invested = d.portfolioInvested(current: now, today: today)
+        let gain = d.portfolioGain(current: now, today: today)
+        let series = d.portfolioSeries(from: now.adding(-monthsBack), count: monthsBack + 13, current: now, today: today).map { TimePoint($0) }
+        let slices = d.valueByKind(current: now, today: today)
 
         PageScaffold(title: "Beleggingen") {
             VStack(spacing: Theme.pageSpacing) {
@@ -42,9 +45,9 @@ struct PortfolioPage: View {
                             // en bij Verdelen, en de optelling van de "Inleg deze maand" op de pagina van elke belegging.
                             StatTile(title: "Inleg deze maand", value: Fmt.euro(d.investedTotal(in: now)))
                         }
-                        // Beleggingen rekenen per maand, niet per dag (de bank en de spaarpotten wel): zeg dat erbij, zodat
-                        // een overschrijving van de 25e die nog moet gebeuren hier al in de waarde zit.
-                        Text("De waarde is je laatste meetpunt plus de inleg van de maanden daarna, tot en met deze maand. Een inleg die nog moet worden overgeschreven telt dus al mee; op de bankrekening staat dat geld pas na de overschrijfdag niet meer.")
+                        // De waarde rekent per kalenderdag, net als de bank en de spaarpotten: een overschrijving van de 25e telt
+                        // vanaf de 25e mee (de hele dag), niet al op de 9e. "Inleg deze maand" is wel de hele maand.
+                        Text("De waarde is je laatste meetpunt plus de inleg die al is overgeschreven, zoals bij je bankrekening en spaarpotten. Een inleg die nog moet komen telt pas mee vanaf de overschrijfdag; \"Inleg deze maand\" is de hele maand.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                         priceStatus
@@ -122,7 +125,7 @@ struct HoldingRow: View {
     let holding: Holding
 
     var body: some View {
-        let state = store.data.holdingStateNow(holding, current: store.now)
+        let state = store.data.holdingStateNow(holding, current: store.now, today: store.today)
         let color = Theme.color(HoldingKind.allCases.firstIndex(of: holding.kind) ?? 0)
         NavigationLink(value: Destination.holding(holding.id)) {
             HStack(spacing: 12) {
@@ -197,9 +200,10 @@ struct HoldingDetailPage: View {
     private func content(_ holding: Holding) -> some View {
         let d = store.data
         let now = store.now
-        let state = d.holdingStateNow(holding, current: now)
+        let state = d.holdingStateNow(holding, current: now, today: store.today)
         let snapshots = holding.snapshots.sorted { $0.date > $1.date }
-        let valueSeries = d.portfolioSeries(from: now.adding(-12), count: 25, current: now, only: [holding.id]).map { TimePoint($0) }
+        let valueSeries = d.portfolioSeries(from: now.adding(-12), count: 25, current: now, only: [holding.id],
+                                            today: store.today).map { TimePoint($0) }
         let priceSeries = history.enumerated().map { TimePoint(id: "p\($0.offset)", date: $0.element.date, value: $0.element.close, projected: false) }
         let color = Theme.color(HoldingKind.allCases.firstIndex(of: holding.kind) ?? 0)
         // De opbouw van de maandelijkse inleg (een bedrag of een percentage van je inkomen), uit de rekenmotor.
@@ -394,7 +398,7 @@ struct ValueUpdateSheet: View {
             }
         }
         .onAppear {
-            let state = store.data.holdingStateNow(holding, current: store.now)
+            let state = store.data.holdingStateNow(holding, current: store.now, today: store.today)
             value = state?.value ?? 0
             invested = state?.invested ?? holding.investedTotal
         }

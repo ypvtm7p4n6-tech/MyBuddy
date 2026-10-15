@@ -418,7 +418,7 @@ struct BackupSection: View {
     }
 
     private func prepareCSVExport(_ report: CSVReport) {
-        let text = report.csv(for: store.data, current: store.now)
+        let text = report.csv(for: store.data, current: store.now, today: store.today)
         csvDocument = CSVDocument(data: CSVExport.csvData(text))
         csvFileName = report.baseFileName(now: Date())
         csvTarget = report

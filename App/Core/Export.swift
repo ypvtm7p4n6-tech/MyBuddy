@@ -228,7 +228,9 @@ enum CSVReport: String, CaseIterable, Identifiable {
         return "MyBuddy-" + stem + "-" + BackupService.dateStamp(now, timeZone: timeZone)
     }
 
-    func csv(for data: FinanceData, current: YearMonth) -> String {
+    /// `today`: de dag van nu, voor de waarde van beleggingen (per kalenderdag, zoals op het scherm). Zonder `today` is het de
+    /// waarde aan het eind van de maand.
+    func csv(for data: FinanceData, current: YearMonth, today: Date? = nil) -> String {
         switch self {
         case .monthly:
             let range = CSVExport.defaultMonthRange(data, current: current)
@@ -236,7 +238,7 @@ enum CSVReport: String, CaseIterable, Identifiable {
         case .transactions:
             return CSVExport.transactionsCSV(data)
         case .holdings:
-            return CSVExport.holdingsCSV(data, current: current)
+            return CSVExport.holdingsCSV(data, current: current, today: today)
         }
     }
 }
@@ -393,11 +395,13 @@ enum CSVExport {
 
     // MARK: Beleggingen
 
-    /// Eén regel per belegging met de waarde van nu. Rendement als percentage; leeg zolang er niets is ingelegd.
-    static func holdingsCSV(_ data: FinanceData, current: YearMonth) -> String {
+    /// Eén regel per belegging met de waarde van nu. Rendement als percentage; leeg zolang er niets is ingelegd. Met `today`
+    /// is dat de waarde van vandaag (per kalenderdag, dezelfde als op het scherm), anders de waarde aan het eind van de maand.
+    static func holdingsCSV(_ data: FinanceData, current: YearMonth, today: Date? = nil) -> String {
         var out = row(["Naam", "Soort", "Ticker", "Aantal", "Koers", "Waarde", "Ingelegd", "Rendement"])
         for holding in data.holdings {
-            let state = data.holdingStateNow(holding, current: current)
+            let state = today.map { data.holdingStateNow(holding, current: current, today: $0) }
+                ?? data.holdingStateNow(holding, current: current)
             let value = state?.value ?? 0
             let invested = state?.invested ?? holding.investedTotal
 
