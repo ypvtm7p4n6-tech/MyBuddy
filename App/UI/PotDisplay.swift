@@ -171,11 +171,12 @@ struct PotHistoryContext {
         return storedInterest.contains(id) ? id : nil
     }
 
-    /// De boeking die je mag verwijderen. Rente nooit: de app boekt ontbrekende rente bij de volgende start
-    /// (of het volgende bewaren van de pot) opnieuw, dus verwijderen helpt niet en maakt alleen de geschiedenis
-    /// onbetrouwbaar. Klopt het saldo niet, pas het dan aan met "Saldo aanpassen".
+    /// De boeking die je mag verwijderen. Rente die de app zelf beheert nooit: bij actieve rente boekt de app ontbrekende
+    /// rente bij de volgende start (of het volgende bewaren van de pot) opnieuw, dus verwijderen helpt niet en maakt alleen de
+    /// geschiedenis onbetrouwbaar. Klopt het saldo niet, pas het dan aan met "Saldo aanpassen". Staat de rente uit, dan
+    /// schrijft de app niets meer bij en zijn de al bijgeschreven regels wel te verwijderen.
     func deletableEntryID(for item: PotTimelineItem) -> UUID? {
-        guard item.kind != .interest, let id = entryID(for: item) else { return nil }
+        guard let id = entryID(for: item) else { return nil }
         return managedInterest.contains(id) ? nil : id
     }
 }

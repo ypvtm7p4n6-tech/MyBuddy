@@ -43,7 +43,7 @@ private struct BufferBlockContent: View {
                 BigAmount(value: r.target, font: .system(.title, design: .rounded, weight: .bold))
                 ProgressBar(progress: r.progress, tint: r.isFull ? Theme.positive : Theme.accent, height: 10)
                 HStack(spacing: 8) {
-                    Text("Nu \(Fmt.euroWhole(r.current))")
+                    Text("Nu \(Fmt.euro(r.current))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -187,9 +187,9 @@ private struct BufferPageContent: View {
                    subtitle: known ? "Uit je uitgaven van \(Fmt.month(now))" : "Nog geen uitgaven ingevuld") {
             if known {
                 LazyVGrid(columns: tileColumns, spacing: 8) {
-                    StatTile(title: d.salary.isMonthly ? "Inkomen" : "Gemiddeld inkomen", value: Fmt.euroWhole(income))
-                    StatTile(title: "Vaste uitgaven", value: Fmt.euroWhole(overview.fixed))
-                    StatTile(title: "Variabele uitgaven", value: Fmt.euroWhole(overview.variable))
+                    StatTile(title: d.salary.isMonthly ? "Inkomen" : "Gemiddeld inkomen", value: Fmt.euro(income))
+                    StatTile(title: "Vaste uitgaven", value: Fmt.euro(overview.fixed))
+                    StatTile(title: "Variabele uitgaven", value: Fmt.euro(overview.variable))
                 }
                 if income > 0 {
                     Text("Je uitgaven zijn \(Fmt.percent((overview.fixed + overview.variable) / income, digits: 0)) van je inkomen.")
@@ -244,12 +244,12 @@ private struct BufferPageContent: View {
             } else {
                 LazyVGrid(columns: tileColumns, spacing: 8) {
                     if setup.source.usesBank {
-                        StatTile(title: "Bankrekening", value: Fmt.euroWhole(bank))
+                        StatTile(title: "Bankrekening", value: Fmt.euro(bank))
                     }
                     if setup.source.usesPot, let potItem = chosenPot {
-                        StatTile(title: potItem.name, value: Fmt.euroWhole(potValue))
+                        StatTile(title: potItem.name, value: Fmt.euro(potValue))
                     }
-                    StatTile(title: "Totaal in buffer", value: Fmt.euroWhole(r.current), color: Theme.accent)
+                    StatTile(title: "Totaal in buffer", value: Fmt.euro(r.current), color: Theme.accent)
                 }
             }
             // Het saldo van vandaag moet bekend zijn: een saldo dat pas later begint zegt niets over nu.
@@ -267,7 +267,7 @@ private struct BufferPageContent: View {
 
     @ViewBuilder
     private func resultBlock(_ r: BufferResult) -> some View {
-        let statusText: String = r.isFull ? "Doel bereikt" : "Nog \(Fmt.euroWhole(r.gap))"
+        let statusText: String = r.isFull ? "Doel bereikt" : "Nog \(Fmt.euro(r.gap))"
         GlassBlock(title: "Jouw buffer", symbol: "shield.lefthalf.filled",
                    subtitle: "\(r.months) maanden aan noodzakelijke uitgaven",
                    tint: Theme.olive.opacity(0.3)) {
@@ -287,10 +287,10 @@ private struct BufferPageContent: View {
                         .foregroundStyle(r.isFull ? Theme.positive : Color.primary)
                 }
                 LazyVGrid(columns: tileColumns, spacing: 8) {
-                    StatTile(title: "Nu in buffer", value: Fmt.euroWhole(r.current))
-                    StatTile(title: "Nog nodig", value: Fmt.euroWhole(r.gap),
+                    StatTile(title: "Nu in buffer", value: Fmt.euro(r.current))
+                    StatTile(title: "Nog nodig", value: Fmt.euro(r.gap),
                              color: r.isFull ? Theme.positive : Color.primary)
-                    StatTile(title: "Uitgaven per maand", value: Fmt.euroWhole(r.essentialMonthly))
+                    StatTile(title: "Uitgaven per maand", value: Fmt.euro(r.essentialMonthly))
                     StatTile(title: "Dekking nu", value: r.coverageMonths.map { bufferMonthsText($0) } ?? "-")
                 }
                 coverageSentence(r)
@@ -321,6 +321,11 @@ private struct BufferPageContent: View {
         GlassBlock(title: "Hoe snel?", symbol: "hourglass", subtitle: "Wat je spaart bepaalt de tijd") {
             NumberRow(title: "Sparen per maand", value: $monthlySaving)
             Toggle("Spaarrente meerekenen (\(rateText))", isOn: bind(\.useInterest))
+            if !d.salary.isMonthly {
+                Text("Het standaard bedrag rekent met een gemiddelde maand, omdat je salaris niet elke maand even vaak binnenkomt.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             // Even grote knoppen: naast elkaar als er ruimte is, anders onder elkaar.
             LazyVGrid(columns: chipColumns, spacing: 10) {
                 ChipButton(title: "Standaard bedrag", symbol: "arrow.uturn.backward") {
@@ -397,7 +402,7 @@ private struct BufferPageContent: View {
     @ViewBuilder
     private func potBlock(_ d: FinanceData, result r: BufferResult) -> some View {
         let existing = BufferCalc.bufferPot(in: d)
-        let goalText: String = existing?.goalAmount.map { Fmt.euroWhole($0) } ?? "geen doel"
+        let goalText: String = existing?.goalAmount.map { Fmt.euro($0) } ?? "geen doel"
         let explanation: String = existing == nil
             ? "Maak een spaarpot met dit doelbedrag. Je volgt de voortgang dan ook bij je andere spaarpotten."
             : "Je spaarpot Buffer heeft nu \(goalText) als doel. Pas het aan naar het doel van deze calculator."
@@ -434,12 +439,12 @@ private struct BufferPageContent: View {
             var updated = existing
             updated.goalAmount = target
             store.mutate { $0.updatePot(updated, current: now) }
-            potMessage = "Spaarpot Buffer is bijgewerkt: doel \(Fmt.euroWhole(target))."
+            potMessage = "Spaarpot Buffer is bijgewerkt: doel \(Fmt.euro(target))."
         } else {
             let pot = Pot(name: "Buffer", symbol: "shield.lefthalf.filled", colorIndex: 0,
                           goalAmount: target, goalDate: nil, monthlyContribution: 0, startMonth: now)
             store.mutate { $0.addPot(pot) }
-            potMessage = "Spaarpot Buffer is gemaakt met een doel van \(Fmt.euroWhole(target)). Verdeel er geld over bij Verdelen."
+            potMessage = "Spaarpot Buffer is gemaakt met een doel van \(Fmt.euro(target)). Verdeel er geld over bij Verdelen."
         }
     }
 }

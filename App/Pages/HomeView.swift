@@ -167,6 +167,9 @@ struct RemainingHeader: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if board.roundingHidesSum {
+                    RoundingNote()
+                }
                 if let percentWarning {
                     AllocationWarningLabel(warning: percentWarning)
                 }

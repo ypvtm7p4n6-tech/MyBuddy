@@ -118,6 +118,65 @@ final class SalaryScheduleEditTests: XCTestCase {
         XCTAssertEqual(CalendarDay(date: try XCTUnwrap(d.nextPayDate(after: date(2026, 10, 16)))),
                        CalendarDay(year: 2026, month: 10, day: 30))
     }
+
+    // MARK: Een wijziging geldt vanaf de lopende maand
+
+    func testChangingTheScheduleLeavesPastMonthsAlone() {
+        var d = monthlyData()           // 700 per maand vanaf augustus
+        d.materialize(upTo: ym(2026, 10))
+        let today = date(2026, 10, 14)
+        XCTAssertEqual(d.income(in: ym(2026, 8)), 700)
+        SalaryScheduleEdit.change(&d, to: .weeks, today: today)
+        d.salary.setSchedule(.weeks, interval: 2, anchor: CalendarDay(year: 2026, month: 10, day: 2))
+        // Augustus en september blijven 700 (zonder vastleggen zou het schema ze op 1400 of 2100 zetten).
+        XCTAssertEqual(d.income(in: ym(2026, 8)), 700)
+        XCTAssertEqual(d.income(in: ym(2026, 9)), 700)
+        // Oktober en later volgen het nieuwe schema: 2, 16 en 30 oktober.
+        XCTAssertEqual(d.income(in: ym(2026, 10)), 2_100)
+        XCTAssertEqual(d.income(in: ym(2026, 11)), 1_400)
+        XCTAssertTrue(d.monthLedger(ym(2026, 9), asOf: today).allReconciles)
+    }
+
+    func testEditChangesTheAmountFromThisMonthOnly() {
+        var d = monthlyData()
+        d.materialize(upTo: ym(2026, 10))
+        let today = date(2026, 10, 14)
+        SalaryScheduleEdit.edit(&d, today: today) { $0.fixedMonthly = 800 }
+        XCTAssertEqual(d.income(in: ym(2026, 8)), 700)
+        XCTAssertEqual(d.income(in: ym(2026, 9)), 700)
+        XCTAssertEqual(d.income(in: ym(2026, 10)), 800)
+        XCTAssertEqual(d.income(in: ym(2026, 12)), 800)
+        // Nog een wijziging: de vastgelegde maanden blijven staan.
+        SalaryScheduleEdit.edit(&d, today: today) { $0.fixedMonthly = 900 }
+        XCTAssertEqual(d.income(in: ym(2026, 9)), 700)
+        XCTAssertEqual(d.income(in: ym(2026, 10)), 900)
+        // De salarisdag en het interval gaan er ook door.
+        SalaryScheduleEdit.edit(&d, today: today) { $0.setSchedule(.days, interval: 30) }
+        XCTAssertEqual(d.income(in: ym(2026, 9)), 700)
+    }
+
+    func testEditThatChangesNothingStoresNothing() {
+        var d = monthlyData()
+        d.materialize(upTo: ym(2026, 10))
+        let before = d
+        SalaryScheduleEdit.edit(&d, today: date(2026, 10, 14)) { $0.fixedMonthly = 700 }
+        XCTAssertEqual(d, before)
+        SalaryScheduleEdit.edit(&d, today: date(2026, 10, 14)) { _ in }
+        XCTAssertEqual(d, before)
+    }
+
+    func testEditKeepsPercentageContributionsOfThePast() {
+        var d = monthlyData()
+        var pot = Pot(name: "Vakantie", monthlyContribution: 0, startMonth: ym(2026, 8))
+        pot.contributionMode = .percentage
+        pot.contributionPercent = 10
+        d.addPot(pot, openingBalance: 0, now: date(2026, 8, 1))
+        d.materialize(upTo: ym(2026, 10))
+        XCTAssertEqual(d.savedTotal(in: ym(2026, 9)), 70)
+        SalaryScheduleEdit.edit(&d, today: date(2026, 10, 14)) { $0.fixedMonthly = 1_000 }
+        XCTAssertEqual(d.savedTotal(in: ym(2026, 9)), 70, "10% van het salaris van toen")
+        XCTAssertEqual(d.savedTotal(in: ym(2026, 10)), 100)
+    }
 }
 
 private extension MonthLedger {

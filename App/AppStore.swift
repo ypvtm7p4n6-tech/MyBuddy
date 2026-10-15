@@ -68,8 +68,8 @@ final class AppStore {
         onDataChanged?(copy)
     }
 
-    /// Teller die oploopt zodra er iets verandert dat "nu"-bedragen beinvloedt: een nieuwe dag of het moment (12:00)
-    /// waarop geplande boekingen vallen. Views die `today` lezen tekenen daardoor vanzelf opnieuw.
+    /// Teller die oploopt zodra er iets verandert dat "nu"-bedragen beinvloedt: een nieuwe kalenderdag. Views die `today`
+    /// lezen tekenen daardoor vanzelf opnieuw.
     private(set) var clockTick = 0
     @ObservationIgnored private var clockBucket = AppStore.bucket(for: Date())
 

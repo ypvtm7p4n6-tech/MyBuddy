@@ -56,6 +56,9 @@ struct OverviewPage: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    if MonthBoard(month: focus, figures: period.figures).roundingHidesSum {
+                        RoundingNote()
+                    }
                     // Bij één maand: sluiten deze cijfers met de dagen van die maand? Met een link naar het dagoverzicht.
                     if mode == .month {
                         DayCheckBlock(month: focus)
@@ -434,6 +437,10 @@ struct IncomePage: View {
         Text("Kies een dag waarop je salaris binnenkwam of binnenkomt, ook al is dat lang geleden. Vanaf die dag telt de app \(s.cycleDescription) door, vooruit en terug. Daardoor vallen er in een maand soms 0, 1, 2 of meer uitbetalingen, gemiddeld \(Fmt.input(s.averagePayoutsPerYear, maxDigits: 1)) per jaar. Het maandtotaal is de som van de uitbetalingen. Extra inkomsten zonder eigen dag en de overschrijvingen naar je spaarpotten gaan standaard op de eerste uitbetaling van de maand.")
             .font(.footnote)
             .foregroundStyle(.secondary)
+        Toggle("Dit is mijn eerste uitbetaling", isOn: salary(\.anchorIsFirst))
+        Text("Aan: er telt niets mee van vóór deze datum, bijvoorbeeld bij een nieuwe baan. Uit: het schema loopt ook terug, zoals bij een salaris dat al langer loopt.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
         if let cycle = s.cycleDays, cycle > 28 {
             DayPickerRow(title: "Salarisdag zonder uitbetaling", day: payDayBinding)
             Text("Valt er in een maand geen uitbetaling, dan geldt deze dag als salarisdag voor extra inkomsten en overschrijvingen.")
@@ -624,13 +631,20 @@ struct MoneyLinesBlock: View {
     var body: some View {
         let d = store.data
         let plan = d.plan(for: month)
-        let all = kind == .income ? plan.extraIncome : plan.expenses
+        // Maanden vóór de startmaand tellen nergens mee (overzicht, "Nog te verdelen", bankpagina, dagboek): regels erin zouden
+        // een bedrag tonen dat op geen enkel ander scherm terugkomt. Daarom laat dit blok daar niets zien en niets toevoegen.
+        let beforeStart = month < d.startMonth
+        let all: [MoneyLine] = beforeStart ? [] : (kind == .income ? plan.extraIncome : plan.expenses)
         let lines = all.filter { expenseKind == nil || kind == .income || $0.kind == expenseKind }
         let fromPots = kind == .expense
             ? CentsMath.value(CentsMath.sum(lines.map { CentsMath.int(d.fromPots(of: $0)) }))
             : 0
         GlassBlock(title: title, symbol: symbol, subtitle: subtitle(total: lines.total, fromPots: fromPots)) {
-            if lines.isEmpty {
+            if beforeStart {
+                Text("Maanden vóór je startmaand (\(Fmt.month(d.startMonth))) tellen niet mee: daar vul je niets in.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if lines.isEmpty {
                 Text(emptyText)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -646,7 +660,9 @@ struct MoneyLinesBlock: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            ChipButton(title: "Toevoegen", symbol: "plus") { showAdd = true }
+            if !beforeStart {
+                ChipButton(title: "Toevoegen", symbol: "plus") { showAdd = true }
+            }
             if lines.contains(where: { $0.isRecurring }) {
                 Text(recurringHint)
                     .font(.caption)
@@ -1405,6 +1421,9 @@ struct DistributePage: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if MonthBoard(month: month, figures: figures).roundingHidesSum {
+                RoundingNote()
+            }
             if month < d.startMonth {
                 Text("Maanden vóór je startmaand (\(Fmt.month(d.startMonth))) tellen niet mee: daar verdeel je niets.")
                     .font(.footnote)
@@ -1924,16 +1943,20 @@ struct BankBufferBlock: View {
         let now = store.now
         // Alleen als het saldo van nu bekend is: zonder saldo zegt "daarboven" niets.
         if d.hasBankBalanceNow(current: now, today: store.today) {
-            GlassBlock(title: "Buffer", symbol: "shield.lefthalf.filled") {
+            GlassBlock(title: "Bankbuffer", symbol: "shield.lefthalf.filled",
+                       subtitle: "Het minimum dat je op je rekening wilt houden") {
                 HStack(spacing: 8) {
-                    StatTile(title: "Gewenste buffer", value: Fmt.euro(d.bankBuffer(current: now)))
+                    StatTile(title: "Gewenste bankbuffer", value: Fmt.euro(d.bankBuffer(current: now)))
                     StatTile(title: "Daarboven", value: Fmt.euro(d.bankSurplusAboveBuffer(current: now, today: store.today)),
                              color: Theme.positive)
                 }
-                NumberRow(title: "Buffer in maanden aan uitgaven",
+                NumberRow(title: "Bankbuffer in maanden aan uitgaven",
                           value: Binding(get: { store.data.settings.bankBufferMonths },
                                          set: { v in store.mutate { $0.settings.bankBufferMonths = v } }),
                           unit: .plain("mnd"), maxDigits: 1)
+                Text("Dit is iets anders dan je noodbuffer: de bankbuffer is wat er minstens op je betaalrekening hoort te staan. Hoeveel noodbuffer je nodig hebt (op je spaarrekening of in een spaarpot) reken je uit met de buffercalculator.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 ChipLink(title: "Buffercalculator", symbol: "shield.lefthalf.filled", destination: .buffer)
             }
         }

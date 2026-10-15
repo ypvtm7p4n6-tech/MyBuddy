@@ -228,4 +228,128 @@ final class ReviewFixesTests: XCTestCase {
         XCTAssertEqual(try encoder.encode(back), data)
         XCTAssertEqual(pastFigures(back, pot: pot, today: today), reference)
     }
+
+    // MARK: De ankerdatum als eerste uitbetaling
+
+    func testAnchorAsFirstPayoutStartsTheScheduleThere() {
+        var d = FinanceData(startMonth: oct2026)
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 2_100, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+        // Om de 4 weken met een uitbetaling op vrijdag 30 oktober 2026: ook terug zijn dat 2 oktober en 4 september.
+        d.salary.setSchedule(.weeks, interval: 4, anchor: CalendarDay(year: 2026, month: 10, day: 30))
+        XCTAssertEqual(d.salaryPayDays(in: oct2026), [2, 30])
+        XCTAssertEqual(d.income(in: oct2026), 4_200)
+
+        d.salary.anchorIsFirst = true
+        XCTAssertEqual(d.salaryPayDays(in: oct2026), [30], "er valt niets voor de eerste uitbetaling")
+        XCTAssertEqual(d.income(in: oct2026), 2_100)
+        XCTAssertEqual(d.salaryPayDays(in: engNov2026), [27])
+        XCTAssertEqual(d.salaryPayDays(in: engDec2026), [25])
+        XCTAssertEqual(d.salaryPayDays(in: engJan2027), [22])
+        // Alles sluit: de dagen, het overzicht en de salarisgebeurtenissen.
+        let today = engTime(oct2026, 15, hour: 10)
+        let ledger = d.monthLedger(oct2026, asOf: today)
+        XCTAssertTrue(ledger.allReconciles)
+        XCTAssertEqual(ledger.planInflow, 2_100)
+        XCTAssertEqual(ledger.days.flatMap { $0.events }.filter { $0.kind == .salary }.map { $0.day }, [30])
+        // De eerstvolgende uitbetaling vanaf vandaag is het anker zelf; een anker ver in de toekomst blijft de eerste.
+        XCTAssertEqual(d.nextPayDate(after: today).map { CalendarDay(date: $0) }, CalendarDay(year: 2026, month: 10, day: 30))
+        d.salary.anchor = CalendarDay(year: 2026, month: 12, day: 4)
+        XCTAssertEqual(d.nextPayDate(after: today).map { CalendarDay(date: $0) }, CalendarDay(year: 2026, month: 12, day: 4))
+        XCTAssertEqual(d.salaryPayDays(in: engNov2026), [])
+        d.salary.anchorIsFirst = false
+        XCTAssertEqual(d.nextPayDate(after: today).map { CalendarDay(date: $0) }, CalendarDay(year: 2026, month: 11, day: 6))
+    }
+
+    func testAnchorAsFirstPayoutSurvivesStorageAndOldFilesStayTheSame() throws {
+        var salary = SalarySettings(mode: .fixed, fixedMonthly: 1_000, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+        salary.setSchedule(.days, interval: 14, anchor: CalendarDay(year: 2026, month: 10, day: 2))
+        let encoder = FinanceStorage.makeEncoder()
+        let plain = String(decoding: try encoder.encode(salary), as: UTF8.self)
+        XCTAssertFalse(plain.contains("anchorIsFirst"), "uit is de standaard en komt niet in het bestand")
+
+        salary.anchorIsFirst = true
+        let data = try encoder.encode(salary)
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("anchorIsFirst"))
+        XCTAssertEqual(try FinanceStorage.makeDecoder().decode(SalarySettings.self, from: data), salary)
+
+        // Een bestand zonder het veld, of met onzin erin, laadt als "uit".
+        let old = Data(#"{"mode":"fixed","fixedMonthly":1000,"hourlyRate":0,"hoursPerWeek":0,"payDay":25}"#.utf8)
+        XCTAssertEqual(try FinanceStorage.makeDecoder().decode(SalarySettings.self, from: old).anchorIsFirst, false)
+        let junk = Data(#"{"mode":"fixed","fixedMonthly":1000,"anchorIsFirst":"misschien","anchor":"2026-10-02","schedule":"weeks","interval":2}"#.utf8)
+        let loaded = try FinanceStorage.makeDecoder().decode(SalarySettings.self, from: junk)
+        XCTAssertEqual(loaded.anchorIsFirst, false)
+        XCTAssertEqual(loaded.schedule, .weeks)
+    }
+
+    // MARK: "Deze maand" of "een gemiddelde maand"
+
+    func testPurchaseTextsSayAverageMonthForASalaryEveryFewWeeks() {
+        var context = PurchaseContext()
+        context.remainingThisMonth = 500
+        let monthly = PurchaseCalc.affordability(totalCost: 200, context: context)
+        XCTAssertTrue(monthly.details.contains { $0.text.hasPrefix("Je hebt deze maand nog") }, "\(monthly.details)")
+        XCTAssertTrue(monthly.summary.contains("deze maand"))
+
+        context.isAverageMonth = true
+        let average = PurchaseCalc.affordability(totalCost: 200, context: context)
+        XCTAssertTrue(average.details.contains { $0.text.hasPrefix("In een gemiddelde maand heb je nog") }, "\(average.details)")
+        XCTAssertTrue(average.summary.contains("gemiddelde maand"))
+        XCTAssertFalse(average.details.contains { $0.text.contains("deze maand") })
+        for remaining in [-50.0, 0, 100] {
+            context.remainingThisMonth = remaining
+            let texts = PurchaseCalc.affordability(totalCost: 200, context: context).details.map { $0.text }
+            XCTAssertTrue(texts.contains { $0.contains("gemiddelde maand") }, "\(remaining): \(texts)")
+            XCTAssertFalse(texts.contains { $0.contains("deze maand") }, "\(remaining): \(texts)")
+        }
+
+        // De context uit de app weet het ook.
+        var d = FinanceData(startMonth: oct2026)
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 2_000, hourlyRate: 0, hoursPerWeek: 0, payDay: 25)
+        XCTAssertFalse(PurchaseContext.make(from: d, current: oct2026).isAverageMonth)
+        d.salary.setSchedule(.weeks, interval: 4, anchor: CalendarDay(year: 2026, month: 10, day: 9))
+        XCTAssertTrue(PurchaseContext.make(from: d, current: oct2026).isAverageMonth)
+    }
+
+    // MARK: Afronding van de getoonde bedragen
+
+    func testRoundingNoteOnlyWhenTheShownFiguresDoNotAddUp() {
+        // 5120,40 - 1370,50 - 1268,90 = 2481,00. Getoond: 5.120 - 1.371 - 1.269 = 2.480, maar "nog te verdelen" toont 2.481.
+        let off = MonthBoard(month: oct2026, figures: MonthFigures(income: 512_040, expenses: 137_050, fromPots: 0,
+                                                                  saved: 100_000, invested: 26_890))
+        XCTAssertEqual(CentsMath.int(off.remaining), 248_100)
+        XCTAssertTrue(off.closes, "in centen klopt het altijd")
+        XCTAssertTrue(off.roundingHidesSum)
+        XCTAssertEqual(DisplayRounding.shown(137_050), 1_371)
+        XCTAssertEqual(DisplayRounding.shown(-137_050), -1_371)
+        // Hele bedragen: de getoonde cijfers tellen precies op, dus geen uitleg.
+        let exact = MonthBoard(month: oct2026, figures: MonthFigures(income: 300_000, expenses: 100_000, fromPots: 0,
+                                                                    saved: 40_000, invested: 10_000))
+        XCTAssertFalse(exact.roundingHidesSum)
+        // Uitgaven uit een spaarpot tellen niet mee in wat van de bank gaat.
+        let pots = MonthBoard(month: oct2026, figures: MonthFigures(income: 300_000, expenses: 120_000, fromPots: 20_000,
+                                                                   saved: 40_000, invested: 10_000))
+        XCTAssertFalse(pots.roundingHidesSum)
+        XCTAssertTrue(DisplayRounding.note.contains("afgerond"))
+    }
+
+    /// Over echte data: een maand met een percentage-inleg heeft vaak bedragen met centen. Het oordeel hangt alleen van
+    /// de getoonde bedragen af en is dus nooit "waar" als alles op hele euro's klopt.
+    func testRoundingNoteAgreesWithTheShownFiguresOverManyMonths() {
+        var flagged = 0
+        var checked = 0
+        for seed in 1...200 {
+            let sc = ledgerScenario(seed: UInt64(seed))
+            for month in sc.months {
+                let board = MonthBoard(sc.data, month: month)
+                let f = board.figures
+                let shownSum = DisplayRounding.shown(f.income) - DisplayRounding.shown(f.expenses - f.fromPots)
+                    - DisplayRounding.shown(CentsMath.add(f.saved, f.invested))
+                XCTAssertEqual(board.roundingHidesSum, shownSum != DisplayRounding.shown(f.remaining), "seed \(seed) \(month.key)")
+                checked += 1
+                if board.roundingHidesSum { flagged += 1 }
+            }
+        }
+        XCTAssertGreaterThan(checked, 500)
+        XCTAssertGreaterThan(flagged, 0, "de reeks bevat maanden waar de afronding het verschil maakt")
+    }
 }

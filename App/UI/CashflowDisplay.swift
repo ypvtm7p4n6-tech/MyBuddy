@@ -64,6 +64,13 @@ enum CashflowText {
         return sign + Fmt.euro(abs(amount))
     }
 
+    /// Een rente-uitkomst met teken: onder de 10 euro met centen ("+ € 1,25"), daarboven op hele euro's, zoals overal voor
+    /// rente (`PotFormat.interest`). Zonder dit staat er "+ € 1" waar de pagina van de pot "€ 1,25" zegt.
+    static func signedInterest(_ amount: Double) -> String {
+        let sign = amount > 0 ? "+ " : (amount < 0 ? "− " : "")
+        return sign + PotFormat.interest(abs(amount))
+    }
+
     /// "1 dag", "12 dagen".
     static func days(_ count: Int) -> String {
         count == 1 ? "1 dag" : "\(count) dagen"
@@ -213,6 +220,14 @@ struct CashflowRow: Identifiable, Equatable {
     var effectCents = 0
 
     var id: String { kind.rawValue }
+
+    /// Het bedrag zoals de regel het toont: rente onder de 10 euro met centen, een regel met teken met plus of min, de rest
+    /// op hele euro's. nil als het bedrag onbekend is.
+    var amountText: String? {
+        guard let amount else { return nil }
+        if kind == .interest { return PotFormat.interest(amount) }
+        return showsSign ? CashflowText.signed(amount) : Fmt.euro(amount)
+    }
 }
 
 /// De regels van het maandoverzicht, rechtstreeks uit `MonthLedger`.
@@ -499,7 +514,7 @@ struct BankLowPointNote: Equatable {
 
     /// - Parameters:
     ///   - low: de dag met het laagste saldo (uit de dagboekhouding, dus hetzelfde saldo als op de dagkaarten).
-    ///   - buffer: de gewenste buffer op de bankrekening.
+    ///   - buffer: de gewenste bankbuffer op de bankrekening (niet de noodbuffer van de buffercalculator).
     ///   - balanceNow: het saldo van nu, nil als dat niet bekend is.
     static func make(low: DayTotals, buffer: Double, balanceNow: Double?, today: Date) -> BankLowPointNote? {
         guard let lowBalance = low.bankBalance else { return nil }
@@ -521,7 +536,7 @@ struct BankLowPointNote: Equatable {
         // Is het saldo van nu niet bekend, dan is er niets om mee te vergelijken en blijft de melding ook weg.
         if let now = balanceNow, buffer > 0 && lowBalance < buffer && now >= buffer && !past {
             let start = isToday ? "Vandaag" : "Op \(day)"
-            return BankLowPointNote(text: "\(start) zakt je saldo naar \(balance). Dat is onder je gewenste buffer van \(Fmt.euro(buffer)).",
+            return BankLowPointNote(text: "\(start) zakt je saldo naar \(balance). Dat is onder je gewenste bankbuffer van \(Fmt.euro(buffer)).",
                                     severe: false)
         }
         return nil

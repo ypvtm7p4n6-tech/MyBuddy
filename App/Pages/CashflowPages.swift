@@ -13,10 +13,12 @@ struct DayEventStyle {
     let color: Color
     let kindText: String
     let amount: Double
+    let isInterest: Bool
 
     init(_ event: DayEvent) {
         let shown = event.bankAmount != 0 ? event.bankAmount : event.potAmount
         amount = shown
+        isInterest = event.kind == .interest
         switch event.kind {
         case .salary:
             symbol = "briefcase.fill"
@@ -50,9 +52,9 @@ struct DayEventStyle {
         }
     }
 
-    /// "+ € 3.000" of "− € 1.000"
+    /// "+ € 3.000" of "− € 1.000"; rente onder de 10 euro met centen ("+ € 1,25").
     var amountText: String {
-        CashflowText.signed(amount)
+        isInterest ? CashflowText.signedInterest(amount) : CashflowText.signed(amount)
     }
 }
 
@@ -223,7 +225,10 @@ struct DayBalanceRows: View {
                 }
             }
             if showsRemaining {
-                DayValueRow(title: "Nog te verdelen", caption: "Deze maand, t/m deze dag", text: Fmt.euro(day.remainingSoFar),
+                // Opgebouwd over de maand tot en met deze dag: pas op de laatste dag is dit "Nog te verdelen" van de hele maand
+                // (dat staat in het overzicht). Een andere naam voorkomt dat het twee verschillende getallen onder één naam zijn.
+                DayValueRow(title: "Te verdelen t/m deze dag", caption: "Opgebouwd in de maand; het totaal staat in je overzicht",
+                            text: Fmt.euro(day.remainingSoFar),
                             color: day.remainingSoFar < 0 ? Theme.negative : Color.primary)
             }
         }
@@ -313,7 +318,7 @@ struct DayBalanceChart: View {
 
 // MARK: - Waarschuwing: onder nul of onder de buffer
 
-/// Meldt wanneer het dagsaldo onder nul komt (of onder de gewenste buffer), met de datum.
+/// Meldt wanneer het dagsaldo onder nul komt (of onder de gewenste bankbuffer), met de datum.
 /// Voor de huidige maand kijkt hij vanaf vandaag (een dip in het verleden verbergt dan geen dip die nog komt)
 /// en 30 dagen vooruit, dus ook over de maandwisseling heen. Voor andere maanden kijkt hij naar de hele maand.
 /// De saldi komen uit de dagboekhouding, dezelfde als op de dagkaarten. Toont niets als alles in orde is.
@@ -358,8 +363,14 @@ struct BankLowPointNotice: View {
 struct BankDayBlock: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
-    @State private var date = Date()
+    /// De dag die je zelf koos. Zonder keuze volgt het blok vandaag (`store.today`), ook na middernacht.
+    @State private var chosenDate: Date?
     @State private var rangeChoice: DayChartRange?
+
+    private var date: Date {
+        get { chosenDate ?? store.today }
+        nonmutating set { chosenDate = newValue }
+    }
 
     private var dayRange: ClosedRange<Date> {
         BankDayBounds.range(startMonth: store.data.startMonth, today: store.today)
@@ -402,7 +413,11 @@ struct BankDayBlock: View {
         .onChange(of: router.focusMonth) { _, newMonth in
             rangeChoice = nil
             withAnimation(Theme.quickMotion) {
-                date = clampedDay(newMonth == store.now ? store.today : newMonth.date(day: 1))
+                if newMonth == store.now {
+                    chosenDate = nil
+                } else {
+                    date = clampedDay(newMonth.date(day: 1))
+                }
             }
         }
     }
@@ -474,7 +489,8 @@ struct BankDayBlock: View {
             .tile()
         }
         DayBalanceRows(day: totals, showsBank: false, showsPots: !d.pots.isEmpty)
-        if !d.hasBankBalance {
+        // Op een dag zonder bekend saldo (ook als je saldo pas later begint) staat hier hoe je dat oplost.
+        if totals.bankBalance == nil {
             Text("Vul je saldo in of zet er geld op. Dan zie je per dag hoeveel je hebt, ook voor dagen die nog komen.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -550,7 +566,7 @@ struct BankUpcomingBlock: View {
                     }
                 }
             }
-            if !d.hasBankBalance {
+            if !d.hasBankBalanceNow(current: store.now, today: today) {
                 Text("Vul je saldo in om ook het saldo per dag te zien.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -656,7 +672,7 @@ private struct LedgerLineRow: View {
     @ViewBuilder
     private var amountView: some View {
         if let amount = row.amount {
-            Text(row.showsSign ? CashflowText.signed(amount) : Fmt.euro(amount))
+            Text(row.amountText ?? Fmt.euro(amount))
                 .font(amountFont)
                 .foregroundStyle(row.style == .detail ? Color.secondary : tone)
                 .lineLimit(1)
@@ -716,7 +732,7 @@ struct CashflowBankBlock: View {
     let lowest: DayTotals?
     /// Het saldo van nu (alleen in de huidige maand, en alleen als het bekend is).
     let balanceNow: Double?
-    /// Is er ooit een saldo ingevuld of een boeking gemaakt?
+    /// Is er in deze maand ergens een saldo bekend? Een saldo dat pas in een latere maand begint zegt hier niets.
     let hasBalance: Bool
 
     var body: some View {
@@ -750,9 +766,7 @@ struct CashflowBankBlock: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Text("Bedragen staan afgerond op hele euro's, de berekening zelf klopt op de cent.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            RoundingNote()
         }
     }
 }
@@ -895,7 +909,8 @@ struct CashflowPage: View {
                         CashflowCheckBanner(check: check)
                     }
                     EqualSizeGrid(minimumColumnWidth: 340) {
-                        CashflowBankBlock(ledger: ledger, lowest: lowest, balanceNow: balanceNow, hasBalance: d.hasBankBalance)
+                        CashflowBankBlock(ledger: ledger, lowest: lowest, balanceNow: balanceNow,
+                                          hasBalance: ledger.openingBank != nil || ledger.closingBank != nil)
                         if !d.pots.isEmpty {
                             CashflowPotsBlock(ledger: ledger)
                         }

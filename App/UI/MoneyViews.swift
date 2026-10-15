@@ -23,6 +23,17 @@ struct AllocationWarningLabel: View {
     }
 }
 
+/// De korte uitleg dat bedragen op hele euro's staan afgerond (zie `DisplayRounding`). Toon hem alleen als de getoonde bedragen
+/// door de afronding niet precies optellen.
+struct RoundingNote: View {
+    var body: some View {
+        Text(DisplayRounding.note)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 /// Hoe de inleg van een spaarpot of belegging in deze maand is opgebouwd: de standaardregel (een vast bedrag of een
 /// percentage van je inkomen), wat daar in deze maand uit volgt, en waar het van afhangt. Bij een percentage is het bedrag
 /// van deze maand de actuele waarde: het rekent mee als je inkomen verandert.

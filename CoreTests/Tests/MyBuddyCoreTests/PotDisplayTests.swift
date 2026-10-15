@@ -284,4 +284,46 @@ final class PotDisplayTests: XCTestCase {
         // Zonder rente komt er niets meer bij.
         XCTAssertEqual(d.applyDueInterest(upTo: today), 0)
     }
+
+    // MARK: Ontvangen rente per kalenderdag
+
+    /// Rente van 12% per jaar op 1200, maandelijks op de 28e (de uitbetaling staat op 12:00): augustus 12,00, september 12,12
+    /// (1212 x 1%) en oktober 12,24 (1224,12 x 1%), samen 36,36. Een uitbetaling telt de HELE dag mee, ook voor 12:00, zoals
+    /// het saldo van de pot: "Ontvangen" mag er niet onder blijven (een controleur zag 24,12 naast een saldo met 36,36).
+    func testReceivedInterestCountsTheWholePayoutDay() {
+        let (booked, pot) = {
+            var made = engInterestData(rate: 0.12, payoutDay: 28, opening: 1_200)
+            made.data.applyDueInterest(upTo: engTime(oct2026, 28, hour: 8))
+            return made
+        }()
+        let (unbooked, unbookedPot) = engInterestData(rate: 0.12, payoutDay: 28, opening: 1_200)
+        let morning = engTime(oct2026, 28, hour: 8)
+
+        XCTAssertEqual(booked.potEntries.filter { $0.kind == .interest }.map { engCents($0.amount) }, [1_200, 1_212, 1_224])
+        for (name, data, pot) in [("bijgeschreven", booked, pot), ("nog niet bijgeschreven", unbooked, unbookedPot)] {
+            let received = PotInterestStats.received(in: data, potID: pot.id, asOf: morning)
+            XCTAssertEqual(engCents(received.total), 3_636, name)
+            XCTAssertEqual(engCents(received.thisYear), 3_636, name)
+            XCTAssertEqual(engCents(PotInterestStats.received(in: data, asOf: morning).total), 3_636, "\(name), alle potten")
+            // Het saldo van de pot telt precies deze rente mee.
+            XCTAssertEqual(engCents(data.potBalanceNow(pot.id, current: oct2026, today: morning)), 120_000 + 3_636, name)
+            // 's Avonds hetzelfde, en de dag ervoor nog zonder de uitbetaling van de 28e.
+            XCTAssertEqual(engCents(PotInterestStats.received(in: data, potID: pot.id, asOf: engTime(oct2026, 28, hour: 23.5)).total), 3_636, name)
+            XCTAssertEqual(engCents(PotInterestStats.received(in: data, potID: pot.id, asOf: engTime(oct2026, 27, hour: 23.5)).total), 2_412, name)
+        }
+    }
+
+    func testReceivedInterestOfThisYearLeavesOutLastYear() {
+        // Een pot sinds augustus 2026 met jaarlijkse rente op 1 januari: in 2027 telt alleen de uitbetaling van dat jaar.
+        var (d, pot) = engInterestData(rate: 0.12, payout: .yearly, payoutDay: 1, payoutMonth: 1, opening: 1_200)
+        let jan = engTime(engJan2027, 1, hour: 6)
+        d.applyDueInterest(upTo: jan)
+        let received = PotInterestStats.received(in: d, potID: pot.id, asOf: jan)
+        XCTAssertGreaterThan(received.total, 0)
+        XCTAssertEqual(received.thisYear, received.total, "de enige uitbetaling is die van 1 januari 2027")
+        let earlier = PotInterestStats.received(in: d, potID: pot.id, asOf: engTime(YearMonth(year: 2026, month: 12), 31, hour: 20))
+        XCTAssertEqual(earlier.total, 0)
+        pot = d.pots[0]
+        XCTAssertEqual(d.interestPayments(for: pot.id, from: jan, to: jan, asOf: jan).count, 1)
+    }
 }

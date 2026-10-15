@@ -55,8 +55,12 @@ struct SalarySettings: Codable, Equatable {
     /// dagen voor en na deze dag. nil = de `payDay` van de startmaand van de gegevens (`FinanceData.salaryAnchor()`).
     /// Alleen van belang voor `.weeks` en `.days`.
     var anchor: CalendarDay?
+    /// De ankerdatum is de EERSTE uitbetaling (bijvoorbeeld bij een nieuwe baan): er valt dan niets voor die dag. Standaard
+    /// uit: de cyclus loopt ook terug, zoals een echt salaris om de zoveel weken dat al langer loopt. Alleen van belang voor
+    /// `.weeks` en `.days` en alleen als er een ankerdatum is.
+    var anchorIsFirst: Bool = false
 
-    enum CodingKeys: String, CodingKey { case mode, fixedMonthly, hourlyRate, hoursPerWeek, payDay, schedule, interval, anchor }
+    enum CodingKeys: String, CodingKey { case mode, fixedMonthly, hourlyRate, hoursPerWeek, payDay, schedule, interval, anchor, anchorIsFirst }
 
     /// Gemiddeld aantal uren per maand: uren per week × 52 / 12 bij het maandelijkse schema, anders × 365,25 / 7 / 12 (een
     /// maand is gemiddeld 365,25 / 12 dagen). Zie `averageMonthly(perWeek:)`: het is een GEMIDDELDE voor schattingen, niet
@@ -85,6 +89,7 @@ extension SalarySettings {
         schedule = (try? c.decodeIfPresent(SalarySchedule.self, forKey: .schedule)) ?? schedule
         interval = (try? c.decodeIfPresent(Int.self, forKey: .interval)) ?? interval
         anchor = try? c.decodeIfPresent(CalendarDay.self, forKey: .anchor)
+        anchorIsFirst = (try? c.decodeIfPresent(Bool.self, forKey: .anchorIsFirst)) ?? false
     }
 
     /// De vijf oude velden staan er altijd in; schema, interval en ankerdatum alleen als ze iets zeggen. Een bestand met
@@ -99,6 +104,7 @@ extension SalarySettings {
         if schedule != .monthly { try c.encode(schedule, forKey: .schedule) }
         if interval != 1 { try c.encode(interval, forKey: .interval) }
         try c.encodeIfPresent(anchor, forKey: .anchor)
+        if anchorIsFirst { try c.encode(true, forKey: .anchorIsFirst) }
     }
 }
 

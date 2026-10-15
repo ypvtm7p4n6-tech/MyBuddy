@@ -100,7 +100,7 @@ struct ProjectionPage: View {
                     HStack(spacing: 8) {
                         ForEach(results) { item in
                             StatTile(title: item.scenario.title,
-                                     value: Fmt.euroWhole(inflationAdjusted ? item.result.real : item.result.total),
+                                     value: Fmt.euro(inflationAdjusted ? item.result.real : item.result.total),
                                      caption: "\(Fmt.percent(annualReturn + item.scenario.delta)) p.j.")
                         }
                     }
@@ -145,11 +145,11 @@ struct ProjectionPage: View {
         VStack(alignment: .leading, spacing: 6) {
             ProgressBar(progress: r.contributed / total, tint: Theme.flowSaved, height: 10)
             HStack {
-                Label("Ingelegd \(Fmt.euroWhole(r.contributed))", systemImage: "circle.fill")
+                Label("Ingelegd \(Fmt.euro(r.contributed))", systemImage: "circle.fill")
                     .font(.caption)
                     .foregroundStyle(Theme.flowSaved)
                 Spacer()
-                Label("Rendement \(Fmt.euroWhole(r.growth))", systemImage: "circle")
+                Label("Rendement \(Fmt.euro(r.growth))", systemImage: "circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

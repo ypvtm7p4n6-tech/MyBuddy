@@ -35,13 +35,18 @@ struct PortfolioPage: View {
                             if invested > 0 { GainLabel(gain: gain, fraction: gain / invested) }
                         }
                         HStack(spacing: 8) {
-                            StatTile(title: "Ingelegd", value: Fmt.euroWhole(invested))
-                            StatTile(title: "Rendement", value: Fmt.euroWhole(gain),
+                            StatTile(title: "Ingelegd", value: Fmt.euro(invested))
+                            StatTile(title: "Rendement", value: Fmt.euro(gain),
                                      color: gain >= 0 ? Theme.positive : Theme.negative)
                             // Wat je verdeling deze maand naar beleggingen stuurt: dezelfde som als "Belegd" in het Overzicht
                             // en bij Verdelen, en de optelling van de "Inleg deze maand" op de pagina van elke belegging.
-                            StatTile(title: "Inleg deze maand", value: Fmt.euroWhole(d.investedTotal(in: now)))
+                            StatTile(title: "Inleg deze maand", value: Fmt.euro(d.investedTotal(in: now)))
                         }
+                        // Beleggingen rekenen per maand, niet per dag (de bank en de spaarpotten wel): zeg dat erbij, zodat
+                        // een overschrijving van de 25e die nog moet gebeuren hier al in de waarde zit.
+                        Text("De waarde is je laatste meetpunt plus de inleg van de maanden daarna, tot en met deze maand. Een inleg die nog moet worden overgeschreven telt dus al mee; op de bankrekening staat dat geld pas na de overschrijfdag niet meer.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                         priceStatus
                     }
                 }
@@ -211,8 +216,8 @@ struct HoldingDetailPage: View {
                         }
                     }
                     HStack(spacing: 8) {
-                        StatTile(title: "Ingelegd", value: Fmt.euroWhole(state?.invested ?? 0))
-                        StatTile(title: "Rendement", value: Fmt.euroWhole(state?.gain ?? 0),
+                        StatTile(title: "Ingelegd", value: Fmt.euro(state?.invested ?? 0))
+                        StatTile(title: "Rendement", value: Fmt.euro(state?.gain ?? 0),
                                  color: (state?.gain ?? 0) >= 0 ? Theme.positive : Theme.negative)
                     }
                     if holding.isTracked {

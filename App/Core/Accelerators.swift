@@ -175,8 +175,11 @@ extension FinanceData {
         // een gemiddelde maand (`estimatedRemaining`), anders precies `remaining(in:)`.
         let free = estimatedRemaining(in: current)
         if free >= 10 {
+            // Bij een salaris om de zoveel weken of dagen is `free` een gemiddelde maand: zeg dat, anders spreekt het getal
+            // "Nog te verdelen" van deze ene maand tegen.
+            let when = salary.isMonthly ? "Deze maand heb je" : "In een gemiddelde maand heb je"
             candidates.append(("free", "Zet je vrije ruimte in",
-                               "Deze maand heb je \(Fmt.euro(free)) nog niet verdeeld. Elke maand extra inleggen versnelt je doel.",
+                               "\(when) \(Fmt.euro(free)) nog niet verdeeld. Elke maand extra inleggen versnelt je doel.",
                                "tray.and.arrow.down",
                                ScenarioChange(extraMonthly: free)))
         }

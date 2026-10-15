@@ -28,6 +28,14 @@ import Foundation
 //    uitbetaling × 365,25 / 12 / dagen per cyclus (`averageMonthlyAmount`). Het maandelijkse schema blijft op
 //    maandbedrag en op 52 / 12 weken (zoals altijd). Een BEPAALDE maand gebruikt nooit het gemiddelde: die gebruikt de som
 //    van zijn uitbetalingen. Het verschil heet in de code steeds "gemiddeld" of "geschat" (`estimated...`).
+// 6. WIJZIGEN van de instellingen (schema, bedrag, uurloon, uren, salarisdag): de salarisinstellingen gelden voor elke maand
+//    sinds de startmaand, dus zonder voorzorg verandert een wijziging ook het verleden (uitbetalingen die nooit zijn gekomen).
+//    Wie `salary` wijzigt roept eerst `freezeSalaryHistory(before:)` aan (de scherm-hulp `SalaryScheduleEdit.edit` doet dat):
+//    de maanden vóór de lopende maand houden dan hun salaris als eigen salaris van die maand, en alleen de lopende en de komende
+//    maanden volgen de nieuwe instellingen. Een uitbetaling van het nieuwe schema die al in de lopende maand vóór vandaag valt
+//    telt wel mee (de lopende maand wordt niet vastgelegd).
+// 7. De ANKERDATUM telt standaard ook terug (een salaris om de zoveel weken dat al langer loopt). Is het de eerste uitbetaling
+//    (`SalarySettings.anchorIsFirst`, bijvoorbeeld bij een nieuwe baan), dan valt er niets vóór die dag.
 
 // MARK: - Kalenderdagen
 
@@ -266,7 +274,8 @@ extension SalarySettings {
 
     /// De dagen van `month` waarop het salaris binnenkomt volgens het schema, oplopend (zonder overschrijvingen en zonder
     /// rekening te houden met de startmaand van de gegevens). `anchor` is een bekende uitbetaaldatum.
-    /// Maandelijks: één dag (`payDay`, in een korte maand de laatste dag). Anders: elke `cycleDays` dagen voor en na `anchor`.
+    /// Maandelijks: één dag (`payDay`, in een korte maand de laatste dag). Anders: elke `cycleDays` dagen voor en na `anchor`,
+    /// of alleen vanaf `anchor` als dat de eerste uitbetaling is (`anchorIsFirst`).
     func payDays(in month: YearMonth, anchor: CalendarDay) -> [Int] {
         guard let cycle = cycleDays else {
             return [min(YearMonth.clampedDay(payDay), month.dayCount)]
@@ -276,6 +285,7 @@ extension SalarySettings {
         let last = first + month.dayCount - 1
         let origin = anchor.dayNumber
         var number = origin + CivilDays.ceilDiv(first - origin, cycle) * cycle
+        if anchorIsFirst && number < origin { number = origin }
         var days: [Int] = []
         while number <= last {
             days.append(number - first + 1)
@@ -297,7 +307,9 @@ extension SalarySettings {
             return CalendarDay(dayNumber: floor)
         }
         let origin = anchor.dayNumber
-        return CalendarDay(dayNumber: origin + CivilDays.ceilDiv(floor - origin, cycle) * cycle)
+        // Is het anker de eerste uitbetaling, dan komt er niets eerder: de eerstvolgende is dan het anker zelf.
+        let from = anchorIsFirst ? max(floor, origin) : floor
+        return CalendarDay(dayNumber: origin + CivilDays.ceilDiv(from - origin, cycle) * cycle)
     }
 
     // MARK: Omschrijving

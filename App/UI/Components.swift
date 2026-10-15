@@ -476,20 +476,6 @@ func accountPrefsID(auth: AuthStore, cloud: CloudAccount?) -> String {
     return auth.currentAccount?.id.uuidString ?? "demo"
 }
 
-// MARK: - Negatief restant
-
-/// Waarom "Nog te verdelen" onder nul zit, zodat de melding klopt. Het restant is inkomen min uitgaven van de bank
-/// min wat je verdeelde. Zijn de uitgaven alleen al hoger dan het inkomen (bijvoorbeeld omdat je salaris nog
-/// ontbreekt), dan heb je niets te veel verdeeld.
-enum RemainingShortfall {
-    /// Waar komt het tekort vandaan: true = de uitgaven zijn hoger dan het inkomen, false = je verdeelde te veel.
-    static func isSpending(income: Double, bankExpenses: Double) -> Bool {
-        // Dezelfde regel als overal: wat er te verdelen is (`MonthFigures.available`) is negatief. Schermen met de cijfers van
-        // een maand of periode lezen dat liever rechtstreeks (`MonthBoard.spendingExceedsIncome`).
-        MonthFigures(income: CentsMath.int(income), expenses: CentsMath.int(bankExpenses)).available < 0
-    }
-}
-
 // MARK: - Even grote blokken
 
 /// Legt blokken in kolommen. Elk blok is even breed én even hoog (zo hoog als het hoogste blok).

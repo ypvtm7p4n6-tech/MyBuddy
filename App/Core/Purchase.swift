@@ -278,6 +278,10 @@ struct PurchaseContext: Equatable {
     var monthlyIncome: Double = 0
     /// Wat deze maand nog te verdelen is (kan negatief zijn). nil = geen maandplan ingevuld, of nog geen inkomen.
     var remainingThisMonth: Double?
+    /// `remainingThisMonth` is het restant van een GEMIDDELDE maand (bij een salaris om de zoveel weken of dagen) en niet van
+    /// deze ene maand. De teksten zeggen dat dan ("In een gemiddelde maand ..."), zodat het getal niet tegenspreekt wat
+    /// "Nog te verdelen" voor deze maand toont.
+    var isAverageMonth: Bool = false
     /// Zijn de uitgaven van de bank deze maand al hoger dan het inkomen? Dan komt een negatief restant
     /// niet doordat je te veel verdeelde, maar doordat de uitgaven hoger zijn dan het inkomen.
     var expensesExceedIncome: Bool = false
@@ -304,6 +308,7 @@ extension PurchaseContext {
         context.monthlyIncome = max(0, income)
         // Zonder inkomen zegt het maandplan niets: het restant is dan alleen min de uitgaven, en misschien is het
         // salaris gewoon nog niet ingevuld. Dan laten we het maandplan buiten de uitspraak.
+        context.isAverageMonth = !data.salary.isMonthly
         if income > 0 {
             context.remainingThisMonth = data.estimatedRemaining(in: current)
             context.expensesExceedIncome = CentsMath.int(income) - CentsMath.int(data.expensesFromBank(in: current)) < 0
@@ -692,23 +697,32 @@ enum PurchaseCalc {
 
         var details: [PurchaseNote] = []
 
-        // Deze maand.
+        // Deze maand, of bij een salaris om de zoveel weken of dagen een gemiddelde maand (het restant komt dan uit
+        // `estimatedRemaining` en is niet het getal van "Nog te verdelen" voor deze ene maand).
+        let average = context.isAverageMonth
+        let have = average ? "In een gemiddelde maand heb je nog" : "Je hebt deze maand nog"
         if let month = month {
             if fitsMonth {
                 let left = CentsMath.value(CentsMath.int(month) - costCents)
                 let text = left >= 1
-                    ? "Je hebt deze maand nog \(Fmt.euro(month)) te verdelen. Hier blijft \(Fmt.euro(left)) van over."
-                    : "Je hebt deze maand nog \(Fmt.euro(month)) te verdelen: precies genoeg."
+                    ? "\(have) \(Fmt.euro(month)) te verdelen. Hier blijft \(Fmt.euro(left)) van over."
+                    : "\(have) \(Fmt.euro(month)) te verdelen: precies genoeg."
                 details.append(PurchaseNote(text: text, kind: .positive))
             } else if month > 0 {
                 let missing = CentsMath.value(costCents - CentsMath.int(month))
                 details.append(PurchaseNote(
-                    text: "Je hebt deze maand nog \(Fmt.euro(month)) te verdelen. Dat is \(PurchaseCalc.moneyText(missing)) te weinig.",
+                    text: "\(have) \(Fmt.euro(month)) te verdelen. Dat is \(PurchaseCalc.moneyText(missing)) te weinig.",
                     kind: .warning))
             } else if month < 0 {
-                details.append(PurchaseNote(text: "Deze maand heb je al meer verdeeld dan je hebt, er is niets vrij.", kind: .warning))
+                let text = average
+                    ? "In een gemiddelde maand verdeel je al meer dan je hebt, er is niets vrij."
+                    : "Deze maand heb je al meer verdeeld dan je hebt, er is niets vrij."
+                details.append(PurchaseNote(text: text, kind: .warning))
             } else {
-                details.append(PurchaseNote(text: "Deze maand is alles al verdeeld, er is niets vrij voor deze aankoop.", kind: .warning))
+                let text = average
+                    ? "In een gemiddelde maand is alles al verdeeld, er is niets vrij voor deze aankoop."
+                    : "Deze maand is alles al verdeeld, er is niets vrij voor deze aankoop."
+                details.append(PurchaseNote(text: text, kind: .warning))
             }
         }
 
@@ -773,7 +787,8 @@ enum PurchaseCalc {
         // Uitspraak.
         if isEasy {
             let summary = fitsMonth
-                ? "Het past in wat je deze maand nog te verdelen hebt."
+                ? (average ? "Het past in wat je in een gemiddelde maand nog te verdelen hebt."
+                           : "Het past in wat je deze maand nog te verdelen hebt.")
                 : "Het past in wat je op je rekening boven je buffer hebt."
             return PurchaseAffordability(verdict: .easy, summary: summary, details: details)
         }

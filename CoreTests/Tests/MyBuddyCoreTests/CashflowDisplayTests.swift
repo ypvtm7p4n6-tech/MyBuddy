@@ -489,7 +489,7 @@ final class CashflowDisplayTests: XCTestCase {
         let soft = BankLowPointNote.make(low: dip, buffer: 1_000, balanceNow: 1_500, today: today)
         XCTAssertEqual(soft?.severe, false)
         XCTAssertTrue(soft?.text.hasPrefix("Op zo 25 okt zakt je saldo naar") ?? false, soft?.text ?? "nil")
-        XCTAssertTrue(soft?.text.contains("gewenste buffer") ?? false)
+        XCTAssertTrue(soft?.text.contains("gewenste bankbuffer") ?? false)
         let todayDip = plainDay(engTime(oct2026, 14, hour: 12), balance: 400)
         XCTAssertTrue(BankLowPointNote.make(low: todayDip, buffer: 1_000, balanceNow: 1_500, today: today)?.text.hasPrefix("Vandaag zakt je saldo naar") ?? false)
 
@@ -524,6 +524,32 @@ final class CashflowDisplayTests: XCTestCase {
         XCTAssertEqual(CashflowText.days(0), "0 dagen")
         XCTAssertEqual(CashflowText.days(1), "1 dag")
         XCTAssertEqual(CashflowText.days(31), "31 dagen")
+    }
+
+    /// Rente onder de 10 euro toont centen (de afspraak van de app): "+ € 1,25", niet "+ € 1". Daarboven hele euro's.
+    func testInterestShowsCentsUnderTenEuro() {
+        XCTAssertEqual(CashflowText.signedInterest(1.25), "+ " + Fmt.euroExact(1.25))
+        XCTAssertEqual(CashflowText.signedInterest(9.99), "+ " + Fmt.euroExact(9.99))
+        XCTAssertEqual(CashflowText.signedInterest(12.24), "+ " + Fmt.euro(12.24))
+        XCTAssertEqual(CashflowText.signedInterest(-3.5), "− " + Fmt.euroExact(3.5))
+        XCTAssertEqual(CashflowText.signedInterest(0), Fmt.euro(0))
+        XCTAssertNotEqual(CashflowText.signedInterest(1.25), CashflowText.signed(1.25), "signed rondt 1,25 af op 1")
+
+        // In het overzicht van de spaarpotten van een maand: de rij "Rente" gebruikt dezelfde opmaak als de pagina van de pot.
+        let (d, pot) = engInterestData(rate: 0.12, payoutDay: 28, opening: 100)   // 1% per maand van 100: 1,00 euro
+        let book = LedgerBook(d, today: engTime(oct2026, 29, hour: 10))
+        let rows = CashflowSummary.potsRows(book.ledger(sep2026))
+        let interest = try? XCTUnwrap(rows.first { $0.kind == .interest })
+        XCTAssertEqual(interest?.amountText, PotFormat.interest(interest?.amount ?? -1))
+        XCTAssertEqual(interest?.amountText, Fmt.euroExact(1.01), "september: 101 x 1% is 1,01 euro, met centen")
+        XCTAssertEqual(PotFormat.interest(d.interestPayments(for: pot.id, from: sep2026.firstDay, to: sep2026.date(day: 30)).first?.amount ?? 0),
+                       interest?.amountText)
+        // Andere regels: een bedrag met teken, een bedrag zonder teken, en onbekend.
+        let plain = CashflowRow(kind: .end, title: "Eind", sign: "=", amount: 1_234.5)
+        XCTAssertEqual(plain.amountText, Fmt.euro(1_234.5))
+        let signed = CashflowRow(kind: .correction, title: "Verschil", sign: "±", amount: -40, showsSign: true)
+        XCTAssertEqual(signed.amountText, CashflowText.signed(-40))
+        XCTAssertNil(CashflowRow(kind: .begin, title: "Begin", sign: "", amount: nil).amountText)
     }
 
     func testPrintedFormats() {

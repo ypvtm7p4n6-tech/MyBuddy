@@ -43,6 +43,25 @@ import Foundation
 /// Inkomen − uitgaven van de bank − verdeeld = nog te verdelen. Dat klopt hier altijd op de cent: alle getallen komen uit
 /// dezelfde `MonthFigures`. Een uitgave die uit een spaarpot komt, kost het maandbudget niets: ze staat wel in het totaal
 /// van de uitgaven (`expensesTotal`) maar niet in de uitgaven van de bank (`expensesFromBank`) waarmee de som sluit.
+/// Bedragen worden op hele euro's getoond terwijl de motor op de cent rekent. Meestal tellen de getoonde bedragen dan gewoon
+/// op; soms (ongeveer een op de drie maanden bij bedragen met centen, zoals een percentage van je inkomen) wijkt de som
+/// van de getoonde bedragen een euro af van het getoonde totaal. Dan zegt het scherm dat het in de afronding zit.
+enum DisplayRounding {
+    static let note = "Bedragen staan afgerond op hele euro's; de berekening zelf klopt op de cent."
+
+    /// Een bedrag in centen zoals het wordt getoond: op hele euro's (zoals `Fmt.euro`, half weg van nul).
+    static func shown(_ cents: Int) -> Int {
+        Int(CentsMath.value(cents).rounded())
+    }
+
+    /// Tellen de getoonde delen precies op tot het getoonde totaal? Alles in hele centen, met tekens.
+    static func closes(parts: [Int], total: Int) -> Bool {
+        var sum = 0
+        for part in parts { sum += shown(part) }
+        return sum == shown(total)
+    }
+}
+
 struct MonthBoard: Equatable {
     let month: YearMonth
     let figures: MonthFigures
@@ -89,6 +108,14 @@ struct MonthBoard: Equatable {
     /// Zijn de uitgaven van de bank al hoger dan het inkomen? Dan komt een negatief restant niet door te veel verdelen.
     var spendingExceedsIncome: Bool { figures.available < 0 }
     var hasPotExpenses: Bool { figures.fromPots > 0 }
+
+    /// Tellen de getoonde (op hele euro's afgeronde) bedragen inkomen, uitgaven van de bank en verdeeld niet precies op tot het
+    /// getoonde "nog te verdelen"? Dan staat er een korte uitleg bij (`DisplayRounding.note`): het zit in de afronding.
+    var roundingHidesSum: Bool {
+        !DisplayRounding.closes(parts: [figures.income, -(figures.expenses - figures.fromPots),
+                                        -CentsMath.add(figures.saved, figures.invested)],
+                                total: figures.remaining)
+    }
 
     /// Inkomen − uitgaven van de bank − verdeeld = nog te verdelen, exact in hele centen. Is altijd waar; de tests en de
     /// schermen kunnen het zo controleren.
