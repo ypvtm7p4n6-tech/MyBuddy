@@ -11,7 +11,7 @@
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo /home/user/MyBuddy)" || exit 2
 WAVE="${1:-alles}"; MISSING=0
 need() {
-  if ! grep -rqE --include=*.swift "^[[:space:]]*((public|private|fileprivate|final) )*$1 $2\b" App; then echo "ONTBREEKT: $1 $2"; MISSING=1; fi
+  if ! grep -rqE --include=*.swift "^[[:space:]]*(@[A-Za-z]+(\([^)]*\))?[[:space:]]+)*((public|private|fileprivate|final) )*$1 $2\b" App; then echo "ONTBREEKT: $1 $2"; MISSING=1; fi
 }
 needs() { grep -rqE --include=*.swift -- "$1" App || { echo "ONTBREEKT: $2"; MISSING=1; }; }
 sig() {
@@ -57,6 +57,7 @@ if [ "$WAVE" = 0 ] || [ "$WAVE" = alles ] || [ "$WAVE" = final ]; then
   # golf 0: 0B
   for n in AppTab SettingsPage Destination NavigationRules SearchIndex; do need enum $n; done
   need "final class" Router; need "final class" ActiveSession; need struct TabStack; need struct DestinationView
+  need struct AppCommands; need struct SearchEntry; need struct SettingsScene
   sig NavigationRules 'static func normalize\(' 'NavigationRules.normalize'
   sig NavigationRules 'static func push\(' 'NavigationRules.push'
   sig NavigationRules 'static func go\(' 'NavigationRules.go'
@@ -66,8 +67,8 @@ if [ "$WAVE" = 0 ] || [ "$WAVE" = alles ] || [ "$WAVE" = final ]; then
   sig Router 'var searchRequest' 'Router.searchRequest'
   sig ActiveSession 'func unregister\(store' 'ActiveSession.unregister(store:)'
   sig TabStack 'init\(_ tab' 'TabStack(_ tab:)'
-  sig SettingsPage 'case importReview' 'SettingsPage.importReview'
-  sig AppTab 'case[^\n]*\boverview\b[^\n]*\bmonth\b[^\n]*\bsaving\b[^\n]*\bplanning\b[^\n]*\bsettings\b' 'AppTab-cases'
+  sig SettingsPage 'case\b[^}]*\bimportReview\b' 'SettingsPage.importReview'
+  for c in overview month saving planning settings; do sig AppTab "case\\b[^}]*\\b$c\\b" "AppTab.$c"; done
   # golf 0: F
   for n in TrendChart StackedBarChart DonutChart DonutModel StackedBarModel; do need struct $n; done
   for n in ChartSize PortfolioTrend PriceTrend NetWorthTrend BankTrend DayBalanceTrend ProjectionTrend BufferTrend SavingsGoalTrend GoalCurveTrend PotTrend; do need enum $n; done
@@ -85,8 +86,9 @@ if [ "$WAVE" = 1 ] || [ "$WAVE" = alles ] || [ "$WAVE" = final ]; then
            PortfolioPage HoldingDetailPage PotsSummaryCard PortfolioSummaryCard HomePotsCard HomeHoldingsCard FavoritePotsSheet FavoriteHoldingsSheet \
            GoalsPage GoalDetailPage SavingsGoalPage AcceleratorsPage BufferPage \
            ProjectionPage PurchasePage GoalsSummaryCard BufferSummaryCard AcceleratorsSummaryCard ProjectionSummaryCard PurchaseSummaryCard \
-           SettingsView SettingsDestination SettingsPane SyncAttentionBanner AuthView GainBadge; do need struct $n; done
-  need enum BankSection
+           SettingsView SettingsDestination SettingsPane SyncAttentionBanner AuthView GainBadge \
+           FavoritePotTile FavoriteHoldingTile FavoriteSlotTile; do need struct $n; done
+  need enum BankSection; need struct ExportDocument; needs 'class ImportCoordinator\b' 'class ImportCoordinator'
   sig BankPage 'section\s*:\s*BankSection' 'BankPage(section:)'
   sig PotDetailPage 'potID\s*:\s*UUID' 'PotDetailPage(potID:)'
   sig HoldingDetailPage 'holdingID\s*:\s*UUID' 'HoldingDetailPage(holdingID:)'
