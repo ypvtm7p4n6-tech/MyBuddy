@@ -4,7 +4,7 @@ import SwiftUI
 // uit de rekenmotor: deze views rekenen niets uit.
 
 /// Een waarschuwing over de verdeling van een maand (percentages samen boven 100%, of meer verdeeld dan er is). De tekst
-/// komt van de rekenmotor (`AllocationWarning.message`).
+/// komt van de rekenmotor (`AllocationWarning.message`). Het symbool en de tekst dragen de betekenis, de kleur versterkt hem.
 struct AllocationWarningLabel: View {
     let warning: AllocationWarning
 
@@ -28,8 +28,8 @@ struct AllocationWarningLabel: View {
 struct RoundingNote: View {
     var body: some View {
         Text(DisplayRounding.note)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(.footnote)
+            .foregroundStyle(Theme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -44,19 +44,19 @@ struct ContributionSummary: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            EqualSizeGrid(minimumColumnWidth: 140, spacing: 8) {
+            FigureRow {
                 StatTile(title: "Standaard", value: info.standardValue, caption: info.standardCaption)
                 StatTile(title: "In \(monthName)", value: Fmt.euro(info.amount), caption: info.amountCaption)
             }
             if info.isOverride {
                 Text("In \(monthName) wijkt de inleg af van je standaard: \(info.ruleText). Je standaard is \(info.standardText).")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
             }
             if info.isPercent {
                 Text("Het bedrag volgt je inkomen van die maand: verandert je salaris of krijg je extra inkomsten, dan gaat de inleg vanzelf mee.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
             }
             if info.hasNoBase {
                 Label("Er is in \(monthName) geen inkomen om het percentage over te rekenen: het bedrag is € 0.",
@@ -67,7 +67,7 @@ struct ContributionSummary: View {
             if let average = info.averageAmount {
                 Text("Je salaris komt niet elke maand even vaak binnen. In een gemiddelde maand is de inleg \(Fmt.euro(average)); toekomstschattingen rekenen daarmee.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
             }
             // De waarschuwingen gaan over de hele verdeling; ze staan hier alleen als deze inleg meedoet.
             if info.amount != 0 {
@@ -76,6 +76,6 @@ struct ContributionSummary: View {
                 }
             }
         }
-        .animation(Theme.motion, value: info)
+        .animated(by: info)
     }
 }

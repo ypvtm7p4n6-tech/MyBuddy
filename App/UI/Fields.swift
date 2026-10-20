@@ -1,5 +1,8 @@
 import SwiftUI
 
+// Invoervelden en het blad voor formulieren. Elke rij heeft minstens `Theme.minTapTarget` hoogte, laat het label wrappen
+// en stapelt label en veld onder elkaar bij toegankelijkheidsformaten van Dynamic Type.
+
 // MARK: - Getalveld
 
 enum NumberUnit {
@@ -40,22 +43,36 @@ struct NumberRow: View {
 
     @State private var text = ""
     @FocusState private var focused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// Label en veld naast elkaar, of onder elkaar bij toegankelijkheidsformaten.
+    private var rowLayout: AnyLayout {
+        if typeSize.isAccessibilitySize {
+            return AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+        }
+        return AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+    }
 
     var body: some View {
-        HStack {
+        rowLayout {
             Text(title)
-            Spacer(minLength: 12)
-            TextField("0", text: $text)
-                .multilineTextAlignment(.trailing)
-                #if os(iOS)
-                .keyboardType(allowsNegative ? .numbersAndPunctuation : .decimalPad)
-                #endif
-                .focused($focused)
-                .frame(minWidth: 70, maxWidth: 150)
-            Text(unit.suffix)
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 14, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 4) {
+                TextField("0", text: $text)
+                    .multilineTextAlignment(.trailing)
+                    #if os(iOS)
+                    .keyboardType(allowsNegative ? .numbersAndPunctuation : .decimalPad)
+                    #endif
+                    .focused($focused)
+                    .submitLabel(.next)
+                    .frame(minWidth: 70, maxWidth: 150)
+                    .accessibilityLabel(title)
+                Text(unit.suffix)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(minWidth: 14, alignment: .leading)
+            }
         }
+        .frame(minHeight: Theme.minTapTarget)
         .onAppear { text = display(value) }
         .onChange(of: text) { _, newText in
             guard let parsed = NumberRow.value(from: newText, unit: unit) else { return }
@@ -118,14 +135,15 @@ struct IntStepperRow: View {
                 #endif
                 .focused($focused)
                 .frame(minWidth: 44, maxWidth: 70)
+                .accessibilityLabel(title)
             if !unit.isEmpty {
                 Text(unit)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .foregroundStyle(Theme.textSecondary)
             }
-            Stepper("", value: clampedValue, in: range)
+            Stepper(title, value: clampedValue, in: range)
                 .labelsHidden()
         }
+        .frame(minHeight: Theme.minTapTarget)
         .onAppear { text = IntStepperRow.display(value, in: range) }
         .onChange(of: text) { _, newText in
             guard let parsed = IntStepperRow.value(from: newText, in: range) else { return }
@@ -177,14 +195,16 @@ struct OptionalNumberRow: View {
     @Binding var value: Double?
     var unit: NumberUnit = .euro
     var defaultValue: Double = 1000
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Toggle(title, isOn: Binding(
             get: { value != nil },
             set: { newValue in
-                withAnimation(Theme.motion) { value = newValue ? (value ?? defaultValue) : nil }
+                withAnimation(reduceMotion ? nil : Theme.motion) { value = newValue ? (value ?? defaultValue) : nil }
             }
         ))
+        .frame(minHeight: Theme.minTapTarget)
         if value != nil {
             NumberRow(title: "Bedrag", value: Binding(get: { value ?? 0 }, set: { value = $0 }), unit: unit)
         }
@@ -198,6 +218,7 @@ struct OptionalDateRow: View {
     /// Standaard een jaar vanaf nu, op kalenderdagen gerekend (een jaar is niet 365 x 86.400 seconden: schrikkeljaar en
     /// zomertijd verschuiven de dag).
     var defaultDate: Date = OptionalDateRow.oneYearFromNow()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static func oneYearFromNow(now: Date = Date()) -> Date {
         YearMonth.calendar.date(byAdding: .year, value: 1, to: now) ?? now
@@ -207,12 +228,14 @@ struct OptionalDateRow: View {
         Toggle(title, isOn: Binding(
             get: { date != nil },
             set: { newValue in
-                withAnimation(Theme.motion) { date = newValue ? (date ?? defaultDate) : nil }
+                withAnimation(reduceMotion ? nil : Theme.motion) { date = newValue ? (date ?? defaultDate) : nil }
             }
         ))
+        .frame(minHeight: Theme.minTapTarget)
         if date != nil {
             DatePicker("Datum", selection: Binding(get: { date ?? defaultDate }, set: { date = $0 }),
                        displayedComponents: .date)
+                .frame(minHeight: Theme.minTapTarget)
         }
     }
 }
@@ -228,21 +251,22 @@ struct ChoiceRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? Theme.accent : Color.secondary)
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.textSecondary)
                     .contentTransition(.symbolEffect(.replace))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title).font(.subheadline.weight(.semibold))
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                    Text(detail).font(.caption).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer(minLength: 0)
             }
             .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: Theme.minTapTarget, alignment: .leading)
             .tile(tint: isSelected ? Theme.accent : nil)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .animation(Theme.quickMotion, value: isSelected)
+        .animated(by: isSelected, quick: true)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
@@ -301,22 +325,21 @@ struct ContributionFields: View {
                     HStack(spacing: 8) {
                         if let resolvedNote {
                             Text(resolvedNote)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.footnote)
+                                .foregroundStyle(Theme.textSecondary)
                         }
                         Spacer(minLength: 8)
                         Text("= " + Fmt.euro(resolvedAmount))
                             .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
+                            .monospacedDigit()
                             .contentTransition(.numericText())
-                            .animation(Theme.motion, value: resolvedAmount)
+                            .animated(by: resolvedAmount)
                     }
                 }
                 if let footnote {
                     Text(footnote)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.textSecondary)
                 }
             }
         }
@@ -343,91 +366,155 @@ struct SaveChoices {
 
 /// Standaard opzet voor invulschermen: titel, annuleren en bewaren. Met `saveChoices` vraagt "Bewaar" eerst om een keuze
 /// (zie `SaveChoices`) en wordt `onSave` niet gebruikt.
+///
+/// Met `hasChanges` is veeg-om-te-sluiten uit en vraagt "Annuleer" of je de wijzigingen wilt bewaren, weggooien of verder
+/// wilt bewerken. Het blad heeft de systeemachtergrond, bewaart met Return en geeft een lichte bevestiging (`.success`).
 struct SheetScaffold<Content: View>: View {
     let title: String
-    var saveTitle = "Bewaar"
-    var canSave = true
+    var saveTitle: String = "Bewaar"
+    var canSave: Bool = true
+    var hasChanges: Bool = false
     let onSave: () -> Void
     var saveChoices: SaveChoices? = nil
     @ViewBuilder var content: Content
     @Environment(\.dismiss) private var dismiss
+    /// De keuzes bij "Bewaar" (alleen met `saveChoices`).
     @State private var asking = false
+    /// De vraag bij "Annuleer" met niet-bewaarde wijzigingen.
+    @State private var confirmingCancel = false
+    /// Loopt op bij elke bewaring en geeft de bevestigende haptiek.
+    @State private var savedCount = 0
 
     var body: some View {
         NavigationStack {
             Form { content }
                 .formStyle(.grouped)
-                .scrollContentBackground(.hidden)
-                .background { MeshBackground() }
                 .navigationTitle(title)
-                #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
-                #endif
+                .toolbarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Annuleer") { dismiss() }
+                        Button("Annuleer") { cancel() }
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button(saveTitle) {
-                            if saveChoices != nil {
-                                asking = true
-                            } else {
-                                onSave()
-                                dismiss()
-                            }
-                        }
-                        .disabled(!canSave)
+                        Button(saveTitle) { save() }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(!canSave)
                     }
                 }
-                .confirmationDialog(saveChoices?.title ?? "", isPresented: $asking, titleVisibility: .visible) {
-                    ForEach(saveChoices?.options ?? []) { option in
-                        Button(option.title, role: option.role) {
-                            option.action()
-                            dismiss()
-                        }
+                .confirmationDialog("Wijzigingen bewaren?", isPresented: $confirmingCancel, titleVisibility: .visible) {
+                    if canSave {
+                        Button(saveTitle) { saveAfterDialog() }
                     }
-                    Button("Annuleer", role: .cancel) {}
-                } message: {
-                    if let message = saveChoices?.message { Text(message) }
+                    Button("Gooi weg", role: .destructive) { dismiss() }
+                    Button("Verder bewerken", role: .cancel) {}
                 }
         }
+        .confirmationDialog(saveChoices?.title ?? "", isPresented: $asking, titleVisibility: .visible) {
+            ForEach(saveChoices?.options ?? []) { option in
+                Button(option.title, role: option.role) {
+                    option.action()
+                    finish()
+                }
+            }
+            Button("Annuleer", role: .cancel) {}
+        } message: {
+            if let message = saveChoices?.message { Text(message) }
+        }
+        .interactiveDismissDisabled(hasChanges)
+        .sensoryFeedback(.success, trigger: savedCount)
+        .presentationSizing(.form)
         #if os(macOS)
         .frame(minWidth: 460, minHeight: 440)
         #endif
     }
+
+    private func cancel() {
+        if hasChanges {
+            confirmingCancel = true
+        } else {
+            dismiss()
+        }
+    }
+
+    private func save() {
+        if saveChoices != nil {
+            asking = true
+        } else {
+            onSave()
+            finish()
+        }
+    }
+
+    /// "Bewaar" in de vraag bij Annuleer: dezelfde weg als de knop zelf. Een tweede vraag (de keuzes) krijgt even de tijd
+    /// om de eerste te laten verdwijnen.
+    private func saveAfterDialog() {
+        if saveChoices != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { asking = true }
+        } else {
+            onSave()
+            finish()
+        }
+    }
+
+    /// Geeft de haptiek en sluit het blad in de eerstvolgende ronde, zodat de haptiek nog hoort bij dit blad.
+    private func finish() {
+        savedCount += 1
+        DispatchQueue.main.async { dismiss() }
+    }
 }
 
-/// Keuze uit de kleuren van het palet.
+/// Namen van de kleuren in `Theme.palette`, voor VoiceOver (de kleur alleen zegt een blinde gebruiker niets).
+private let paletteNames = ["olijf", "saliegroenblauw", "mosterd", "terracotta", "leiblauw", "pruim", "salie", "bruin"]
+
+/// Nederlandse namen van de symbolen in `Theme.potSymbols`, voor VoiceOver.
+private let potSymbolNames: [String: String] = [
+    "banknote": "Bankbiljet", "shield.lefthalf.filled": "Schild", "airplane": "Vliegtuig", "laptopcomputer": "Laptop",
+    "house.fill": "Huis", "car.fill": "Auto", "gift.fill": "Cadeau", "graduationcap.fill": "Studie",
+    "heart.fill": "Hart", "pawprint.fill": "Huisdier", "bicycle": "Fiets", "camera.fill": "Camera",
+    "gamecontroller.fill": "Spelcomputer", "cart.fill": "Winkelwagen", "wrench.and.screwdriver.fill": "Gereedschap",
+    "star.fill": "Ster"
+]
+
+/// Keuze uit de kleuren van het palet. Elke kleur is een raakdoel van minstens `Theme.minTapTarget`, heeft een naam voor
+/// VoiceOver en toont een vinkje als hij gekozen is.
 struct ColorChoiceRow: View {
     @Binding var index: Int
+    @ScaledMetric(relativeTo: .body) private var swatch: CGFloat = 28
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Kleur")
-            HStack(spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: Theme.minTapTarget), spacing: 4)], spacing: 4) {
                 ForEach(0..<Theme.palette.count, id: \.self) { i in
                     Button { index = i } label: {
                         Circle()
                             .fill(Theme.color(i))
-                            .frame(width: 28, height: 28)
+                            .frame(width: swatch, height: swatch)
                             .overlay {
                                 if index == i {
                                     Image(systemName: "checkmark")
                                         .font(.caption.weight(.bold))
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(Theme.onAccent)
                                 }
                             }
+                            .frame(width: Theme.minTapTarget, height: Theme.minTapTarget)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Kleur \(i + 1)")
+                    .accessibilityLabel("Kleur " + colorName(i))
+                    .accessibilityAddTraits(index == i ? .isSelected : [])
                 }
             }
         }
         .padding(.vertical, 4)
     }
+
+    private func colorName(_ i: Int) -> String {
+        paletteNames.indices.contains(i) ? paletteNames[i] : String(i + 1)
+    }
 }
 
-/// Keuze uit een rijtje symbolen.
+/// Keuze uit een rijtje symbolen. Elk symbool is een raakdoel van minstens `Theme.minTapTarget` met een naam voor VoiceOver.
 struct SymbolChoiceRow: View {
     @Binding var symbol: String
     var color: Color
@@ -435,16 +522,19 @@ struct SymbolChoiceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Symbool")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: Theme.minTapTarget), spacing: 8)], spacing: 8) {
                 ForEach(Theme.potSymbols, id: \.self) { s in
                     Button { symbol = s } label: {
-                        Image(systemName: s)
+                        Label(potSymbolNames[s] ?? s, systemImage: s)
+                            .labelStyle(.iconOnly)
                             .font(.body)
-                            .frame(width: 40, height: 40)
-                            .foregroundStyle(symbol == s ? Color.white : color)
+                            .frame(width: Theme.minTapTarget, height: Theme.minTapTarget)
+                            .foregroundStyle(symbol == s ? Theme.onAccent : color)
                             .background(symbol == s ? color : color.opacity(0.15), in: Circle())
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(symbol == s ? .isSelected : [])
                 }
             }
         }

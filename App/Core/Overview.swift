@@ -7,6 +7,9 @@ struct NetWorthPoint: Identifiable, Equatable {
     var pots: Double
     var investments: Double
     var isProjected: Bool
+    /// Is het banksaldo van deze maand bekend? Zo niet, dan telt de bank als 0 mee in `total` en hoort er een noot bij
+    /// ("Zonder banksaldo"), anders lijkt het vermogen te laag zonder aanwijzing waarom.
+    var bankKnown: Bool = true
 
     var id: String { month.key }
     var total: Double { CentsMath.value(CentsMath.int(bank) + CentsMath.int(pots) + CentsMath.int(investments)) }
@@ -16,7 +19,8 @@ extension FinanceData {
     /// Vermogen aan het eind van `month`: bank, spaarpotten (met geplande inleg en verwachte rente) en beleggingen.
     func netWorth(at month: YearMonth, current: YearMonth) -> NetWorthPoint {
         let potCents = CentsMath.sum(pots.map { CentsMath.int(potBalance($0.id, at: month)) })
-        return netWorthPoint(month: month, bank: bankBalance(at: month), potCents: potCents, current: current)
+        return netWorthPoint(month: month, bank: bankBalance(at: month), potCents: potCents,
+                             invested: investmentValue(at: month, current: current), current: current)
     }
 
     /// Vermogen van nu: bank en spaarpotten op het moment `today` (wat nog komt, zoals het salaris van de 25e of de
@@ -25,8 +29,8 @@ extension FinanceData {
     /// grafieken en het eind van een maand.
     func netWorthNow(current: YearMonth, today: Date = Date()) -> NetWorthPoint {
         let potCents = CentsMath.sum(pots.map { CentsMath.int(potBalanceNow($0.id, current: current, today: today)) })
-        return netWorthPoint(month: current, bank: bankBalanceNow(current: current, today: today),
-                             potCents: potCents, current: current)
+        return netWorthPoint(month: current, bank: bankBalanceNowIfKnown(current: current, today: today),
+                             potCents: potCents, invested: investmentValue(at: current, current: current), current: current)
     }
 
     func netWorthSeries(from start: YearMonth, count: Int, current: YearMonth) -> [NetWorthPoint] {
@@ -39,18 +43,28 @@ extension FinanceData {
             let flows = potFlows(pot, throughMonth: last)
             for i in months.indices { potCents[i] = CentsMath.add(potCents[i], flows.cents(before: months[i].endExclusive)) }
         }
+        // De beleggingen één keer voor alle maanden (met het afgeleide beginpunt van een belegging zonder meetpunt).
+        var invested: [String: Double] = [:]
+        for point in portfolioSeries(from: months[0], count: months.count, current: current) { invested[point.month.key] = point.value }
         return months.indices.map { i in
-            netWorthPoint(month: months[i], bank: banks[i], potCents: potCents[i], current: current)
+            netWorthPoint(month: months[i], bank: banks[i], potCents: potCents[i],
+                          invested: invested[months[i].key] ?? 0, current: current)
         }
     }
 
-    private func netWorthPoint(month: YearMonth, bank: Double?, potCents: Int, current: YearMonth) -> NetWorthPoint {
-        let invested = holdings.reduce(0) { $0 + (holdingState($1, at: month, current: current)?.value ?? 0) }
-        return NetWorthPoint(month: month,
-                             bank: bank ?? 0,
-                             pots: CentsMath.value(potCents),
-                             investments: invested.cents,
-                             isProjected: month > current)
+    /// De waarde van alle beleggingen aan het eind van `month` (een belegging zonder gegevens telt als 0).
+    private func investmentValue(at month: YearMonth, current: YearMonth) -> Double {
+        holdings.reduce(0) { $0 + (holdingState($1, at: month, current: current)?.value ?? 0) }.cents
+    }
+
+    private func netWorthPoint(month: YearMonth, bank: Double?, potCents: Int, invested: Double,
+                               current: YearMonth) -> NetWorthPoint {
+        NetWorthPoint(month: month,
+                      bank: bank ?? 0,
+                      pots: CentsMath.value(potCents),
+                      investments: invested.cents,
+                      isProjected: month > current,
+                      bankKnown: bank != nil)
     }
 
     /// Is er nog niets ingevuld? Wordt gebruikt om een welkomstkaart te tonen (met de knop "Voorbeelddata", die alles

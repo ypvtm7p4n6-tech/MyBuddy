@@ -26,6 +26,15 @@ struct PotTimelineItem: Identifiable, Equatable {
     var isPlanned: Bool = false
 }
 
+/// Het saldo van een spaarpot aan het eind van een maand (voor het Verloop op de pagina van een spaarpot).
+struct PotPoint: Identifiable, Equatable {
+    var month: YearMonth
+    var balance: Double
+    /// Ligt na de huidige maand: verwacht (geplande inleg en verwachte rente), nog niet gebeurd.
+    var isProjected: Bool
+    var id: String { month.key }
+}
+
 /// Boekingen op datum met lopende som in hele centen, om snel een saldo op een moment te vinden.
 struct CentsLedger: Equatable {
     private(set) var dates: [Date] = []
@@ -215,6 +224,20 @@ extension FinanceData {
     func potBalanceNow(_ potID: UUID, current: YearMonth, today: Date = Date()) -> Double {
         if YearMonth(date: today) == current { return potBalance(potID, atMoment: today) }
         return potBalance(potID, at: current)
+    }
+
+    /// Het saldo van een pot aan het eind van elke maand `start ... start+count-1` (`potBalance(_:at:)`), met het verloop van de pot
+    /// één keer opgebouwd voor alle maanden, op dezelfde manier als `netWorthSeries` het per pot doet. Maanden na `current` zijn
+    /// verwacht. Een pot die niet bestaat geeft een lege reeks. Maanden vóór de startmaand van de pot staan er ook in (saldo 0):
+    /// laat de aanroeper ze weg als de grafiek bij de start moet beginnen.
+    func potSeries(_ potID: UUID, from start: YearMonth, count: Int, current: YearMonth) -> [PotPoint] {
+        guard let pot = self.pot(potID) else { return [] }
+        let months = start.range(count: count)
+        guard let last = months.last else { return [] }
+        let flows = potFlows(pot, throughMonth: last)
+        return months.map { m in
+            PotPoint(month: m, balance: CentsMath.value(flows.cents(before: m.endExclusive)), isProjected: m > current)
+        }
     }
 
     /// Totaal van alle spaarpotten nu (zoals `potBalanceNow`).

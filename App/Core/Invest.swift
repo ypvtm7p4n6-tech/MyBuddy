@@ -4,6 +4,9 @@ struct HoldingState: Equatable {
     var value: Double
     var invested: Double
     var isProjected: Bool
+    /// Geschat uit "Totaal ingelegd", "Belegd sinds" en de inleg: er is (nog) geen echt meetpunt. De waarde is dan gelijk aan wat
+    /// je hebt ingelegd, zonder rendement; toon "Geschat" en verberg Winst en Rendement (die zijn dan 0 en zeggen niets).
+    var isEstimated: Bool = false
 
     var gain: Double { (value - invested).cents }
     /// Rendement als breuk; nil zolang er niets ingelegd is.
@@ -15,6 +18,8 @@ struct PortfolioPoint: Identifiable, Equatable {
     var value: Double
     var invested: Double
     var isProjected: Bool
+    /// Waar elke meegetelde belegging in dit punt geschat is uit de inleg (zie `HoldingState.isEstimated`).
+    var isEstimated: Bool = false
     var id: String { month.key }
 }
 
@@ -29,16 +34,72 @@ extension FinanceData {
 
     // MARK: Waarde per maand
 
-    /// Waarde op een moment in het verleden of nu: laatste meetpunt + inleg daarna.
+    /// De meetpunten waarmee een belegging rekent: de echte, of (zonder enig meetpunt) één afgeleid beginpunt.
+    private struct HoldingBasis {
+        var snapshots: [ValueSnapshot]
+        var isEstimated: Bool
+    }
+
+    /// Eén belegging klaargezet voor een lus over maanden: de basis voor de waarde van de maanden t/m `current` (`now`, met `today`)
+    /// en die voor het EINDE van `current` waar de prognose van verder rekent (`end`, zonder `today`). Zo wordt het afgeleide
+    /// beginpunt één keer per belegging uitgerekend en niet bij elke maand opnieuw.
+    private struct HoldingTrack {
+        var holding: Holding
+        var now: HoldingBasis
+        var end: HoldingBasis
+    }
+
+    /// Een belegging zonder meetpunt krijgt een AFGELEID beginpunt uit "Totaal ingelegd" en de inleg: op de eerste dag van
+    /// `startMonth` (Belegd sinds) is de waarde gelijk aan het ingelegde bedrag, en dat is wat je bij "Totaal ingelegd" intikte
+    /// min de inleg die er sindsdien bij kwam. Zo is de waarde van nu gelijk aan "Totaal ingelegd" en loopt de grafiek vanaf
+    /// "Belegd sinds", zonder rendement. Voor de lopende maand telt een inleg pas als zijn overschrijfdag geweest is (dezelfde
+    /// kalenderdagregel als `historicState`). Er wordt NIETS in `snapshots` geschreven: geen verzonnen punt in de Waarde-updates
+    /// of de back-up; een echt meetpunt neemt het over. Zonder bedrag en zonder inleg is er niets te schatten: nil.
+    private func derivedOpening(_ h: Holding, current: YearMonth, cache: IncomeBasesCache, today: Date?) -> ValueSnapshot? {
+        var later = 0.0
+        var m = h.startMonth.adding(1)
+        let todayMonth = today.map { YearMonth(date: $0) }
+        while m <= current {
+            if let today, let todayMonth, m >= todayMonth,
+               DayMath.isPlanned(m.date(day: transferDay(for: h.id, in: m)), asOf: today) {
+                m = m.adding(1)
+                continue
+            }
+            later += allocation(h.id, in: m, cache: cache)
+            m = m.adding(1)
+        }
+        let hasPlan = h.monthlyContribution != 0 || (h.contributionMode == .percentage && h.contributionPercent > 0)
+        guard h.investedTotal > 0 || hasPlan || later != 0 else { return nil }
+        let opening = max(0, h.investedTotal - later).cents
+        return ValueSnapshot(date: h.startMonth.firstDay, value: opening, invested: opening)
+    }
+
+    private func holdingBasis(_ h: Holding, current: YearMonth, cache: IncomeBasesCache, today: Date?) -> HoldingBasis {
+        let real = h.snapshots.sorted { $0.date < $1.date }
+        if !real.isEmpty { return HoldingBasis(snapshots: real, isEstimated: false) }
+        if let opening = derivedOpening(h, current: current, cache: cache, today: today) {
+            return HoldingBasis(snapshots: [opening], isEstimated: true)
+        }
+        return HoldingBasis(snapshots: [], isEstimated: false)
+    }
+
+    private func holdingTrack(_ h: Holding, current: YearMonth, cache: IncomeBasesCache, today: Date?) -> HoldingTrack {
+        let now = holdingBasis(h, current: current, cache: cache, today: today)
+        let end = today == nil ? now : holdingBasis(h, current: current, cache: cache, today: nil)
+        return HoldingTrack(holding: h, now: now, end: end)
+    }
+
+    /// Waarde op een moment in het verleden of nu: laatste meetpunt + inleg daarna (zonder meetpunt: het afgeleide beginpunt,
+    /// zie `derivedOpening`).
     ///
     /// Zonder `today` is dit de waarde aan het EIND van `month`: de hele inleg van de maand telt mee, ook die van de 25e als
     /// het nog de 9e is. Dat is de goede basis voor grafieken en prognoses (die rekenen per maand verder). Met `today` rekent
     /// de waarde per KALENDERDAG, zoals de bank en de spaarpotten: een inleg telt pas mee vanaf de dag waarop hij wordt
     /// overgeschreven (`transferDay(for:in:)`, dezelfde dag als in de dagboekhouding), en dan de hele dag.
-    private func historicState(_ h: Holding, at month: YearMonth, cache: IncomeBasesCache,
+    private func historicState(_ h: Holding, basis: HoldingBasis, at month: YearMonth, cache: IncomeBasesCache,
                                today: Date? = nil) -> HoldingState? {
-        let snaps = h.snapshots.sorted { $0.date < $1.date }
-        guard let snap = snaps.last(where: { $0.date < month.endExclusive }) else { return nil }
+        let limit = month.endExclusive
+        guard let snap = basis.snapshots.last(where: { $0.date < limit }) else { return nil }
         var value = snap.value
         var invested = snap.invested
         let todayMonth = today.map { YearMonth(date: $0) }
@@ -55,7 +116,7 @@ extension FinanceData {
             invested += a
             m = m.adding(1)
         }
-        return HoldingState(value: value.cents, invested: invested.cents, isProjected: false)
+        return HoldingState(value: value.cents, invested: invested.cents, isProjected: false, isEstimated: basis.isEstimated)
     }
 
     /// Waarde aan het eind van `month`. Na de huidige maand: verwachte groei plus geplande inleg.
@@ -69,19 +130,28 @@ extension FinanceData {
     /// altijd uit van het EINDE van `current` (de prognose rekent per maand verder).
     private func holdingState(_ h: Holding, at month: YearMonth, current: YearMonth, cache: IncomeBasesCache,
                               today: Date? = nil) -> HoldingState? {
-        if month <= current { return historicState(h, at: month, cache: cache, today: today) }
-        guard let base = historicState(h, at: current, cache: cache) else { return nil }
+        let track = holdingTrack(h, current: current, cache: cache, today: today)
+        return holdingState(track: track, at: month, current: current, cache: cache, today: today)
+    }
+
+    /// Zoals hierboven voor een belegging die al klaarstaat voor een lus (`holdingTrack`).
+    private func holdingState(track: HoldingTrack, at month: YearMonth, current: YearMonth, cache: IncomeBasesCache,
+                              today: Date?) -> HoldingState? {
+        let h = track.holding
+        if month <= current { return historicState(h, basis: track.now, at: month, cache: cache, today: today) }
+        guard let base = historicState(h, basis: track.end, at: current, cache: cache) else { return nil }
         var value = base.value
         var invested = base.invested
         let rm = Growth.monthlyRate(annual: h.netReturn)
         var m = current.adding(1)
         while m <= month {
             let a = allocation(h.id, in: m, cache: cache)
-            value = value * (1 + rm) + a
+            // Een verwachte waarde onder 0 bestaat niet: een grote negatieve inleg haalt je waarde naar 0, niet eronder.
+            value = max(0, value * (1 + rm) + a)
             invested += a
             m = m.adding(1)
         }
-        return HoldingState(value: value.cents, invested: invested.cents, isProjected: true)
+        return HoldingState(value: value.cents, invested: invested.cents, isProjected: true, isEstimated: base.isEstimated)
     }
 
     /// De waarde aan het EIND van `current` (met de hele inleg van die maand). Wil je tonen wat je nu hebt, gebruik dan
@@ -154,20 +224,45 @@ extension FinanceData {
         let selected = holdings.filter { ids == nil || ids!.contains($0.id) }
         let cache = incomeBasesCache()
         let day = dayAware(today, current)
+        // Het afgeleide beginpunt van elke belegging één keer, niet bij elke maand.
+        let tracks = selected.map { holdingTrack($0, current: current, cache: cache, today: day) }
         return start.range(count: count).compactMap { m in
             var value = 0.0
             var invested = 0.0
             var any = false
-            for h in selected {
-                if let s = holdingState(h, at: m, current: current, cache: cache, today: day) {
+            var allEstimated = true
+            for track in tracks {
+                if let s = holdingState(track: track, at: m, current: current, cache: cache, today: day) {
                     value += s.value
                     invested += s.invested
                     any = true
+                    if !s.isEstimated { allEstimated = false }
                 }
             }
             guard any else { return nil }
-            return PortfolioPoint(month: m, value: value.cents, invested: invested.cents, isProjected: m > current)
+            return PortfolioPoint(month: m, value: value.cents, invested: invested.cents, isProjected: m > current,
+                                  isEstimated: allEstimated)
         }
+    }
+
+    /// De eerste maand waarin (een deel van) de portefeuille iets te tekenen heeft: de maand van het eerste meetpunt of, bij een
+    /// belegging zonder meetpunt, "Belegd sinds" (het afgeleide beginpunt). nil zonder enig gegeven. Een belegging die pas na
+    /// `current` begint telt niet mee: die heeft nu nog geen waarde. Het venster van de grafiek begint hier (`PortfolioWindow`).
+    func portfolioDataStart(current: YearMonth, today: Date? = nil, only ids: Set<UUID>? = nil) -> YearMonth? {
+        let cache = incomeBasesCache()
+        let day = dayAware(today, current)
+        var first: YearMonth?
+        for h in holdings where ids == nil || ids!.contains(h.id) {
+            var start: YearMonth?
+            if let earliest = h.snapshots.map(\.date).min() {
+                start = YearMonth(date: earliest)
+            } else if derivedOpening(h, current: current, cache: cache, today: day) != nil {
+                start = h.startMonth
+            }
+            guard let s = start, s <= current else { continue }
+            if let f = first { first = min(f, s) } else { first = s }
+        }
+        return first
     }
 
     func valueByKind(current: YearMonth) -> [KindSlice] {
@@ -226,6 +321,11 @@ extension FinanceData {
         let changed = old.units != updated.units || old.investedTotal != updated.investedTotal
         if changed, updated.isTracked, let price = updated.lastPrice, let units = updated.units {
             addSnapshot(holdingID: updated.id, value: units * price, invested: updated.investedTotal, date: now)
+        } else if old.investedTotal != updated.investedTotal, !updated.isTracked, !updated.snapshots.isEmpty,
+                  let state = holdingStateNow(updated, current: current, today: now) {
+            // Niet gevolgd, met minstens een meetpunt: het nieuwe "Totaal ingelegd" komt in een meetpunt van vandaag, met de
+            // waarde van nu. Anders blijft de reeks bij het oude bedrag (het scherm toonde 5.000, opgeslagen was 6.000).
+            addSnapshot(holdingID: updated.id, value: state.value, invested: updated.investedTotal, date: now)
         }
     }
 

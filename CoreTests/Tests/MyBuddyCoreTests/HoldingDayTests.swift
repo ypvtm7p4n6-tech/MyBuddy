@@ -214,14 +214,24 @@ final class HoldingDayTests: XCTestCase {
         XCTAssertEqual(d.portfolioValue(current: oct2026, today: day(oct2026, 3)), d.portfolioValue(current: oct2026))
     }
 
-    func testHoldingWithoutMeasurementHasNoStateNow() {
+    /// Zonder meetpunt rekent een belegging met een AFGELEID beginpunt (plan par. 5.2, C1): hier 0 op 1 augustus en daarna de
+    /// inleg per maand, per kalenderdag. Vroeger was de waarde 0 en de reeks leeg ("de grafiek werkt niet").
+    func testHoldingWithoutMeasurementIsEstimatedFromItsDeposits() {
         var d = makeBaseData()
         let h = Holding(name: "Leeg", kind: .etf, ticker: nil, units: nil, investedTotal: 0,
                         expectedReturn: 0.06, annualCost: 0, monthlyContribution: 100, startMonth: aug2026)
         d.addHolding(h)
-        XCTAssertNil(d.holdingStateNow(h, current: oct2026, today: day(oct2026, 14)))
-        XCTAssertEqual(d.portfolioValue(current: oct2026, today: day(oct2026, 14)), 0)
-        XCTAssertTrue(d.valueByKind(current: oct2026, today: day(oct2026, 14)).isEmpty)
+        let early = d.holdingStateNow(h, current: oct2026, today: day(oct2026, 14))
+        // De inleg van september is overgeschreven, die van oktober (de 25e) is op 14 oktober nog gepland.
+        XCTAssertEqual(early?.value, 100)
+        XCTAssertEqual(early?.invested, 100)
+        XCTAssertEqual(early?.isEstimated, true)
+        XCTAssertEqual(d.portfolioValue(current: oct2026, today: day(oct2026, 14)), 100)
+        XCTAssertEqual(d.valueByKind(current: oct2026, today: day(oct2026, 14)).map(\.value), [100])
+        // Na de overschrijfdag zit ook de inleg van oktober in de waarde van nu.
+        XCTAssertEqual(d.portfolioValue(current: oct2026, today: day(oct2026, 26)), 200)
+        // Er is niets in de meetpunten geschreven: het beginpunt is afgeleid, niet verzonnen.
+        XCTAssertTrue(d.holdings[0].snapshots.isEmpty)
     }
 
     // MARK: Veel combinaties
