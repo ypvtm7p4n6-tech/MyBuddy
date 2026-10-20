@@ -1,0 +1,244 @@
+import XCTest
+import Foundation
+@testable import MyBuddyCore
+
+// Tests van het zoeken in MyBuddy (App/Navigation/SearchIndex.swift, Foundation-only), uitputtend over de bestemmingen
+// en de pagina's van Instellingen (par. 2.9 van docs/design/plan.md).
+
+final class SearchIndexTests: XCTestCase {
+    private let october = YearMonth(year: 2026, month: 10)
+
+    private func emptyData() -> FinanceData {
+        FinanceData(startMonth: october)
+    }
+
+    private func destinations(_ results: [SearchEntry]) -> [Destination] {
+        results.map { $0.destination }
+    }
+
+    /// Of een bestemming een eigen zoekregel moet hebben: de pagina's zonder id wel, een spaarpot, belegging of doel niet
+    /// (die komen uit de gegevens van de gebruiker). Geen `default`: een nieuwe case moet hier worden ingedeeld.
+    private func requiresPageEntry(_ destination: Destination) -> Bool {
+        switch destination {
+        case .overview, .income, .salary, .expenses, .distribute, .bank, .cashflow,
+             .pots, .portfolio,
+             .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase:
+            return true
+        case .pot, .holding, .goal:
+            return false
+        case .settings:
+            return true
+        }
+    }
+
+    // MARK: Uitputtend over de pagina's
+
+    func testEveryPageDestinationHasAnEntryAndNoOtherDestinationHasOne() {
+        let pageDestinations = Set(SearchIndex.pages.map { $0.destination })
+        for destination in NavigationTestSupport.allDestinations() {
+            if requiresPageEntry(destination) {
+                XCTAssertTrue(pageDestinations.contains(destination), "geen zoekregel voor \(destination)")
+            } else {
+                XCTAssertFalse(pageDestinations.contains(destination), "\(destination) hoort bij de gegevens, niet in de vaste lijst")
+            }
+        }
+    }
+
+    func testPageEntryCountMatchesPageDestinations() {
+        let required = NavigationTestSupport.allDestinations().filter { requiresPageEntry($0) }
+        XCTAssertEqual(SearchIndex.pages.count, required.count)
+        XCTAssertEqual(SearchIndex.pages.count, 25)
+        // Elke bestemming heeft precies een regel.
+        XCTAssertEqual(Set(SearchIndex.pages.map { $0.destination }).count, SearchIndex.pages.count)
+    }
+
+    func testEveryPageEntryHasTitleSymbolAndAnAlternativeName() {
+        for entry in SearchIndex.pages {
+            XCTAssertFalse(entry.title.trimmingCharacters(in: .whitespaces).isEmpty, "\(entry.id) heeft geen titel")
+            XCTAssertFalse(entry.symbol.isEmpty, "\(entry.id) heeft geen symbool")
+            XCTAssertFalse(entry.terms.isEmpty, "\(entry.id) heeft geen alternatieve naam")
+            XCTAssertTrue(entry.terms.allSatisfy { !$0.trimmingCharacters(in: .whitespaces).isEmpty }, "\(entry.id)")
+        }
+    }
+
+    func testPageEntryIDsAreUnique() {
+        let ids = SearchIndex.pages.map { $0.id }
+        XCTAssertEqual(Set(ids).count, ids.count)
+    }
+
+    func testEverySettingsPageEntryUsesThePageTitleOrAMoreSpecificOne() {
+        for page in SettingsPage.allCases {
+            let entry = SearchIndex.pages.first { $0.destination == .settings(page) }
+            XCTAssertNotNil(entry, "geen zoekregel voor \(page)")
+            XCTAssertEqual(entry?.title, page.title, "de titel van \(page) in het zoeken is die van de pagina")
+            XCTAssertEqual(entry?.symbol, page.symbol)
+        }
+    }
+
+    // MARK: Zoekopdrachten
+
+    func testEmptyOrBlankQueryGivesNoResults() {
+        XCTAssertTrue(SearchIndex.results(for: "", in: emptyData()).isEmpty)
+        XCTAssertTrue(SearchIndex.results(for: "   ", in: emptyData()).isEmpty)
+        XCTAssertTrue(SearchIndex.results(for: "\n", in: emptyData()).isEmpty)
+    }
+
+    func testQueryWithoutMatchGivesNoResults() {
+        XCTAssertTrue(SearchIndex.results(for: "zzzzqq", in: emptyData()).isEmpty)
+    }
+
+    func testFindsAPageByItsTitleIgnoringCaseAndAccents() {
+        let data = emptyData()
+        XCTAssertEqual(SearchIndex.results(for: "uitgaven", in: data).first?.destination, .expenses)
+        XCTAssertEqual(SearchIndex.results(for: "UITGAVEN", in: data).first?.destination, .expenses)
+        XCTAssertEqual(SearchIndex.results(for: "  Uitgaven  ", in: data).first?.destination, .expenses)
+        XCTAssertEqual(destinations(SearchIndex.results(for: "spaarpotten", in: data)),
+                       destinations(SearchIndex.results(for: "SPAARPÖTTEN", in: data)))
+        XCTAssertFalse(SearchIndex.results(for: "spaarpotten", in: data).isEmpty)
+        // "é" en "e" zijn hetzelfde.
+        XCTAssertTrue(destinations(SearchIndex.results(for: "ETF", in: data)).contains(.portfolio))
+        XCTAssertTrue(destinations(SearchIndex.results(for: "ÉTF", in: data)).contains(.portfolio))
+    }
+
+    func testFindsPagesByTheAlternativeNamesOfPar29() {
+        let data = emptyData()
+        func found(_ query: String) -> [Destination] { destinations(SearchIndex.results(for: query, in: data)) }
+
+        XCTAssertEqual(found("Uitgaven").first, .expenses)
+        XCTAssertEqual(found("Dag voor dag").first, .cashflow)
+        XCTAssertEqual(found("Noodbuffer").first, .buffer)
+        XCTAssertTrue(found("Rente").contains(.pots))
+        XCTAssertTrue(found("Rente").contains(.settings(.calculations)))
+        XCTAssertTrue(found("Back-up").contains(.settings(.data)))
+        XCTAssertTrue(found("Wachtwoord").contains(.settings(.password)))
+        XCTAssertTrue(found("Salaris").contains(.salary))
+        XCTAssertTrue(found("Salaris").contains(.income))
+        XCTAssertEqual(found("Koersen").first, .settings(.prices))
+        XCTAssertTrue(found("Koersen").contains(.portfolio))
+        XCTAssertEqual(found("Account").first, .settings(.account))
+        XCTAssertTrue(found("Belegd sinds").contains(.portfolio))
+        XCTAssertTrue(found("Minimumsaldo").contains(.bank))
+    }
+
+    func testTitlePrefixComesBeforeTitleContainsBeforeOtherNames() {
+        let data = emptyData()
+        // "bank": de titel Bankrekening begint ermee.
+        XCTAssertEqual(SearchIndex.results(for: "bank", in: data).first?.destination, .bank)
+        // "saldo": geen titel bevat het, de pagina's met "saldo" als andere naam volgen in vaste volgorde.
+        let saldo = destinations(SearchIndex.results(for: "saldo", in: data))
+        XCTAssertTrue(saldo.contains(.bank))
+        XCTAssertTrue(saldo.contains(.cashflow))
+        // "gegevens" staat in de titel van een pagina: die komt vóór pagina's met alleen een andere naam.
+        let gegevens = destinations(SearchIndex.results(for: "gegevens", in: data))
+        XCTAssertEqual(gegevens.first, .settings(.data))
+    }
+
+    func testMultiWordQueryNeedsEveryWord() {
+        let data = emptyData()
+        let found = destinations(SearchIndex.results(for: "nog verdelen", in: data))
+        XCTAssertTrue(found.contains(.distribute))
+        XCTAssertTrue(found.contains(.overview))
+        XCTAssertFalse(found.contains(.pots))
+        XCTAssertTrue(SearchIndex.results(for: "nog bankrekening", in: data).isEmpty)
+    }
+
+    func testResultsHaveUniqueIDs() {
+        let results = SearchIndex.results(for: "e", in: emptyData())
+        XCTAssertFalse(results.isEmpty)
+        XCTAssertEqual(Set(results.map { $0.id }).count, results.count)
+    }
+
+    // MARK: De gegevens van de gebruiker
+
+    func testFindsPotsHoldingsGoalsAndLines() {
+        var data = emptyData()
+        let pot = Pot(name: "Vakantiepot", startMonth: october)
+        let holding: Holding = {
+            var h = Holding(name: "Wereldfonds", startMonth: october)
+            h.ticker = "VWCE.DE"
+            return h
+        }()
+        let goal = LifeGoal(name: "Pensioen 2050", kind: .retirement)
+        data.pots.append(pot)
+        data.holdings.append(holding)
+        data.goals.append(goal)
+        var plan = MonthPlan()
+        plan.extraIncome = [MoneyLine(name: "Bijbaan", amount: 150)]
+        plan.expenses = [MoneyLine(name: "Sportschool", amount: 30)]
+        data.months[october.key] = plan
+
+        XCTAssertEqual(SearchIndex.results(for: "vakantiepot", in: data).first?.destination, .pot(pot.id))
+        XCTAssertEqual(SearchIndex.results(for: "wereldfonds", in: data).first?.destination, .holding(holding.id))
+        XCTAssertEqual(SearchIndex.results(for: "vwce", in: data).first?.destination, .holding(holding.id))
+        XCTAssertEqual(SearchIndex.results(for: "pensioen 2050", in: data).first?.destination, .goal(goal.id))
+        XCTAssertEqual(SearchIndex.results(for: "bijbaan", in: data).first?.destination, .income)
+        XCTAssertEqual(SearchIndex.results(for: "sportschool", in: data).first?.destination, .expenses)
+        XCTAssertEqual(SearchIndex.results(for: "SPORTSCHOOL", in: data).first?.title, "Sportschool")
+    }
+
+    func testAnEntryOfTheUsersDataShowsTheNameAndTheSymbolOfItsKind() {
+        var data = emptyData()
+        var pot = Pot(name: "Auto", startMonth: october)
+        pot.symbol = "car"
+        data.pots.append(pot)
+        let entry = SearchIndex.results(for: "auto", in: data).first { $0.destination == .pot(pot.id) }
+        XCTAssertEqual(entry?.title, "Auto")
+        XCTAssertEqual(entry?.symbol, "car")
+    }
+
+    func testARepeatedLineIsListedOnce() {
+        var data = emptyData()
+        for offset in 0..<3 {
+            var plan = MonthPlan()
+            plan.expenses = [MoneyLine(name: "Huur", amount: 1_000, isRecurring: true)]
+            data.months[october.adding(offset).key] = plan
+        }
+        let rent = SearchIndex.results(for: "huur", in: data).filter { $0.destination == .expenses }
+        XCTAssertEqual(rent.count, 1)
+    }
+
+    func testBlankNamesAreIgnored() {
+        var data = emptyData()
+        data.pots.append(Pot(name: "   ", startMonth: october))
+        data.holdings.append(Holding(name: "", startMonth: october))
+        data.goals.append(LifeGoal(name: " ", kind: .custom))
+        let all = SearchIndex.results(for: "spaarpot", in: data)
+        XCTAssertTrue(all.allSatisfy { entry in
+            if case .pot = entry.destination { return false }
+            return true
+        })
+        XCTAssertTrue(SearchIndex.results(for: "belegging", in: data).allSatisfy { entry in
+            if case .holding = entry.destination { return false }
+            return true
+        })
+    }
+
+    func testDataEntriesFollowThePagesForTheSameQuery() {
+        // "Spaarpotten" geeft de pagina en daarna de potten waarvan de naam of soort erbij past, nooit andersom bij een titel
+        // die er niet mee begint.
+        var data = emptyData()
+        data.pots.append(Pot(name: "Spaarpotje voor later", startMonth: october))
+        let results = SearchIndex.results(for: "spaarpot", in: data)
+        XCTAssertEqual(results.first?.destination, .pots)
+        XCTAssertTrue(results.contains { entry in
+            if case .pot = entry.destination { return true }
+            return false
+        })
+    }
+
+    func testResultsAreCapped() {
+        var data = emptyData()
+        for index in 0..<80 {
+            data.pots.append(Pot(name: "Pot \(index)", startMonth: october))
+        }
+        let results = SearchIndex.results(for: "pot", in: data)
+        XCTAssertEqual(results.count, SearchIndex.maxResults)
+        XCTAssertEqual(Set(results.map { $0.id }).count, results.count)
+    }
+
+    func testEmptyDataStillFindsThePages() {
+        let results = SearchIndex.results(for: "doel", in: emptyData())
+        XCTAssertTrue(destinations(results).contains(.goals))
+        XCTAssertTrue(destinations(results).contains(.savingsGoal))
+    }
+}

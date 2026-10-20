@@ -5,6 +5,9 @@ struct MyBuddyApp: App {
     @State private var auth = AuthStore()
     /// Inloggen en synchroniseren via Firebase. Zonder sleutel in `FirebaseConfig` doet dit niets.
     @State private var cloud = CloudAccount()
+    /// De sessie waarin nu gewerkt wordt (store, router, synchronisatie): de menubalk en het Instellingen-venster van de Mac
+    /// lezen die. `SignedInRoot` en de voorbeeldsessie registreren zich hierin.
+    @State private var session = ActiveSession()
     #if DEBUG
     @State private var demo: DemoSession? = nil
     #endif
@@ -25,18 +28,24 @@ struct MyBuddyApp: App {
             windowContent
         }
         .defaultSize(width: 860, height: 920)
+        .commands { AppCommands(session: session) }
+
+        // Instellingen is op de Mac een eigen venster (Cmd+komma), geen tab.
+        SettingsScene(session: session, auth: auth, cloud: cloud)
         #else
         WindowGroup {
             windowContent
         }
+        .commands { AppCommands(session: session) }
         #endif
     }
 
     private var windowContent: some View {
         content
+            .environment(session)
             .tint(Theme.accent)
             #if os(macOS)
-            .frame(minWidth: 480, minHeight: 640)
+            .frame(minWidth: 640, minHeight: 640)
             #endif
     }
 
@@ -49,6 +58,7 @@ struct MyBuddyApp: App {
                 .environment(demo.router)
                 .environment(auth)
                 .environment(\.cloudAccount, cloud)
+                .registered(in: session, store: demo.store, router: demo.router, sync: nil)
         } else {
             AppRoot()
                 .environment(auth)
@@ -67,6 +77,7 @@ struct MyBuddyApp: App {
 struct AppRoot: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.cloudAccount) private var cloud
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Wie er nu is ingelogd (cloud of lokaal); een wissel laat het scherm zacht overvloeien.
     private var sessionKey: String {
@@ -78,7 +89,8 @@ struct AppRoot: View {
 
     var body: some View {
         content
-            .animation(Theme.motion, value: sessionKey)
+            // Bij Verlaag beweging wisselt het scherm zonder overvloeien.
+            .animation(reduceMotion ? nil : Theme.motion, value: sessionKey)
     }
 
     @ViewBuilder
@@ -112,6 +124,7 @@ struct CloudSession {
 /// De app voor één ingelogd account: eigen opslagbestand, eigen navigatie, en (met een cloudaccount) synchronisatie.
 struct SignedInRoot: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(ActiveSession.self) private var session
     @State private var store: AppStore
     @State private var router = Router()
     @State private var sync: SyncController?
@@ -135,6 +148,7 @@ struct SignedInRoot: View {
             .environment(store)
             .environment(router)
             .environment(\.syncController, sync)
+            .registered(in: session, store: store, router: router, sync: sync)
             .syncPrompts(sync)
             .task { await sync?.run() }
             .onChange(of: scenePhase) { _, phase in

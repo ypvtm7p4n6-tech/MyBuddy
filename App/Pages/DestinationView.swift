@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Koppelt elke `Destination` aan zijn pagina. Alle blokken in de app verwijzen hiernaartoe.
+/// TIJDELIJK (tot golf 1c): `.salary`, `.expenses`, `.cashflow`, `.overview` en `.settings(_)` tonen nog de oude pagina's.
 struct DestinationView: View {
     let destination: Destination
 
@@ -8,7 +9,8 @@ struct DestinationView: View {
         switch destination {
         case .overview: OverviewPage()
         case .income: IncomePage()
-        case .expenses: BankPage() // Uitgaven en bankrekening zijn één pagina
+        case .salary: IncomePage() // het salarisschema staat nog op de pagina Inkomen
+        case .expenses: BankPage() // Uitgaven en bankrekening zijn nog één pagina
         case .distribute: DistributePage()
         case .pots: PotsPage()
         case .pot(let id): PotDetailPage(potID: id)
@@ -23,6 +25,7 @@ struct DestinationView: View {
         case .savingsGoal: SavingsGoalPage()
         case .purchase: PurchasePage()
         case .cashflow: CashflowPage()
+        case .settings: SettingsView()
         }
     }
 }
