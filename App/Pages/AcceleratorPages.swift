@@ -1,5 +1,4 @@
 import SwiftUI
-import Charts
 
 // MARK: - Versnellers
 
@@ -25,11 +24,23 @@ private func durationText(_ months: Int?) -> String {
     months.map { Fmt.duration(months: $0) } ?? "niet haalbaar"
 }
 
+extension Accelerator {
+    /// Wat de versneller oplevert, in woorden: "3 jaar eerder" of "haalbaar in 5 jaar". Leeg als er niets te zeggen valt.
+    var planningGainText: String {
+        if let saved = monthsSaved { return "\(Fmt.duration(months: saved)) eerder" }
+        if let months = newMonths { return "haalbaar in \(Fmt.duration(months: months))" }
+        return ""
+    }
+}
+
+// MARK: - De sectie Versnellers (op de pagina van een doel en op de pagina Versnellers)
+
 struct AcceleratorsSection: View {
     let goal: LifeGoal
     /// Toon onderaan ook de sectie "Toegepast" van dit doel.
     var showsApplied: Bool = true
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selected: Set<String> = []
     @State private var pending: PendingApplication?
     @State private var confirmation: String?
@@ -51,18 +62,6 @@ struct AcceleratorsSection: View {
                 apply(item.accelerator)
             }
         }
-        // De bevestiging verdwijnt na een paar seconden vanzelf.
-        .task(id: confirmation) { await hideConfirmationSoon() }
-    }
-
-    private func hideConfirmationSoon() async {
-        guard confirmation != nil else { return }
-        do {
-            try await Task.sleep(nanoseconds: 4_000_000_000)
-        } catch {
-            return
-        }
-        withAnimation(Theme.motion) { confirmation = nil }
     }
 
     @ViewBuilder
@@ -80,64 +79,55 @@ struct AcceleratorsSection: View {
         let change = d.combine(chosen)
         let scenario = d.scenarioMonths(inputs, change: change)
 
-        GlassBlock(title: "Versnellers", symbol: "bolt.fill", subtitle: "Op basis van jouw gegevens") {
+        Card(title: "Versnellers", symbol: "bolt", domain: .goals, subtitle: "Op basis van jouw gegevens") {
             if let confirmation {
-                Label(confirmation, systemImage: "checkmark.circle.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.positive)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .tile(tint: Theme.positive)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                PlanningConfirmation(text: confirmation) { closeConfirmation() }
             }
             if baseline == 0 {
                 Label("Je hebt dit doel al bereikt.", systemImage: "checkmark.seal.fill")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.positive)
             } else if list.isEmpty {
-                Text(emptyText(data: d))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                PlanningFootnote(emptyText(data: d))
             } else {
                 resultRow(baseline: baseline, scenario: scenario, hasSelection: !chosen.isEmpty)
                 if !chosen.isEmpty {
-                    GoalCurveChart(curves: d.goalCurves(for: goal, change: change,
-                                                        months: horizon(baseline: baseline, scenario: scenario), current: now,
-                                                        today: store.today),
-                                   start: now)
-                        .transition(.opacity)
+                    let curves = d.goalCurves(for: goal, change: change,
+                                              months: horizon(baseline: baseline, scenario: scenario),
+                                              current: now, today: store.today)
+                    TrendChart(model: GoalCurveTrend.model(curves: curves, goalName: goal.name, start: now), size: .regular)
                 }
-                VStack(spacing: 8) {
-                    ForEach(list) { acc in
-                        AcceleratorRow(accelerator: acc,
-                                       isOn: selected.contains(acc.id) && locked[acc.id] == nil,
-                                       isApplied: locked[acc.id]?.goalID == goal.id,
-                                       appliedElsewhere: elsewhereName(locked[acc.id], data: d),
-                                       toggle: { toggle(acc.id) },
-                                       apply: { prepareApply(acc) })
-                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                acceleratorRows(list: list, locked: locked, data: d)
+                ActionGroup {
+                    ActionButton(title: "Alles kiezen", symbol: "checkmark.circle") {
+                        selected = Set(list.filter { locked[$0.id] == nil }.map(\.id))
+                    }
+                    ActionButton(title: "Niets kiezen", symbol: "circle") {
+                        selected = []
                     }
                 }
-                ChipGrid {
-                    ChipButton(title: "Alles kiezen", symbol: "checkmark.circle") {
-                        withAnimation(Theme.motion) { selected = Set(list.filter { locked[$0.id] == nil }.map(\.id)) }
-                    }
-                    ChipButton(title: "Niets kiezen", symbol: "circle") {
-                        withAnimation(Theme.motion) { selected = [] }
-                    }
-                }
-                Text("Tik op de versnellers die je wilt combineren. De berekening telt ze bij elkaar op. Met Toepassen voer je een versneller echt door in je gegevens; je kunt hem daarna herstellen.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                PlanningFootnote("\(PlanningText.tap) op de versnellers die je wilt combineren. De berekening telt ze bij elkaar op. Met Toepassen voer je een versneller echt door in je gegevens; je kunt hem daarna herstellen.")
             }
             if baseline != 0, d.hasOneOffExpensesWorthCutting(current: now) {
-                Text("Uitgaven worden hier alleen voorgesteld als ze terugkerend zijn, want een eenmalige uitgave levert geen vaste maandinleg op. Zet bij een uitgave \"Terugkerend, elke maand\" aan om hem hier te zien.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                PlanningFootnote("Uitgaven worden hier alleen voorgesteld als ze terugkerend zijn, want een eenmalige uitgave levert geen vaste maandinleg op. Zet bij een uitgave \"Terugkerend, elke maand\" aan om hem hier te zien.")
             }
         }
-        .animation(Theme.motion, value: selected)
-        .animation(Theme.motion, value: confirmation)
+    }
+
+    /// De lijst met versnellers: elke rij met zijn keuze, status en knop "Toepassen".
+    private func acceleratorRows(list: [Accelerator], locked: [String: AppliedAccelerator], data d: FinanceData) -> some View {
+        VStack(spacing: 8) {
+            ForEach(list) { acc in
+                AcceleratorRow(accelerator: acc,
+                               isOn: selected.contains(acc.id) && locked[acc.id] == nil,
+                               isApplied: locked[acc.id]?.goalID == goal.id,
+                               appliedElsewhere: elsewhereName(locked[acc.id], data: d),
+                               toggle: { toggle(acc.id) },
+                               apply: { prepareApply(acc) })
+                    .transition(.opacity)
+            }
+        }
+        .animated(by: selected, quick: true)
     }
 
     /// Per versneller de toepassing waardoor hij nu niet nog eens kan (zie `FinanceData.applicationBlocking`).
@@ -163,9 +153,7 @@ struct AcceleratorsSection: View {
     }
 
     private func toggle(_ id: String) {
-        withAnimation(Theme.quickMotion) {
-            if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
-        }
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
     }
 
     /// Opent de bevestiging met precies wat er verandert.
@@ -180,14 +168,17 @@ struct AcceleratorsSection: View {
         let current = store.now
         let date = store.today
         var appliedTitle: String?
-        withAnimation(Theme.motion) {
-            store.mutate { data in
-                appliedTitle = data.apply(acc, for: target, current: current, now: date)?.title
-            }
-            selected.remove(acc.id)
-            // De bevestiging liet vooraf al zien of er iets te doen valt (`plan.message` legt uit waarom niet).
-            if let appliedTitle { confirmation = "Toegepast: \(appliedTitle)" }
+        store.mutate { data in
+            appliedTitle = data.apply(acc, for: target, current: current, now: date)?.title
         }
+        selected.remove(acc.id)
+        // De bevestiging liet vooraf al zien of er iets te doen valt (`plan.message` legt uit waarom niet).
+        if let appliedTitle { confirmation = "Toegepast: \(appliedTitle)" }
+    }
+
+    /// De bevestiging blijft staan tot je hem sluit (ACC-8).
+    private func closeConfirmation() {
+        withAnimation(reduceMotion ? nil : Theme.motion) { confirmation = nil }
     }
 
     private func horizon(baseline: Int?, scenario: Int?) -> Int {
@@ -198,7 +189,7 @@ struct AcceleratorsSection: View {
 
     @ViewBuilder
     private func resultRow(baseline: Int?, scenario: Int?, hasSelection: Bool) -> some View {
-        HStack(spacing: 8) {
+        FigureRow {
             StatTile(title: "Nu", value: durationText(baseline))
             if hasSelection {
                 StatTile(title: "Met je keuze", value: durationText(scenario),
@@ -216,6 +207,8 @@ struct AcceleratorsSection: View {
         }
     }
 }
+
+// MARK: - Eén versneller
 
 struct AcceleratorRow: View {
     let accelerator: Accelerator
@@ -237,7 +230,7 @@ struct AcceleratorRow: View {
 
     private var leadingColor: Color {
         if isLocked { return Theme.positive }
-        return isOn ? Theme.accent : Color.secondary
+        return isOn ? Theme.accent : Theme.textSecondary
     }
 
     /// De jaarlijkse verhoging bestaat niet in de app: toepassen verhoogt de inleg eenmalig. De knop zegt dat.
@@ -247,130 +240,120 @@ struct AcceleratorRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button(action: toggle) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: leadingSymbol)
-                        .font(.title3)
-                        .foregroundStyle(leadingColor)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Label(accelerator.title, systemImage: accelerator.symbol)
-                                .font(.subheadline.weight(.semibold))
-                                .multilineTextAlignment(.leading)
-                            Spacer(minLength: 6)
-                            if !isLocked {
-                                Text(AcceleratorBadge.text(for: accelerator))
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(Theme.positive)
-                                    .multilineTextAlignment(.trailing)
-                            }
-                        }
-                        Text(accelerator.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(isLocked)
-
-            if isApplied {
-                Label("Toegepast. Herstel hem hieronder als je het weer terug wilt.", systemImage: "checkmark.seal.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Theme.positive)
-            } else if let appliedElsewhere {
-                Label("Al toegepast voor \(appliedElsewhere). Herstel hem eerst om hem hier toe te passen.", systemImage: "checkmark.seal.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Theme.positive)
-            } else if let apply {
-                ChipButton(title: applyTitle, symbol: "checkmark.circle", action: apply)
-            }
+            selectionButton
+            statusLine
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .tile(tint: isOn ? Theme.accent : nil)
-        .animation(Theme.quickMotion, value: isOn)
-        .animation(Theme.motion, value: isLocked)
+        .animated(by: isOn, quick: true)
+        .animated(by: isLocked)
+    }
+
+    /// De rij zelf: een tik kiest de versneller of haalt hem weer weg. Het vinkje staat er ook voor wie geen kleur ziet.
+    private var selectionButton: some View {
+        Button(action: toggle) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: leadingSymbol)
+                    .font(.title3)
+                    .foregroundStyle(leadingColor)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(accelerator.title, systemImage: accelerator.symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .multilineTextAlignment(.leading)
+                    if !isLocked {
+                        Text(accelerator.planningGainText)
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(Theme.positive)
+                    }
+                    Text(accelerator.detail)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: Theme.minTapTarget, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlanningPressStyle())
+        .disabled(isLocked)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        if isApplied {
+            Label("Toegepast. Herstel hem hieronder als je het weer terug wilt.", systemImage: "checkmark.seal.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.positive)
+        } else if let appliedElsewhere {
+            Label("Al toegepast voor \(appliedElsewhere). Herstel hem eerst om hem hier toe te passen.", systemImage: "checkmark.seal.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.positive)
+        } else if let apply {
+            ActionButton(title: applyTitle, symbol: "checkmark.circle", action: apply)
+        }
     }
 }
 
 // MARK: - Bevestiging
 
-/// Laat precies zien wat er verandert (oud naar nieuw) en vraagt om bevestiging.
+/// Laat precies zien wat er verandert (oud naar nieuw) en vraagt om bevestiging: "Annuleer" links, "Toepassen" rechts. Het blad
+/// heeft de systeemachtergrond (`SheetScaffold`).
 struct AcceleratorApplySheet: View {
     let accelerator: Accelerator
     let plan: AcceleratorPlan
     let onApply: () -> Void
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                GlassBlock(title: accelerator.title, symbol: accelerator.symbol,
-                           subtitle: plan.isEmpty ? "Hier valt niets te doen" : "Dit verandert er in je gegevens") {
-                    if plan.isEmpty {
-                        Label(plan.message ?? "Hier valt niets te doen.", systemImage: "info.circle")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        if let headline = plan.headline {
-                            Label(headline, systemImage: "exclamationmark.triangle.fill")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Theme.warning)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .tile(tint: Theme.warning)
-                        }
-                        VStack(spacing: 8) {
-                            ForEach(plan.lines) { line in
-                                AcceleratorPlanRow(line: line)
-                            }
-                        }
-                        HStack(spacing: 8) {
-                            StatTile(title: "Looptijd nu", value: durationText(plan.monthsBefore))
-                            StatTile(title: "Looptijd daarna", value: durationText(plan.monthsAfter),
-                                     color: Theme.positive, caption: savedText)
-                        }
-                        ForEach(NumberedText.list(plan.notes)) { note in
-                            Text(note.text)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        Text("Je kunt dit altijd herstellen: dan staat alles weer zoals het was.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    ChipGrid {
-                        ChipButton(title: "Annuleren", symbol: "xmark") { dismiss() }
-                        if !plan.isEmpty {
-                            ChipButton(title: "Toepassen", symbol: "checkmark.circle.fill") {
-                                onApply()
-                                dismiss()
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
-                .frame(maxWidth: Theme.pageMaxWidth)
-                .frame(maxWidth: .infinity)
+        SheetScaffold(title: "Versneller toepassen", saveTitle: "Toepassen", canSave: !plan.isEmpty, onSave: onApply) {
+            Section {
+                Label(accelerator.title, systemImage: accelerator.symbol)
+                    .font(.headline)
+            } header: {
+                Text(plan.isEmpty ? "Hier valt niets te doen" : "Dit verandert er in je gegevens")
             }
-            .background { MeshBackground() }
-            .navigationTitle("Versneller toepassen")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            if plan.isEmpty {
+                emptySection
+            } else {
+                changeSections
+            }
         }
         .presentationDetents([.medium, .large])
-        #if os(macOS)
-        .frame(minWidth: 460, minHeight: 440)
-        #endif
+    }
+
+    /// Waarom er niets te doen valt.
+    private var emptySection: some View {
+        Section {
+            Label(plan.message ?? "Hier valt niets te doen.", systemImage: "info.circle")
+                .font(.subheadline)
+        }
+    }
+
+    @ViewBuilder
+    private var changeSections: some View {
+        if let headline = plan.headline {
+            Section {
+                Label(headline, systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline.weight(.semibold))
+            }
+        }
+        Section {
+            ForEach(plan.lines) { line in
+                AcceleratorPlanRow(line: line)
+            }
+        }
+        Section {
+            AmountRow(title: "Looptijd nu", value: durationText(plan.monthsBefore))
+            AmountRow(title: "Looptijd daarna", value: durationText(plan.monthsAfter), detail: savedText, color: Theme.positive)
+        }
+        Section {
+            ForEach(NumberedText.list(plan.notes)) { note in
+                PlanningFootnote(note.text)
+            }
+            PlanningFootnote("Je kunt dit altijd herstellen: dan staat alles weer zoals het was.")
+        }
     }
 
     private var savedText: String? {
@@ -387,44 +370,40 @@ struct AcceleratorPlanRow: View {
     let line: AcceleratorPlanLine
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: line.symbol)
-                .foregroundStyle(Theme.accent)
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(line.title)
-                    .font(.subheadline.weight(.semibold))
-                    .multilineTextAlignment(.leading)
-                if line.oldValue != nil || line.newValue != nil {
-                    HStack(spacing: 6) {
-                        if let old = line.oldValue {
-                            Text(old).foregroundStyle(.secondary)
-                        }
-                        if line.oldValue != nil && line.newValue != nil {
-                            Image(systemName: "arrow.right")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let new = line.newValue {
-                            Text(new)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Theme.positive)
-                        }
-                    }
-                    .font(.subheadline)
-                }
-                if !line.detail.isEmpty {
-                    Text(line.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
+        VStack(alignment: .leading, spacing: 3) {
+            Label(line.title, systemImage: line.symbol)
+                .font(.subheadline.weight(.semibold))
+                .multilineTextAlignment(.leading)
+            if line.oldValue != nil || line.newValue != nil {
+                values
             }
-            Spacer(minLength: 0)
+            if !line.detail.isEmpty {
+                PlanningFootnote(line.detail)
+            }
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .tile()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(line.sentence.isEmpty ? line.title : line.sentence)
+    }
+
+    private var values: some View {
+        HStack(spacing: 6) {
+            if let old = line.oldValue {
+                Text(old).foregroundStyle(Theme.textSecondary)
+            }
+            if line.oldValue != nil && line.newValue != nil {
+                Image(systemName: "arrow.right")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .accessibilityHidden(true)
+            }
+            if let new = line.newValue {
+                Text(new)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Theme.positive)
+            }
+        }
+        .font(.subheadline)
     }
 }
 
@@ -453,34 +432,33 @@ struct AppliedAcceleratorsBlock: View {
         let list = Array(records.reversed())
         let restorable = d.restorableAcceleratorCount(for: goalID)
         if !list.isEmpty {
-            GlassBlock(title: "Toegepast", symbol: "arrow.uturn.backward.circle",
-                       subtitle: "Zet ze terug, de nieuwste eerst") {
+            Card(title: "Toegepast", symbol: "arrow.uturn.backward.circle", domain: .goals,
+                 subtitle: "Zet ze terug, de nieuwste eerst") {
                 VStack(spacing: 8) {
                     ForEach(list) { record in
                         AppliedAcceleratorRow(record: record, goalName: goalName(of: record),
                                               blockedBy: waitingFor(record, data: d)) {
                             restoring = record
                         }
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .transition(.opacity)
                     }
                 }
                 if list.count > 1, restorable > 0 {
-                    ChipButton(title: "Alles herstellen", symbol: "arrow.uturn.backward.circle") {
+                    ActionButton(title: "Alles herstellen", symbol: "arrow.uturn.backward.circle") {
                         restoringAll = true
                     }
                 }
             }
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
             .confirmationDialog("Dit herstellen?", isPresented: restoringBinding, titleVisibility: .visible,
                                 presenting: restoring) { record in
                 Button("Herstel", role: .destructive) { restore(record) }
-                Button("Annuleren", role: .cancel) {}
+                Button("Annuleer", role: .cancel) {}
             } message: { record in
                 Text("\(record.title) gaat terug zoals het was. Wat je daarna in andere dingen veranderde, blijft staan. Heb je ditzelfde bedrag of dezelfde uitgave daarna zelf nog aangepast, dan gaat ook dat terug.")
             }
             .confirmationDialog("Alles herstellen?", isPresented: $restoringAll, titleVisibility: .visible) {
                 Button("Herstel alles", role: .destructive) { restoreAll() }
-                Button("Annuleren", role: .cancel) {}
+                Button("Annuleer", role: .cancel) {}
             } message: {
                 Text(restoreAllMessage(restorable: restorable, total: list.count))
             }
@@ -514,23 +492,19 @@ struct AppliedAcceleratorsBlock: View {
 
     private func restore(_ record: AppliedAccelerator) {
         let id = record.id
-        withAnimation(Theme.motion) {
-            store.mutate { data in
-                _ = data.restoreAccelerator(id)
-            }
+        store.mutate { data in
+            _ = data.restoreAccelerator(id)
         }
     }
 
     private func restoreAll() {
         let scope = goalID
-        withAnimation(Theme.motion) {
-            store.mutate { data in
-                if let scope {
-                    // Nieuwste eerst; wat een nieuwere toepassing van een ander doel nodig heeft, blijft staan.
-                    _ = data.restoreAccelerators(for: scope)
-                } else {
-                    data.restoreAllAccelerators()
-                }
+        store.mutate { data in
+            if let scope {
+                // Nieuwste eerst; wat een nieuwere toepassing van een ander doel nodig heeft, blijft staan.
+                _ = data.restoreAccelerators(for: scope)
+            } else {
+                data.restoreAllAccelerators()
             }
         }
     }
@@ -545,32 +519,28 @@ struct AppliedAcceleratorRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
                 Label(record.title, systemImage: "bolt.fill")
                     .font(.subheadline.weight(.semibold))
                     .multilineTextAlignment(.leading)
-                Spacer(minLength: 6)
                 Text(Fmt.date(record.date))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let goalName {
-                Text("Voor \(goalName)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                if let goalName {
+                    Text("Voor \(goalName)")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                }
             }
             ForEach(NumberedText.list(record.summary)) { line in
-                Text(line.text)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                PlanningFootnote(line.text)
             }
             if let blockedBy {
                 Label("Herstel eerst: \(blockedBy)", systemImage: "arrow.uturn.backward")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
             } else {
-                ChipButton(title: "Herstel", symbol: "arrow.uturn.backward", action: onRestore)
+                ActionButton(title: "Herstel", symbol: "arrow.uturn.backward", action: onRestore)
             }
         }
         .padding(12)
@@ -579,61 +549,10 @@ struct AppliedAcceleratorRow: View {
     }
 }
 
-// MARK: - Grafiek
-
-/// Basis (nu) tegenover het scenario met gekozen versnellers.
-struct GoalCurveChart: View {
-    let curves: GoalCurves
-    let start: YearMonth
-
-    private struct Item: Identifiable {
-        let id: String
-        let date: Date
-        let value: Double
-        let series: String
-    }
-
-    private var items: [Item] {
-        let count = curves.baseline.count
-        let step = max(1, count / 100)
-        var list: [Item] = []
-        var i = 0
-        while i < count {
-            let date = start.adding(i).firstDay
-            list.append(Item(id: "b\(i)", date: date, value: curves.baseline[i], series: "Nu"))
-            if i < curves.scenario.count {
-                list.append(Item(id: "s\(i)", date: date, value: curves.scenario[i], series: "Met versnellers"))
-            }
-            i += step
-        }
-        return list
-    }
-
-    var body: some View {
-        Chart {
-            ForEach(items) { item in
-                LineMark(x: .value("Maand", item.date), y: .value("Waarde", item.value),
-                         series: .value("Reeks", item.series))
-                    .foregroundStyle(by: .value("Reeks", item.series))
-                    .interpolationMethod(.monotone)
-            }
-            RuleMark(y: .value("Doel", curves.scenarioTarget))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                .foregroundStyle(Color.secondary)
-                .annotation(position: .top, alignment: .leading) {
-                    Text("Doel").font(.caption2).foregroundStyle(.secondary)
-                }
-        }
-        .chartForegroundStyleScale(domain: ["Nu", "Met versnellers"], range: [Color.gray, Theme.accent])
-        .chartAxes(shown: true)
-        .frame(height: 190)
-        .animation(Theme.motion, value: curves)
-    }
-}
-
 // MARK: - Pagina
 
-/// Eigen pagina voor het Versnellers-blok: kies een doel en bekijk wat het sneller maakt.
+/// Eigen pagina voor Versnellers: kies een doel en bekijk wat het sneller maakt. "Herstel" blijft bereikbaar, ook zonder doel en
+/// bij meer dan een doel (onderaan staat alles wat is toegepast).
 struct AcceleratorsPage: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
@@ -645,14 +564,14 @@ struct AcceleratorsPage: View {
         PageScaffold(title: "Versnellers") {
             VStack(spacing: Theme.pageSpacing) {
                 if d.goals.isEmpty {
-                    GlassBlock(title: "Eerst een doel") {
+                    Card(title: "Eerst een doel", symbol: "flag.checkered", domain: .goals) {
                         EmptyHint(symbol: "flag.checkered", title: "Maak een doel",
                                   message: "Versnellers laten zien wat je doel sneller maakt. Daarvoor heeft de app een doel nodig.",
-                                  actionTitle: "Doel maken") { router.toolsPath.append(.goals) }
+                                  actionTitle: "Doel maken", action: { router.open(.goals) })
                     }
                 } else if let goal {
                     if d.goals.count > 1 {
-                        GlassBlock(title: "Voor welk doel?", symbol: "flag.checkered") {
+                        Card(title: "Voor welk doel?", symbol: "flag.checkered", domain: .goals) {
                             Picker("Doel", selection: Binding(get: { goal.id }, set: { chosenID = $0 })) {
                                 ForEach(d.goals) { Text($0.name).tag($0.id) }
                             }
@@ -666,6 +585,51 @@ struct AcceleratorsPage: View {
                 // Onderaan alles wat is toegepast, ook voor andere doelen.
                 AppliedAcceleratorsBlock(goalID: nil)
             }
+            .frame(maxWidth: Theme.readableWidth)
         }
+    }
+}
+
+// MARK: - Kaart op het tabblad Plannen
+
+/// De kaart Versnellers op het tabblad Plannen: de drie belangrijkste versnellers voor je eerste doel. Een tik opent de pagina.
+struct AcceleratorsSummaryCard: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let d = store.data
+        let goal = d.goals.first
+        // Met het saldo van vandaag (`store.today`), zoals de doelen en de versnellerspagina.
+        let list = goal.map { d.accelerators(for: $0, current: store.now, today: store.today) } ?? []
+        LinkCard(title: "Versnellers", symbol: "bolt", domain: .goals,
+                 subtitle: goal.map { "Voor \($0.name)" }, destination: .accelerators) {
+            if goal == nil {
+                PlanningFootnote("Maak eerst een doel. Daarna zoekt de app in jouw gegevens wat het sneller maakt.")
+            } else if list.isEmpty {
+                PlanningFootnote("Geen versnellers gevonden. Vul inkomsten, uitgaven, je banksaldo en beleggingen in voor persoonlijke tips.")
+            } else {
+                topList(list)
+            }
+        }
+    }
+
+    private func topList(_ list: [Accelerator]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(list.prefix(3))) { acc in
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(acc.title, systemImage: acc.symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .multilineTextAlignment(.leading)
+                    Text(acc.planningGainText)
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(Theme.positive)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .tile()
     }
 }

@@ -1,22 +1,29 @@
 import SwiftUI
 
-// MARK: - Het doelenblok op Savings
+// MARK: - De kaart Doelen op het tabblad Plannen
 
-/// Eén blok voor alles wat met doelen te maken heeft: de eerste twee levensdoelen (pensioen, vakantie, parttime,
-/// eigen doel) met voortgang en haalbaarheid, en een korte samenvatting van je spaardoel-berekening.
-/// Tikken opent de pagina Doelen.
-struct GoalsHubBlock: View {
+/// Eén kaart voor alles wat met doelen te maken heeft: de eerste twee levensdoelen (pensioen, vakantie, parttime, eigen doel)
+/// met voortgang en haalbaarheid, en altijd de rij "Spaardoel berekenen" (met een samenvatting zodra je iets berekend hebt).
+/// De kop opent de pagina Doelen; de rij opent de calculator.
+struct GoalsSummaryCard: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.cloudAccount) private var cloud
 
     var body: some View {
         // Het concept van de spaardoel-calculator staat per account op dit apparaat bewaard.
         let account = accountPrefsID(auth: auth, cloud: cloud)
-        GoalsHubBlockContent(draftKey: SavingsGoalDraft.storageKey(account: account))
+        GoalsSummaryCardContent(draftKey: SavingsGoalDraft.storageKey(account: account))
     }
 }
 
-private struct GoalsHubBlockContent: View {
+/// Overgangsvorm (tot golf 1c): de oude tabroot Savings roept dit blok nog aan en krijgt nu de nieuwe kaart.
+struct GoalsHubBlock: View {
+    var body: some View {
+        GoalsSummaryCard()
+    }
+}
+
+private struct GoalsSummaryCardContent: View {
     @Environment(AppStore.self) private var store
     @AppStorage private var storedDraft: String
 
@@ -30,37 +37,33 @@ private struct GoalsHubBlockContent: View {
         let plan = savingsPlan(d)
         // Alleen een berekend spaardoel en nog geen levensdoelen: ga meteen naar de calculator, niet naar een lege lijst.
         let destination: Destination = (goals.isEmpty && plan != nil) ? .savingsGoal : .goals
-        LinkedBlock(title: "Doelen", symbol: "flag.checkered",
-                    subtitle: GoalMath.hubSubtitle(goalCount: d.goals.count, hasSavingsGoal: plan != nil),
-                    destination: destination) {
-            if goals.isEmpty && plan == nil {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Wat wil je bereiken? Met pensioen, een vakantie of parttime werken. Of bereken hoeveel je per maand spaart voor een bedrag.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    ChipLabel(title: "Maak je eerste doel", symbol: "plus")
-                }
+        Card(title: "Doelen", symbol: "flag.checkered", domain: .goals,
+             subtitle: GoalMath.hubSubtitle(goalCount: d.goals.count, hasSavingsGoal: plan != nil),
+             headerLink: destination) {
+            cardContent(d, goals: goals, plan: plan)
+        }
+        .animated(by: storedDraft)
+    }
+
+    private func cardContent(_ d: FinanceData, goals: [LifeGoal], plan: SavingsGoalPlan?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if goals.isEmpty {
+                PlanningFootnote("Wat wil je bereiken? Met pensioen, een vakantie of parttime werken. Of bereken hoeveel je per maand spaart voor een bedrag.")
+                ActionLink(title: "Maak je eerste doel", symbol: "plus", destination: .goals)
             } else {
-                VStack(spacing: 8) {
-                    if goals.isEmpty {
-                        GoalsHubNote(text: "Nog geen levensdoelen. Denk aan pensioen, een vakantie of parttime werken.")
-                    } else {
-                        ForEach(goals) { goal in
-                            // Met het saldo van vandaag (`store.today`), zoals de doelpagina en de versnellers.
-                            GoalsHubRow(goal: goal, analysis: d.analyze(goal, current: store.now, today: store.today))
-                        }
-                        if d.goals.count > 2 {
-                            Text("en nog \(d.goals.count - 2) \(d.goals.count - 2 == 1 ? "doel" : "doelen")")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                    SavingsGoalHubRow(plan: plan)
+                ForEach(goals) { goal in
+                    // Met het saldo van vandaag (`store.today`), zoals de doelpagina en de versnellers.
+                    GoalSummaryTile(goal: goal, analysis: d.analyze(goal, current: store.now, today: store.today))
+                }
+                if d.goals.count > 2 {
+                    Text("en nog \(d.goals.count - 2) \(d.goals.count - 2 == 1 ? "doel" : "doelen")")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            SavingsGoalLinkTile(plan: plan)
         }
-        .animation(Theme.motion, value: storedDraft)
     }
 
     /// Het plan uit de spaardoel-calculator, zodra je daar zelf iets hebt ingevuld.
@@ -71,74 +74,81 @@ private struct GoalsHubBlockContent: View {
     }
 }
 
-/// Eén levensdoel in het doelenblok: naam, haalbaarheid, percentage en voortgangsbalk.
-private struct GoalsHubRow: View {
+/// Eén levensdoel in de kaart: naam, haalbaarheid, percentage en voortgangsbalk. Een tik opent het doel.
+private struct GoalSummaryTile: View {
     let goal: LifeGoal
     let analysis: GoalAnalysis
 
+    private var hasTarget: Bool { analysis.outlook != .notSet }
+    private var percentText: String { Fmt.percent(min(analysis.progress, 9.99), digits: 0) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                SymbolBadge(symbol: goal.kind.symbol, color: Theme.accent, size: 28)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(goal.name)
-                        .font(.footnote.weight(.semibold))
-                        .lineLimit(1)
-                    Text(analysis.outlook.label)
-                        .font(.caption)
-                        .foregroundStyle(analysis.outlook.color)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+        PlanningLinkTile(destination: .goal(goal.id)) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    SymbolBadge(symbol: goal.kind.symbol, color: AppDomain.goals.color, size: 32)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(goal.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(analysis.outlook.label)
+                            .font(.footnote)
+                            .foregroundStyle(analysis.outlook.color)
+                    }
+                    Spacer(minLength: 6)
+                    if hasTarget {
+                        Text(percentText)
+                            .font(.subheadline.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.primary)
+                            .contentTransition(.numericText())
+                    }
                 }
-                Spacer(minLength: 6)
-                Text(Fmt.percent(min(analysis.progress, 9.99), digits: 0))
-                    .font(.footnote.weight(.semibold))
-                    .contentTransition(.numericText())
+                ProgressMeter(value: hasTarget ? analysis.progress : nil, tint: Theme.accent, style: .bar(height: 8),
+                              label: "Voortgang \(goal.name)", valueText: percentText)
             }
-            ProgressBar(progress: analysis.progress, tint: Theme.accent, height: 8)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(hasTarget ? "\(goal.name), \(percentText) bereikt" : goal.name)
+            .accessibilityValue(analysis.outlook.label)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .tile()
     }
 }
 
-/// Het spaardoel in het doelenblok: wat je berekend hebt, of een uitnodiging om dat te doen.
-private struct SavingsGoalHubRow: View {
+/// De rij "Spaardoel berekenen" in de kaart: altijd aanwezig, met de samenvatting van je berekening als je er een hebt.
+private struct SavingsGoalLinkTile: View {
     let plan: SavingsGoalPlan?
 
     var body: some View {
-        HStack(spacing: 10) {
-            SymbolBadge(symbol: "target", color: Theme.accent, size: 28)
-            VStack(alignment: .leading, spacing: 2) {
-                if let plan {
-                    Text(plan.summaryLine)
-                        .font(.footnote.weight(.semibold))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .contentTransition(.numericText())
-                    if let status = ownDepositStatus(plan) {
-                        Text(status.text)
-                            .font(.caption)
-                            .foregroundStyle(status.color)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } else {
+        PlanningLinkTile(destination: .savingsGoal) {
+            HStack(alignment: .top, spacing: 10) {
+                SymbolBadge(symbol: "function", color: AppDomain.tools.color, size: 32)
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Spaardoel berekenen")
-                        .font(.footnote.weight(.semibold))
-                    Text("Hoeveel per maand, of wanneer ben je klaar?")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    detail
                 }
             }
-            Spacer(minLength: 0)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .tile()
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let plan {
+            Text(plan.summaryLine)
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .contentTransition(.numericText())
+            if let status = ownDepositStatus(plan) {
+                Text(status.text)
+                    .font(.footnote)
+                    .foregroundStyle(status.color)
+            }
+        } else {
+            Text("Hoeveel per maand, of wanneer ben je klaar?")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+        }
     }
 
     /// Wat je eigen inleg doet, maar alleen als die afwijkt van de benodigde inleg.
@@ -158,29 +168,10 @@ private struct SavingsGoalHubRow: View {
     }
 }
 
-/// Korte tegel met een uitleg in het doelenblok.
-private struct GoalsHubNote: View {
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            SymbolBadge(symbol: "flag.checkered", color: Theme.accent, size: 28)
-            Text(text)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .tile()
-    }
-}
-
 // MARK: - Haalbaarheid in woorden en kleur
 
 private extension GoalOutlook {
-    /// Korte tekst voor een kaart of blok.
+    /// Korte tekst voor een kaart of rij.
     var label: String {
         switch self {
         case .notSet: return "Nog geen doelbedrag"
@@ -192,9 +183,10 @@ private extension GoalOutlook {
         }
     }
 
+    /// De kleur van de tekst; de woorden in `label` dragen de betekenis, de kleur versterkt hem.
     var color: Color {
         switch self {
-        case .notSet: return Color.secondary
+        case .notSet: return Theme.textSecondary
         case .reached, .onTrack: return Theme.positive
         case .behind: return Theme.warning
         case .reachable: return Theme.accent
@@ -205,136 +197,193 @@ private extension GoalOutlook {
 
 // MARK: - De pagina Doelen
 
-/// De twee onderdelen van de pagina Doelen.
-enum GoalsSection: String, CaseIterable, Identifiable {
-    case goals, calculator
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .goals: return "Mijn doelen"
-        case .calculator: return "Spaardoel"
-        }
-    }
+/// Wat het blad "Nieuw doel" of "Doel bewerken" moet laten zien.
+private struct GoalSheetItem: Identifiable {
+    let goal: LifeGoal
+    let isNew: Bool
+    var id: UUID { goal.id }
 }
 
-/// Eén pagina voor al je doelen. Bovenin kies je tussen je levensdoelen en de spaardoel-calculator.
-/// `Destination.savingsGoal` opent dezelfde pagina met de calculator al open.
+/// Al je doelen als lijst. Een rij opent het doel; vegen (of het contextmenu) bewerkt of verwijdert het. Nieuw doel, Spaardoel
+/// berekenen en Noodbuffer staan achter de plus in de werkbalk.
 struct GoalsPage: View {
     @Environment(AppStore.self) private var store
-    @State private var section: GoalsSection
-    @State private var newGoal: LifeGoal?
-
-    init(initialSection: GoalsSection = .goals) {
-        _section = State(initialValue: initialSection)
-    }
-
-    private var sectionBinding: Binding<GoalsSection> {
-        Binding(get: { section },
-                set: { newValue in withAnimation(Theme.motion) { section = newValue } })
-    }
+    @Environment(Router.self) private var router
+    @State private var sheetItem: GoalSheetItem?
 
     var body: some View {
-        PageScaffold(title: "Doelen") {
-            VStack(spacing: Theme.pageSpacing) {
-                Picker("Onderdeel", selection: sectionBinding) {
-                    ForEach(GoalsSection.allCases) { item in Text(item.title).tag(item) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(Theme.cardInset)
-                .glassCard()
-
-                switch section {
-                case .goals:
-                    goalsSection
-                        .transition(.opacity)
-                case .calculator:
-                    SavingsGoalCalculator()
-                        .transition(.opacity)
-                }
+        let d = store.data
+        ListScaffold(title: "Doelen") {
+            if d.goals.isEmpty {
+                emptySections
+            } else {
+                goalsSection(d)
             }
-            .animation(Theme.motion, value: section)
         }
-        .scrollDismissesKeyboard(.interactively)
-        .sheet(item: $newGoal) { goal in GoalEditSheet(goal: goal, isNew: true) }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    addMenuItems
+                } label: {
+                    Label("Toevoegen", systemImage: "plus")
+                }
+                .help("Toevoegen")
+            }
+        }
+        .sheet(item: $sheetItem) { item in
+            GoalEditSheet(goal: item.goal, isNew: item.isNew)
+        }
     }
 
-    /// Onderdeel "Mijn doelen": je levensdoelen en knoppen om een nieuw doel te maken.
-    private var goalsSection: some View {
-        let d = store.data
-        return VStack(spacing: Theme.pageSpacing) {
-            if d.goals.isEmpty {
-                GlassBlock(title: "Nog geen doelen", symbol: "flag.checkered") {
-                    EmptyHint(symbol: "flag.checkered", title: "Wat wil je bereiken?",
-                              message: "Met pensioen, een vakantie, parttime werken of iets eigens. De app rekent uit wat je nodig hebt en hoe lang het duurt.")
-                }
-            } else {
-                LazyVGrid(columns: Theme.blockColumns, spacing: Theme.pageSpacing) {
-                    ForEach(d.goals) { goal in GoalCard(goal: goal) }
+    // MARK: Onderdelen
+
+    private func goalsSection(_ d: FinanceData) -> some View {
+        Section {
+            ForEach(d.goals) { goal in
+                GoalListRow(goal: goal,
+                            analysis: d.analyze(goal, current: store.now, today: store.today),
+                            onEdit: { sheetItem = GoalSheetItem(goal: goal, isNew: false) },
+                            onDelete: { deleteGoal(goal.id) })
+            }
+        } header: {
+            SectionHeader("Doelen", domain: .goals)
+        }
+    }
+
+    /// Zonder doelen: uitleg en een volgende stap per soort doel.
+    @ViewBuilder
+    private var emptySections: some View {
+        Section {
+            EmptyHint(symbol: "flag.checkered", title: "Wat wil je bereiken?",
+                      message: "Met pensioen, een vakantie, parttime werken of iets eigens. De app rekent uit wat je nodig hebt en hoe lang het duurt.")
+        } header: {
+            SectionHeader("Doelen", domain: .goals)
+        }
+        Section {
+            ForEach(GoalKind.allCases) { kind in
+                Button {
+                    startGoal(kind)
+                } label: {
+                    Label(kind.title, systemImage: kind.symbol)
                 }
             }
+            NavigationRow(title: "Spaardoel berekenen", symbol: "function", domain: .tools,
+                          subtitle: "Hoeveel per maand, of wanneer ben je klaar?", destination: .savingsGoal)
+            NavigationRow(title: "Noodbuffer", symbol: "shield.lefthalf.filled", domain: .goals,
+                          subtitle: "Hoeveel geld houd je achter de hand?", destination: .buffer)
+        } header: {
+            SectionHeader("Nieuw doel", symbol: "plus.circle")
+        }
+    }
 
-            GlassBlock(title: "Nieuw doel", symbol: "plus.circle.fill",
-                       subtitle: "Of reken uit hoeveel je per maand spaart voor een bedrag") {
-                ChipGrid {
-                    ForEach(GoalKind.allCases) { kind in
-                        ChipButton(title: kind.title, symbol: kind.symbol) { newGoal = d.goalTemplate(kind) }
-                    }
-                    ChipButton(title: "Spaardoel berekenen", symbol: "target") {
-                        withAnimation(Theme.motion) { section = .calculator }
-                    }
+    /// Het menu achter de plus: een nieuw doel per soort, dan de twee rekenhulpen.
+    @ViewBuilder
+    private var addMenuItems: some View {
+        Section("Nieuw doel") {
+            ForEach(GoalKind.allCases) { kind in
+                Button {
+                    startGoal(kind)
+                } label: {
+                    Label(kind.title, systemImage: kind.symbol)
                 }
             }
         }
+        Section {
+            Button {
+                router.open(.savingsGoal)
+            } label: {
+                Label("Spaardoel berekenen", systemImage: "function")
+            }
+            Button {
+                router.open(.buffer)
+            } label: {
+                Label("Noodbuffer", systemImage: "shield.lefthalf.filled")
+            }
+        }
+    }
+
+    private func startGoal(_ kind: GoalKind) {
+        sheetItem = GoalSheetItem(goal: store.data.goalTemplate(kind), isNew: true)
+    }
+
+    private func deleteGoal(_ id: UUID) {
+        store.mutate { $0.deleteGoal(id) }
     }
 }
 
-struct GoalCard: View {
-    @Environment(AppStore.self) private var store
+/// Eén doel in de lijst: symbool, naam, voortgang en haalbaarheid. De bevestiging van het verwijderen hangt aan de rij zelf.
+private struct GoalListRow: View {
     let goal: LifeGoal
+    let analysis: GoalAnalysis
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    @Environment(Router.self) private var router
+    @State private var confirmDelete = false
+
+    private var hasTarget: Bool { analysis.outlook != .notSet }
+    private var percentText: String { Fmt.percent(min(analysis.progress, 9.99), digits: 0) }
 
     var body: some View {
-        let a = store.data.analyze(goal, current: store.now, today: store.today)
-        NavigationLink(value: Destination.goal(goal.id)) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    SymbolBadge(symbol: goal.kind.symbol, color: Theme.accent, size: 40)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(goal.name).font(.headline).lineLimit(1)
-                        Text(goal.kind.title).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                ProgressBar(progress: a.progress, tint: Theme.accent, height: 10)
-                // Onder elkaar: de haalbaarheid kan lang zijn ("Loopt achter, over 11 jaar en 11 maanden").
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(Fmt.euro(a.inputs.start)) van \(Fmt.euro(a.inputs.target))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .contentTransition(.numericText())
-                    Text(a.outlook.label)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(a.outlook.color)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(Theme.cardInset)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(interactive: true)
+        Button {
+            router.open(.goal(goal.id))
+        } label: {
+            rowContent
         }
+        #if os(macOS)
         .buttonStyle(.plain)
+        #endif
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(hasTarget ? "\(goal.name), \(goal.kind.title), \(percentText) bereikt" : "\(goal.name), \(goal.kind.title)")
+        .accessibilityValue(analysis.outlook.label)
+        .accessibilityAddTraits(.isLink)
+        .rowActions(edit: onEdit, delete: { confirmDelete = true })
+        .confirmationDialog("Dit doel verwijderen?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Verwijder \(goal.name)", role: .destructive) { onDelete() }
+        }
+    }
+
+    private var rowContent: some View {
+        HStack(spacing: 12) {
+            SymbolBadge(symbol: goal.kind.symbol, color: AppDomain.goals.color, size: 36)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(goal.name)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                Text(goal.kind.title)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                ProgressMeter(value: hasTarget ? analysis.progress : nil, tint: Theme.accent, style: .bar(height: 8),
+                              label: "Voortgang \(goal.name)", valueText: percentText)
+                if hasTarget {
+                    Text("\(Fmt.euro(analysis.inputs.start)) van \(Fmt.euro(analysis.inputs.target))")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Text(analysis.outlook.label)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(analysis.outlook.color)
+            }
+            Spacer(minLength: 8)
+            if hasTarget {
+                Text(percentText)
+                    .font(.body.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+            }
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
+        }
+        .frame(minHeight: Theme.minTapTarget)
+        .contentShape(Rectangle())
     }
 }
 
 // MARK: - Eén doel
 
+/// Een rekenpagina: het doeltype met voortgang, hoe het is berekend, de versnellers en wat is toegepast. "Bewerken" staat in de
+/// werkbalk; verwijderen onderaan, met een bevestiging aan de knop zelf.
 struct GoalDetailPage: View {
     let goalID: UUID
     @Environment(AppStore.self) private var store
@@ -355,80 +404,74 @@ struct GoalDetailPage: View {
     @ViewBuilder
     private func content(_ goal: LifeGoal) -> some View {
         let d = store.data
-        let now = store.now
-        let a = d.analyze(goal, current: now, today: store.today)
+        let a = d.analyze(goal, current: store.now, today: store.today)
 
         PageScaffold(title: goal.name) {
             VStack(spacing: Theme.pageSpacing) {
-                GlassBlock(title: goal.kind.title, symbol: goal.kind.symbol, tint: Theme.olive.opacity(0.3)) {
-                    HStack(spacing: 18) {
-                        ZStack {
-                            ProgressRing(progress: a.progress, tint: Theme.accent, lineWidth: 10)
-                                .frame(width: 96, height: 96)
-                            Text(Fmt.percent(min(a.progress, 9.99), digits: 0))
-                                .font(.headline)
-                                .contentTransition(.numericText())
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Benodigd").font(.caption).foregroundStyle(.secondary)
-                            BigAmount(value: a.inputs.target, font: .system(.title, design: .rounded, weight: .bold))
-                            Text("Nu \(Fmt.euro(a.inputs.start))")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .contentTransition(.numericText())
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    reachText(goal, a)
-                    deadlineText(goal, a)
-                }
-
-                GlassBlock(title: "Zo is het berekend", symbol: "function") {
-                    Text(explanation(goal, a))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                        StatTile(title: "Bron", value: a.inputs.sourceName)
-                        StatTile(title: "Inleg per maand", value: Fmt.euro(a.inputs.monthly))
-                        StatTile(title: "Rendement na kosten", value: Fmt.percent(a.inputs.nominalReturn))
-                        StatTile(title: goal.inflationAdjusted ? "Reëel rendement" : "Gebruikt rendement",
-                                 value: Fmt.percent(a.inputs.effectiveReturn))
-                    }
-                    // Een doel kijkt vooruit: bij een salaris om de zoveel weken of dagen rekent het met een gemiddelde maand
-                    // (een maand met twee uitbetalingen is geen maat voor "elke maand"). Zeg dat.
-                    if !d.salary.isMonthly, !isCustomFunding(goal) {
-                        Text("Je salaris komt niet elke maand even vaak binnen. Daarom rekent dit doel met een gemiddelde maand.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 10) {
-                        ChipButton(title: "Doel aanpassen", symbol: "pencil") { showEdit = true }
-                    }
-                }
-
+                typeCard(goal, a)
+                calculationCard(goal, a, data: d)
                 AcceleratorsSection(goal: goal)
-
-                ChipButton(title: "Doel verwijderen", symbol: "trash", role: .destructive) { confirmDelete = true }
+                deleteButton(goal)
+            }
+            .frame(maxWidth: Theme.readableWidth)
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Bewerken") { showEdit = true }
             }
         }
         .sheet(isPresented: $showEdit) { GoalEditSheet(goal: goal, isNew: false) }
+    }
+
+    // MARK: Blokken
+
+    private func typeCard(_ goal: LifeGoal, _ a: GoalAnalysis) -> some View {
+        Card(title: goal.kind.title, symbol: goal.kind.symbol, domain: .goals) {
+            GoalProgressHeader(analysis: a)
+            reachText(goal, a)
+            deadlineText(goal, a)
+        }
+    }
+
+    private func calculationCard(_ goal: LifeGoal, _ a: GoalAnalysis, data d: FinanceData) -> some View {
+        Card(title: "Zo is het berekend", symbol: "function", domain: .tools) {
+            PlanningFootnote(explanation(goal, a))
+            FigureRow {
+                StatTile(title: "Bron", value: a.inputs.sourceName)
+                StatTile(title: "Inleg per maand", value: Fmt.euro(a.inputs.monthly))
+                StatTile(title: "Rendement per jaar", value: Fmt.percent(a.inputs.nominalReturn))
+                StatTile(title: goal.inflationAdjusted ? "Reëel rendement" : "Gebruikt rendement",
+                         value: Fmt.percent(a.inputs.effectiveReturn))
+            }
+            // Een doel kijkt vooruit: bij een salaris om de zoveel weken of dagen rekent het met een gemiddelde maand
+            // (een maand met twee uitbetalingen is geen maat voor "elke maand"). Zeg dat.
+            if !d.salary.isMonthly, !isCustomFunding(goal) {
+                PlanningFootnote("Je salaris komt niet elke maand even vaak binnen. Daarom rekent dit doel met een gemiddelde maand.")
+            }
+        }
+    }
+
+    private func deleteButton(_ goal: LifeGoal) -> some View {
+        ActionButton(title: "Doel verwijderen", symbol: "trash", role: .destructive) {
+            confirmDelete = true
+        }
         .confirmationDialog("Dit doel verwijderen?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Verwijder \(goal.name)", role: .destructive) {
                 let id = goal.id
-                withAnimation(Theme.motion) {
-                    store.mutate { $0.deleteGoal(id) }
-                }
+                store.mutate { $0.deleteGoal(id) }
                 dismiss()
             }
         }
     }
 
+    // MARK: Teksten
+
     @ViewBuilder
     private func reachText(_ goal: LifeGoal, _ a: GoalAnalysis) -> some View {
         if a.outlook == .notSet {
-            Label("Er is nog geen doelbedrag. Pas het doel aan, dan zie je hoe lang het duurt.", systemImage: "pencil")
+            Label("Er is nog geen doelbedrag. Bewerk het doel, dan zie je hoe lang het duurt.", systemImage: "pencil")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
         } else if let months = a.monthsToGoal {
             if months == 0 {
                 Label("Je hebt dit doel al bereikt.", systemImage: "checkmark.seal.fill")
@@ -439,9 +482,7 @@ struct GoalDetailPage: View {
                     Label("Bij je huidige inleg haal je dit over \(Fmt.duration(months: months)).", systemImage: "flag.checkered")
                         .font(.subheadline.weight(.semibold))
                     if let month = a.reachMonth {
-                        Text("Dat is in \(Fmt.month(month))" + (a.reachAge.map { ", als je ongeveer \(SafeInt.clamped($0.rounded(.down), to: 0...150)) jaar bent" } ?? "") + ".")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        PlanningFootnote("Dat is in \(Fmt.month(month))" + (a.reachAge.map { ", als je ongeveer \(SafeInt.clamped($0.rounded(.down), to: 0...150)) jaar bent" } ?? "") + ".")
                     }
                 }
             }
@@ -458,9 +499,7 @@ struct GoalDetailPage: View {
         if let date = goal.targetDate, let until = a.monthsUntilDeadline, a.outlook != .notSet {
             VStack(alignment: .leading, spacing: 3) {
                 if until <= 0 {
-                    Text("Je streefdatum (\(Fmt.date(date))) is verstreken.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    PlanningFootnote("Je streefdatum (\(Fmt.date(date))) is verstreken.")
                 } else {
                     Label("Streefdatum \(Fmt.month(YearMonth(date: date))): \(a.onTrack == true ? "je ligt op schema" : "je loopt achter").",
                           systemImage: a.onTrack == true ? "checkmark.circle.fill" : "clock.badge.exclamationmark")
@@ -468,9 +507,7 @@ struct GoalDetailPage: View {
                         .foregroundStyle(a.onTrack == true ? Theme.positive : Theme.warning)
                     // Naar boven afgerond, zodat het getoonde bedrag de streefdatum zeker haalt.
                     if let needed = a.requiredMonthlyForDeadlineWhole {
-                        Text("Om op tijd te zijn heb je \(Fmt.euro(needed)) per maand nodig; nu is dat \(Fmt.euro(a.inputs.monthly)).")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        PlanningFootnote("Om op tijd te zijn heb je \(Fmt.euro(needed)) per maand nodig; nu is dat \(Fmt.euro(a.inputs.monthly)).")
                     }
                 }
             }
@@ -508,7 +545,58 @@ struct GoalDetailPage: View {
     }
 }
 
-// MARK: - Doel maken of aanpassen
+/// De ring met het percentage en daarnaast het benodigde bedrag. Bij grote tekst staan ze onder elkaar. Zonder doelbedrag is er
+/// geen ring: een ring zonder doel zou "klaar" of "niets" zeggen.
+private struct GoalProgressHeader: View {
+    let analysis: GoalAnalysis
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var hasTarget: Bool { analysis.outlook != .notSet }
+    private var percentText: String { Fmt.percent(min(analysis.progress, 9.99), digits: 0) }
+
+    var body: some View {
+        let layout: AnyLayout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 18))
+        layout {
+            if hasTarget {
+                ring
+            }
+            amounts
+            if !typeSize.isAccessibilitySize {
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var ring: some View {
+        ZStack {
+            ProgressMeter(value: analysis.progress, tint: Theme.accent, style: .ring(lineWidth: 10),
+                          label: "Voortgang van dit doel", valueText: percentText)
+                .frame(width: 96, height: 96)
+            Text(percentText)
+                .font(.headline)
+                .contentTransition(.numericText())
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var amounts: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Benodigd")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .accessibilityHidden(true)
+            BigAmount(value: analysis.inputs.target, font: Theme.titleAmount, label: "Benodigd")
+            Text("Nu \(Fmt.euro(analysis.inputs.start))")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+                .contentTransition(.numericText())
+        }
+    }
+}
+
+// MARK: - Doel maken of bewerken
 
 struct GoalEditSheet: View {
     let isNew: Bool
@@ -518,7 +606,7 @@ struct GoalEditSheet: View {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .portfolio: return "Mijn beleggingen"
+            case .portfolio: return "Beleggingen"
             case .pot: return "Een spaarpot"
             case .custom: return "Eigen waarden"
             }
@@ -526,6 +614,8 @@ struct GoalEditSheet: View {
     }
 
     @Environment(AppStore.self) private var store
+    /// Het doel zoals het het blad binnenkwam: daarmee zie je of er iets is veranderd (`hasChanges`).
+    private let original: LifeGoal
     @State private var g: LifeGoal
     @State private var funding: Funding = .portfolio
     @State private var potID: UUID?
@@ -535,6 +625,7 @@ struct GoalEditSheet: View {
 
     init(goal: LifeGoal, isNew: Bool) {
         self.isNew = isNew
+        self.original = goal
         _g = State(initialValue: goal)
         switch goal.funding {
         case .portfolio:
@@ -564,45 +655,32 @@ struct GoalEditSheet: View {
         Binding(get: { g.monthlyGapOverride }, set: { g.monthlyGapOverride = $0 })
     }
 
+    /// Het doel zoals het bewaard zou worden (zonder de naam bij te snijden).
+    private func builtGoal() -> LifeGoal {
+        var out = g
+        switch funding {
+        case .portfolio:
+            out.funding = .portfolio
+        case .pot:
+            if let id = potID ?? store.data.pots.first?.id { out.funding = .pot(id) } else { out.funding = .portfolio }
+        case .custom:
+            out.funding = .custom(start: customStart, monthly: customMonthly, annualReturn: customReturn)
+        }
+        return out
+    }
+
+    private var hasChanges: Bool { builtGoal() != original }
+
     var body: some View {
-        SheetScaffold(title: isNew ? "Nieuw doel" : "Doel aanpassen",
+        SheetScaffold(title: isNew ? "Nieuw doel" : "Doel bewerken",
                       canSave: !g.name.trimmingCharacters(in: .whitespaces).isEmpty,
+                      hasChanges: hasChanges,
                       onSave: { save() }) {
             Section("Naam") {
                 TextField("Naam van je doel", text: $g.name)
             }
 
-            switch g.kind {
-            case .retirement:
-                Section {
-                    NumberRow(title: "Gewenst netto per maand", value: $g.monthlySpending)
-                    NumberRow(title: "AOW en pensioen per maand", value: $g.otherMonthlyIncome)
-                    NumberRow(title: "Opnamepercentage", value: $g.withdrawalRate, unit: .percent, maxDigits: 2)
-                    OptionalNumberRow(title: "Ik ken mijn leeftijd", value: ageBinding, unit: .plain("jaar"), defaultValue: 35)
-                } header: {
-                    Text("Met pensioen")
-                } footer: {
-                    Text("Bedragen in euro's van vandaag. Met 4% heb je 25 keer je jaarlijkse uitgaven nodig.")
-                }
-            case .partTime:
-                Section {
-                    NumberRow(title: "Uren per week nu", value: $g.hoursFrom, unit: .plain("uur"), maxDigits: 1)
-                    NumberRow(title: "Uren per week straks", value: $g.hoursTo, unit: .plain("uur"), maxDigits: 1)
-                    OptionalNumberRow(title: "Inkomensverlies zelf invullen", value: gapBinding, defaultValue: 500)
-                    OptionalNumberRow(title: "Maar een aantal jaren", value: yearsBinding, unit: .plain("jaar"), defaultValue: 10)
-                    NumberRow(title: "Andere inkomsten per maand", value: $g.otherMonthlyIncome)
-                    NumberRow(title: "Opnamepercentage", value: $g.withdrawalRate, unit: .percent, maxDigits: 2)
-                    OptionalNumberRow(title: "Ik ken mijn leeftijd", value: ageBinding, unit: .plain("jaar"), defaultValue: 35)
-                } header: {
-                    Text("Parttime werken")
-                } footer: {
-                    Text("Het inkomensverlies wordt uit je salaris berekend, tenzij je het zelf invult. Zonder aantal jaren rekent de app met het opnamepercentage.")
-                }
-            case .vacation, .custom:
-                Section("Doel") {
-                    NumberRow(title: "Doelbedrag", value: $g.targetAmount)
-                }
-            }
+            kindSection
 
             Section {
                 OptionalDateRow(title: "Ik wil het halen voor", date: $g.targetDate)
@@ -612,55 +690,86 @@ struct GoalEditSheet: View {
                 Text("Met een datum laat de app zien hoeveel je per maand nodig hebt.")
             }
 
-            Section {
-                Picker("Waaruit?", selection: $funding) {
-                    ForEach(Funding.allCases) { Text($0.title).tag($0) }
-                }
-                switch funding {
-                case .portfolio:
-                    EmptyView()
-                case .pot:
-                    if store.data.pots.isEmpty {
-                        Text("Je hebt nog geen spaarpotten.").foregroundStyle(.secondary)
-                    } else {
-                        Picker("Spaarpot", selection: $potID) {
-                            ForEach(store.data.pots) { pot in Text(pot.name).tag(pot.id as UUID?) }
-                        }
-                    }
-                case .custom:
-                    NumberRow(title: "Startbedrag", value: $customStart)
-                    NumberRow(title: "Inleg per maand", value: $customMonthly)
-                    NumberRow(title: "Rendement per jaar", value: $customReturn, unit: .percent, maxDigits: 2)
-                }
-                Toggle("In koopkracht van vandaag", isOn: $g.inflationAdjusted)
-            } header: {
-                Text("Rekenen met")
-            } footer: {
-                Text("Mijn beleggingen gebruikt de waarde van je beleggingen, je inleg en het verwachte rendement. Koopkracht van vandaag houdt rekening met inflatie.")
-            }
+            fundingSection
         }
         .onAppear {
             if funding == .pot && potID == nil { potID = store.data.pots.first?.id }
         }
     }
 
-    private func save() {
-        var out = g
-        out.name = g.name.trimmingCharacters(in: .whitespaces)
-        switch funding {
-        case .portfolio:
-            out.funding = .portfolio
-        case .pot:
-            if let id = potID ?? store.data.pots.first?.id { out.funding = .pot(id) } else { out.funding = .portfolio }
-        case .custom:
-            out.funding = .custom(start: customStart, monthly: customMonthly, annualReturn: customReturn)
+    /// De velden die bij de soort doel horen.
+    @ViewBuilder
+    private var kindSection: some View {
+        switch g.kind {
+        case .retirement:
+            Section {
+                NumberRow(title: "Gewenst netto per maand", value: $g.monthlySpending)
+                NumberRow(title: "AOW en pensioen per maand", value: $g.otherMonthlyIncome)
+                NumberRow(title: "Opnamepercentage", value: $g.withdrawalRate, unit: .percent, maxDigits: 2)
+                OptionalNumberRow(title: "Ik ken mijn leeftijd", value: ageBinding, unit: .plain("jaar"), defaultValue: 35)
+            } header: {
+                Text("Met pensioen")
+            } footer: {
+                Text("Bedragen in euro's van vandaag. Het opnamepercentage is het deel van je kapitaal dat je per jaar opneemt. Met 4% heb je 25 keer je jaarlijkse uitgaven nodig.")
+            }
+        case .partTime:
+            Section {
+                NumberRow(title: "Uren per week nu", value: $g.hoursFrom, unit: .plain("uur"), maxDigits: 1)
+                NumberRow(title: "Uren per week straks", value: $g.hoursTo, unit: .plain("uur"), maxDigits: 1)
+                OptionalNumberRow(title: "Inkomensverlies zelf invullen", value: gapBinding, defaultValue: 500)
+                OptionalNumberRow(title: "Maar een aantal jaren", value: yearsBinding, unit: .plain("jaar"), defaultValue: 10)
+                NumberRow(title: "Andere inkomsten per maand", value: $g.otherMonthlyIncome)
+                NumberRow(title: "Opnamepercentage", value: $g.withdrawalRate, unit: .percent, maxDigits: 2)
+                OptionalNumberRow(title: "Ik ken mijn leeftijd", value: ageBinding, unit: .plain("jaar"), defaultValue: 35)
+            } header: {
+                Text("Parttime werken")
+            } footer: {
+                Text("Het inkomensverlies wordt uit je salaris berekend, tenzij je het zelf invult. Zonder aantal jaren rekent de app met het opnamepercentage.")
+            }
+        case .vacation, .custom:
+            Section("Doel") {
+                NumberRow(title: "Doelbedrag", value: $g.targetAmount)
+            }
         }
+    }
+
+    /// Waaruit het doel wordt gefinancierd.
+    private var fundingSection: some View {
+        Section {
+            Picker("Waaruit?", selection: $funding) {
+                ForEach(Funding.allCases) { Text($0.title).tag($0) }
+            }
+            switch funding {
+            case .portfolio:
+                EmptyView()
+            case .pot:
+                if store.data.pots.isEmpty {
+                    Text("Je hebt nog geen spaarpotten.").foregroundStyle(Theme.textSecondary)
+                } else {
+                    Picker("Spaarpot", selection: $potID) {
+                        ForEach(store.data.pots) { pot in Text(pot.name).tag(pot.id as UUID?) }
+                    }
+                }
+            case .custom:
+                NumberRow(title: "Startbedrag", value: $customStart)
+                NumberRow(title: "Inleg per maand", value: $customMonthly)
+                NumberRow(title: "Rendement per jaar", value: $customReturn, unit: .percent, maxDigits: 2)
+            }
+            Toggle("In koopkracht van vandaag", isOn: $g.inflationAdjusted)
+        } header: {
+            Text("Rekenen met")
+        } footer: {
+            Text("Beleggingen gebruikt de waarde van je beleggingen, je inleg en het verwachte rendement. Koopkracht van vandaag houdt rekening met inflatie.")
+        }
+    }
+
+    private func save() {
+        var out = builtGoal()
+        out.name = g.name.trimmingCharacters(in: .whitespaces)
         let result = out
         let creating = isNew
-        withAnimation(Theme.motion) {
-            store.mutate { data in
-                if creating { data.addGoal(result) } else { data.updateGoal(result) }
-            }
+        store.mutate { data in
+            if creating { data.addGoal(result) } else { data.updateGoal(result) }
         }
     }
 }

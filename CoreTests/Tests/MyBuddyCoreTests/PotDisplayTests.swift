@@ -327,3 +327,533 @@ final class PotDisplayTests: XCTestCase {
         XCTAssertEqual(d.interestPayments(for: pot.id, from: jan, to: jan, asOf: jan).count, 1)
     }
 }
+
+// MARK: - Doel en voortgang van een spaarpot
+
+final class PotGoalTextTests: XCTestCase {
+    func testGoalStatus() {
+        XCTAssertEqual(PotFormat.goalStatus(balance: 1_032, goal: 2_400), "Nog \(Fmt.euro(1_368)) te gaan")
+        XCTAssertEqual(PotFormat.goalStatus(balance: 2_400, goal: 2_400), "Doel bereikt")
+        XCTAssertEqual(PotFormat.goalStatus(balance: 3_000, goal: 2_400), "Doel bereikt")
+    }
+
+    func testProgressSpeechNamesPercentageBalanceAndGoal() {
+        XCTAssertEqual(PotFormat.progressSpeech(balance: 1_032, goal: 2_400, progress: 0.43),
+                       "43 procent, \(ChartText.euro(1_032)) van \(ChartText.euro(2_400))")
+        // Boven 100% staat het echte percentage; onzin (NaN, oneindig) wordt 0 en breekt niets.
+        XCTAssertEqual(PotFormat.progressSpeech(balance: 3_000, goal: 2_400, progress: 1.25),
+                       "125 procent, \(ChartText.euro(3_000)) van \(ChartText.euro(2_400))")
+        XCTAssertTrue(PotFormat.progressSpeech(balance: 0, goal: 100, progress: .nan).hasPrefix("0 procent"))
+        XCTAssertTrue(PotFormat.progressSpeech(balance: 0, goal: 100, progress: .infinity).hasPrefix("0 procent"))
+        XCTAssertTrue(PotFormat.progressSpeech(balance: 0, goal: 100, progress: -3).hasPrefix("0 procent"))
+    }
+}
+
+// MARK: - De keuze voor het Overzicht
+
+final class FavoritePickerTests: XCTestCase {
+    private let a = UUID(), b = UUID(), c = UUID(), d = UUID(), e = UUID()
+
+    func testTheLimitsAreThreePotsAndFourHoldings() {
+        XCTAssertEqual(FavoritePicker.potLimit, 3)
+        XCTAssertEqual(FavoritePicker.holdingLimit, 4)
+    }
+
+    func testTappingAddsInTheOrderOfTappingUpToTheLimit() {
+        var selected: [UUID] = []
+        selected = FavoritePicker.toggled(b, in: selected, limit: 3)
+        selected = FavoritePicker.toggled(a, in: selected, limit: 3)
+        selected = FavoritePicker.toggled(c, in: selected, limit: 3)
+        XCTAssertEqual(selected, [b, a, c])
+        // Een vierde komt er niet bij: de keuze blijft zoals ze was.
+        XCTAssertEqual(FavoritePicker.toggled(d, in: selected, limit: 3), [b, a, c])
+        XCTAssertEqual(FavoritePicker.toggled(d, in: [a, b, c], limit: 4), [a, b, c, d])
+        XCTAssertEqual(FavoritePicker.toggled(e, in: [a, b, c, d], limit: 4), [a, b, c, d])
+    }
+
+    func testTappingAChosenOneRemovesItAndTheRestMovesUp() {
+        XCTAssertEqual(FavoritePicker.toggled(a, in: [b, a, c], limit: 3), [b, c])
+        // Daarna is er weer plek.
+        XCTAssertEqual(FavoritePicker.toggled(d, in: [b, c], limit: 3), [b, c, d])
+        XCTAssertEqual(FavoritePicker.toggled(a, in: [a], limit: 3), [])
+    }
+
+    func testEmptySlotsAndWhatTheyDo() {
+        XCTAssertEqual(FavoritePicker.emptySlots(chosen: 0), 3)
+        XCTAssertEqual(FavoritePicker.emptySlots(chosen: 2), 1)
+        XCTAssertEqual(FavoritePicker.emptySlots(chosen: 3), 0)
+        XCTAssertEqual(FavoritePicker.emptySlots(chosen: 9), 0)
+        XCTAssertEqual(FavoritePicker.emptySlots(chosen: 1, limit: 4), 3)
+        // Zolang er een pot is die nog niet gekozen is, kiest de plek; anders maakt ze een nieuwe pot.
+        XCTAssertEqual(FavoritePicker.slotAction(chosen: 2, available: 5), .choose)
+        XCTAssertEqual(FavoritePicker.slotAction(chosen: 2, available: 2), .create)
+        XCTAssertEqual(FavoritePicker.slotAction(chosen: 0, available: 0), .create)
+    }
+
+    /// De rekenmotor bewaart de keuze en houdt haar schoon: een verwijderde pot verdwijnt uit de keuze (scenario 21).
+    func testADeletedPotLeavesTheChoice() {
+        var d = makeBaseData()
+        let first = Pot(name: "Een", monthlyContribution: 0, startMonth: aug2026)
+        let second = Pot(name: "Twee", monthlyContribution: 0, startMonth: aug2026)
+        let third = Pot(name: "Drie", monthlyContribution: 0, startMonth: aug2026)
+        for pot in [first, second, third] { d.addPot(pot) }
+        d.homePotIDs = [third.id, first.id, second.id]
+        XCTAssertEqual(d.homePots().map { $0.name }, ["Drie", "Een", "Twee"])
+        d.deletePot(first.id)
+        XCTAssertEqual(d.homePotIDs ?? [], [third.id, second.id])
+        XCTAssertEqual(d.homePots().map { $0.name }, ["Drie", "Twee"])
+        // Zonder keuze staan de eerste drie op het Overzicht.
+        d.homePotIDs = nil
+        XCTAssertEqual(d.homePots().count, 2)
+    }
+}
+
+// MARK: - Het formulier van een belegging
+
+final class HoldingFormTests: XCTestCase {
+    private let today = day(oct2026, 15)
+
+    private func base() -> FinanceData {
+        var d = FinanceData(startMonth: oct2026.adding(-12))
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 3000, hourlyRate: 0, hoursPerWeek: 0)
+        d.materialize(upTo: oct2026)
+        return d
+    }
+
+    private func holding(ticker: String? = nil, units: Double? = nil, invested: Double = 3_000, monthly: Double = 200,
+                         start: YearMonth = oct2026.adding(-8)) -> Holding {
+        Holding(name: "Demo", kind: .etf, ticker: ticker, units: units, investedTotal: invested,
+                expectedReturn: 0, annualCost: 0, monthlyContribution: monthly, startMonth: start)
+    }
+
+    // MARK: Belegd sinds
+
+    func testStartMonthChoicesCoverTenYearsNewestFirst() {
+        let choices = HoldingForm.startMonthChoices(current: oct2026, selected: oct2026)
+        XCTAssertEqual(choices.count, 120)
+        XCTAssertEqual(choices.first, oct2026)
+        XCTAssertEqual(choices.last, oct2026.adding(-119))
+        XCTAssertEqual(Set(choices).count, choices.count)
+        XCTAssertEqual(choices, choices.sorted(by: >))
+    }
+
+    func testAStartMonthOutsideTheTenYearsStillExistsInTheList() {
+        let old = oct2026.adding(-200)
+        let withOld = HoldingForm.startMonthChoices(current: oct2026, selected: old)
+        XCTAssertEqual(withOld.count, 121)
+        XCTAssertEqual(withOld.last, old)
+        XCTAssertEqual(withOld.first, oct2026)
+        // Een maand in de toekomst (uit een import of van een ander apparaat) staat bovenaan.
+        let future = oct2026.adding(3)
+        let withFuture = HoldingForm.startMonthChoices(current: oct2026, selected: future)
+        XCTAssertEqual(withFuture.first, future)
+        XCTAssertEqual(withFuture.count, 121)
+        // Een maand binnen de tien jaar komt niet dubbel.
+        XCTAssertEqual(HoldingForm.startMonthChoices(current: oct2026, selected: oct2026.adding(-5)).count, 120)
+    }
+
+    // MARK: Teksten
+
+    func testTheUnitsHintAppearsOnlyForATickerWithoutUnits() {
+        XCTAssertTrue(HoldingForm.needsUnitsHint(ticker: "VWCE.DE", units: 0))
+        XCTAssertTrue(HoldingForm.needsUnitsHint(ticker: " BTC-EUR ", units: -1))
+        XCTAssertFalse(HoldingForm.needsUnitsHint(ticker: "VWCE.DE", units: 12))
+        XCTAssertFalse(HoldingForm.needsUnitsHint(ticker: "", units: 0))
+        XCTAssertFalse(HoldingForm.needsUnitsHint(ticker: "   ", units: 0))
+        XCTAssertTrue(HoldingForm.unitsHint.contains("aantal stuks"))
+        XCTAssertTrue(HoldingForm.isTracked(ticker: "VWCE.DE", units: 12))
+        XCTAssertFalse(HoldingForm.isTracked(ticker: "VWCE.DE", units: 0))
+        XCTAssertFalse(HoldingForm.isTracked(ticker: "", units: 12))
+    }
+
+    func testTheEstimateHintNamesTheThreeFields() {
+        XCTAssertTrue(HoldingForm.estimateHint.contains("Belegd sinds"))
+        XCTAssertTrue(HoldingForm.estimateHint.contains("Totaal ingelegd"))
+        XCTAssertTrue(HoldingForm.estimateHint.contains("Huidige waarde"))
+        XCTAssertTrue(HoldingForm.estimateHint.contains("zonder rendement"))
+    }
+
+    func testTheCurrentValueNoteSaysWhetherTheValueIsEstimated() {
+        XCTAssertNil(HoldingForm.currentValueNote(nil))
+        var d = base()
+        let h = holding()
+        d.addHolding(h)
+        let estimated = d.holdingStateNow(h, current: oct2026, today: today)
+        XCTAssertEqual(HoldingForm.currentValueNote(estimated), "Nu \(Fmt.euro(3_000)), geschat uit je inleg.")
+        d.addSnapshot(holdingID: h.id, value: 3_450, invested: 3_000, date: day(oct2026, 10))
+        let real = d.holdingStateNow(d.holdings[0], current: oct2026, today: today)
+        XCTAssertEqual(HoldingForm.currentValueNote(real), "Nu \(Fmt.euro(3_450)), volgens je laatste waarde-update.")
+    }
+
+    // MARK: Bewaren
+
+    /// Het gemelde geval: alleen "Totaal ingelegd" 3.000, inleg 200 per maand en "Belegd sinds" 8 maanden geleden. Er komt GEEN
+    /// waarde-update; de grafiek is de afgeleide lijn met zijn onderschrift en "Winst" is verborgen.
+    func testANewHoldingWithoutACurrentValueGetsTheDerivedLineAndNoMeasurement() {
+        var d = base()
+        let h = holding()
+        HoldingForm.save(h, isNew: true, enteredValue: 0, into: &d, current: oct2026, now: today)
+        XCTAssertEqual(d.holdings.count, 1)
+        XCTAssertTrue(d.holdings[0].snapshots.isEmpty, "geen verzonnen waarde-update")
+        XCTAssertEqual(d.holdings[0].startMonth, oct2026.adding(-8))
+
+        let model = PortfolioTrend.model(d, window: .all, current: oct2026, today: today)
+        XCTAssertNil(model.empty)
+        XCTAssertEqual(model.footnote, "Geschat uit je inleg, zonder rendement.")
+        XCTAssertGreaterThan(model.allPoints.filter { $0.kind == .estimated }.count, 1, "de lijn loopt vanaf Belegd sinds")
+        XCTAssertEqual(model.lines.map { $0.id }, ["waarde"], "afgeleid: geen tweede lijn Ingelegd op dezelfde plek")
+
+        let figures = PortfolioFigures(d, current: oct2026, today: today)
+        XCTAssertEqual(figures.value, 3_000, accuracy: 0.001)
+        XCTAssertEqual(figures.invested, 3_000, accuracy: 0.001)
+        XCTAssertTrue(figures.isEstimated)
+        XCTAssertFalse(figures.showsGain, "Winst en Rendement zeggen niets zolang het geschat is")
+    }
+
+    func testANewHoldingWithACurrentValueGetsOneMeasurementOfToday() {
+        var d = base()
+        let h = holding()
+        HoldingForm.save(h, isNew: true, enteredValue: 3_450, into: &d, current: oct2026, now: today)
+        XCTAssertEqual(d.holdings[0].snapshots.count, 1)
+        XCTAssertEqual(d.holdings[0].snapshots[0].value, 3_450, accuracy: 0.001)
+        XCTAssertEqual(d.holdings[0].snapshots[0].invested, 3_000, accuracy: 0.001)
+        let figures = PortfolioFigures(d, current: oct2026, today: today)
+        XCTAssertFalse(figures.isEstimated)
+        XCTAssertTrue(figures.showsGain)
+        XCTAssertEqual(figures.gain, 450, accuracy: 0.001)
+        XCTAssertEqual(figures.gainFraction ?? 0, 0.15, accuracy: 1e-9)
+        let model = PortfolioTrend.model(d, window: .all, current: oct2026, today: today)
+        XCTAssertNil(model.empty)
+        XCTAssertEqual(model.lines.map { $0.id }, ["waarde", "ingelegd"])
+    }
+
+    /// Een belegging met een ticker mag ook een huidige waarde krijgen (K19 b); een negatieve of lege waarde telt niet.
+    func testACurrentValueWorksWithATickerAndOnlyWhenItIsPositive() {
+        var d = base()
+        let tracked = holding(ticker: "VWCE.DE", units: nil)
+        HoldingForm.save(tracked, isNew: true, enteredValue: 2_900, into: &d, current: oct2026, now: today)
+        XCTAssertEqual(d.holdings[0].snapshots.count, 1)
+        var other = base()
+        HoldingForm.save(holding(), isNew: true, enteredValue: -50, into: &other, current: oct2026, now: today)
+        XCTAssertTrue(other.holdings[0].snapshots.isEmpty)
+        HoldingForm.save(holding(), isNew: true, enteredValue: .nan, into: &other, current: oct2026, now: today)
+        XCTAssertTrue(other.holdings[1].snapshots.isEmpty)
+    }
+
+    func testEditingWithACurrentValueReplacesTheMeasurementOfToday() {
+        var d = base()
+        let h = holding()
+        HoldingForm.save(h, isNew: true, enteredValue: 3_300, into: &d, current: oct2026, now: today)
+        var edited = d.holdings[0]
+        edited.investedTotal = 3_100
+        HoldingForm.save(edited, isNew: false, enteredValue: 3_500, into: &d, current: oct2026, now: today)
+        // Dezelfde dag: de nieuwe waarde-update vervangt de eerste, er komt er geen bij.
+        XCTAssertEqual(d.holdings[0].snapshots.count, 1)
+        XCTAssertEqual(d.holdings[0].snapshots[0].value, 3_500, accuracy: 0.001)
+        XCTAssertEqual(d.holdings[0].snapshots[0].invested, 3_100, accuracy: 0.001)
+        XCTAssertEqual(d.holdings[0].investedTotal, 3_100, accuracy: 0.001)
+        // Een andere dag: een tweede waarde-update.
+        var later = d.holdings[0]
+        later.name = "Demo 2"
+        HoldingForm.save(later, isNew: false, enteredValue: 3_600, into: &d, current: oct2026, now: day(oct2026, 20))
+        XCTAssertEqual(d.holdings[0].snapshots.count, 2)
+        XCTAssertEqual(d.holdings[0].name, "Demo 2")
+    }
+
+    func testEditingWithoutACurrentValueLeavesTheValuesAlone() {
+        var d = base()
+        let h = holding()
+        HoldingForm.save(h, isNew: true, enteredValue: 0, into: &d, current: oct2026, now: today)
+        var edited = d.holdings[0]
+        edited.expectedReturn = 0.05
+        edited.startMonth = oct2026.adding(-3)
+        HoldingForm.save(edited, isNew: false, enteredValue: 0, into: &d, current: oct2026, now: today)
+        XCTAssertTrue(d.holdings[0].snapshots.isEmpty, "een belegging uit je inleg blijft een schatting")
+        XCTAssertEqual(d.holdings[0].startMonth, oct2026.adding(-3))
+        XCTAssertEqual(d.holdings[0].expectedReturn, 0.05, accuracy: 1e-12)
+        // "Totaal ingelegd" wijzigen bij een bestaand meetpunt: "Ingelegd" volgt (scenario 11e, Core C9).
+        var measured = base()
+        HoldingForm.save(h, isNew: true, enteredValue: 3_300, into: &measured, current: oct2026, now: day(oct2026, 3))
+        var raised = measured.holdings[0]
+        raised.investedTotal = 3_500
+        HoldingForm.save(raised, isNew: false, enteredValue: 0, into: &measured, current: oct2026, now: today)
+        let state = measured.holdingStateNow(measured.holdings[0], current: oct2026, today: today)
+        XCTAssertEqual(state?.invested ?? 0, 3_500, accuracy: 0.001)
+    }
+}
+
+// MARK: - De cijfers en de kleine grafiek
+
+final class PortfolioFiguresTests: XCTestCase {
+    private let today = day(oct2026, 15)
+
+    private func base() -> FinanceData {
+        var d = FinanceData(startMonth: oct2026.adding(-12))
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 3000, hourlyRate: 0, hoursPerWeek: 0)
+        d.materialize(upTo: oct2026)
+        return d
+    }
+
+    private func holding(name: String, invested: Double, monthly: Double = 0, start: YearMonth = oct2026.adding(-8)) -> Holding {
+        Holding(name: name, kind: .etf, ticker: nil, units: nil, investedTotal: invested,
+                expectedReturn: 0, annualCost: 0, monthlyContribution: monthly, startMonth: start)
+    }
+
+    func testNoHoldingsMeansNothingToShow() {
+        let figures = PortfolioFigures(base(), current: oct2026, today: today)
+        XCTAssertEqual(figures.value, 0)
+        XCTAssertEqual(figures.invested, 0)
+        XCTAssertFalse(figures.isEstimated, "zonder beleggingen valt er niets te schatten")
+        XCTAssertFalse(figures.showsGain)
+        XCTAssertNil(figures.gainFraction)
+    }
+
+    func testTheFiguresAreEstimatedOnlyWhenEveryHoldingIsEstimated() {
+        var d = base()
+        d.addHolding(holding(name: "Afgeleid", invested: 3_000, monthly: 200))
+        XCTAssertTrue(PortfolioFigures(d, current: oct2026, today: today).isEstimated)
+        // Met een echte waarde-update erbij is het geheel niet meer alleen een schatting: Winst telt dan mee.
+        d.addHolding(holding(name: "Echt", invested: 1_000), initialValue: 1_200, now: day(oct2026, 5))
+        let mixed = PortfolioFigures(d, current: oct2026, today: today)
+        XCTAssertFalse(mixed.isEstimated)
+        XCTAssertTrue(mixed.showsGain)
+        XCTAssertEqual(mixed.value, 4_200, accuracy: 0.001)
+        XCTAssertEqual(mixed.gain, 200, accuracy: 0.001)
+    }
+
+    func testTheFiguresOfOneHolding() {
+        var d = base()
+        let h = holding(name: "Een", invested: 3_000, monthly: 200)
+        d.addHolding(h)
+        let estimated = HoldingFigures(d.holdingStateNow(h, current: oct2026, today: today))
+        XCTAssertTrue(estimated.isEstimated)
+        XCTAssertFalse(estimated.showsGain)
+        XCTAssertEqual(estimated.value, 3_000, accuracy: 0.001)
+        let none = HoldingFigures(nil)
+        XCTAssertEqual(none.value, 0)
+        XCTAssertFalse(none.showsGain)
+        XCTAssertFalse(none.isEstimated)
+        d.addSnapshot(holdingID: h.id, value: 3_300, invested: 3_000, date: day(oct2026, 10))
+        let real = HoldingFigures(d.holdingStateNow(d.holdings[0], current: oct2026, today: today))
+        XCTAssertFalse(real.isEstimated)
+        XCTAssertTrue(real.showsGain)
+        XCTAssertEqual(real.gain, 300, accuracy: 0.001)
+        XCTAssertEqual(real.gainFraction ?? 0, 0.1, accuracy: 1e-9)
+    }
+
+    // MARK: TrendGlance
+
+    func testTheGlanceOfADerivedLineSaysItIsEstimated() {
+        var d = base()
+        d.addHolding(holding(name: "Afgeleid", invested: 3_000, monthly: 200))
+        let model = PortfolioTrend.model(d, window: .sixMonths, current: oct2026, today: today)
+        let glance = TrendGlance(model)
+        XCTAssertNotNil(glance)
+        XCTAssertEqual(glance?.end, "Nu \(Fmt.euroWhole(3_000)) (geschat)")
+        XCTAssertNotNil(glance?.start, "de lijn begint ver genoeg terug om een begin te tonen")
+    }
+
+    func testTheGlanceOfARealLineShowsStartAndEnd() {
+        var d = base()
+        let h = holding(name: "Echt", invested: 1_000, start: aug2026)
+        d.addHolding(h)
+        d.addSnapshot(holdingID: h.id, value: 1_000, invested: 1_000, date: day(aug2026, 10))
+        d.addSnapshot(holdingID: h.id, value: 1_250, invested: 1_000, date: day(oct2026, 10))
+        let model = PortfolioTrend.model(d, window: .all, current: oct2026, today: today)
+        let glance = TrendGlance(model)
+        XCTAssertEqual(glance?.end, "Nu \(Fmt.euroWhole(1_250))")
+        XCTAssertEqual(glance?.start, "\(Fmt.shortMonthYear(aug2026)) \(Fmt.euroWhole(1_000))")
+    }
+
+    func testTheGlanceOfASinglePointHasNoStartAndAnEmptyModelHasNoGlance() {
+        var d = base()
+        d.addHolding(holding(name: "Nieuw", invested: 500, start: oct2026))
+        let single = PortfolioTrend.model(d, window: .all, current: oct2026, today: today)
+        XCTAssertNil(TrendGlance(single)?.start)
+        XCTAssertNotNil(TrendGlance(single))
+        let empty = PortfolioTrend.model(base(), window: .all, current: oct2026, today: today)
+        XCTAssertNotNil(empty.empty)
+        XCTAssertNil(TrendGlance(empty))
+    }
+
+    func testPriceHistoryFailureAlwaysEndsWithAPeriod() {
+        XCTAssertEqual(PriceHistoryText.failure("Er is geen internetverbinding."), "Er is geen internetverbinding.")
+        XCTAssertEqual(PriceHistoryText.failure("Er is geen internetverbinding"), "Er is geen internetverbinding.")
+        XCTAssertEqual(PriceHistoryText.failure("  Ophalen mislukt: time-out \n"), "Ophalen mislukt: time-out.")
+        XCTAssertEqual(PriceHistoryText.failure("Wat nu?"), "Wat nu?")
+        XCTAssertEqual(PriceHistoryText.failure(""), "Ophalen mislukt.")
+        XCTAssertEqual(PriceHistoryText.failure("   "), "Ophalen mislukt.")
+    }
+}
+
+// MARK: - De grafiek bij Beleggingen voor elk gemeld geval (charts.md par. 3.2 en de drie demo-scenario's)
+
+final class HoldingChartScenarioTests: XCTestCase {
+    private let today = day(oct2026, 15)
+    private let derivedFootnote = "Geschat uit je inleg, zonder rendement."
+
+    private func base() -> FinanceData {
+        var d = FinanceData(startMonth: oct2026.adding(-12))
+        d.salary = SalarySettings(mode: .fixed, fixedMonthly: 3000, hourlyRate: 0, hoursPerWeek: 0)
+        d.materialize(upTo: oct2026)
+        return d
+    }
+
+    private func holding(ticker: String? = nil, units: Double? = nil, invested: Double = 0, monthly: Double = 0,
+                         start: YearMonth = oct2026) -> Holding {
+        Holding(name: "Demo", kind: .etf, ticker: ticker, units: units, investedTotal: invested,
+                expectedReturn: 0, annualCost: 0, monthlyContribution: monthly, startMonth: start)
+    }
+
+    private func model(_ d: FinanceData, window: PortfolioWindow = .all) -> TrendModel {
+        PortfolioTrend.model(d, window: window, current: oct2026, today: today)
+    }
+
+    /// Nooit een lege vlakte: een grafiek met minstens een punt, of een lege staat met een actie. En nooit de oude voetnoot.
+    private func assertChartOrActionableEmptyState(_ m: TrendModel, _ name: String, file: StaticString = #filePath, line: UInt = #line) {
+        if let empty = m.empty {
+            XCTAssertNotNil(empty.action, "\(name): een lege staat heeft een actie", file: file, line: line)
+            XCTAssertNotNil(empty.actionTitle, "\(name): met een knoptekst", file: file, line: line)
+            XCTAssertTrue(m.lines.isEmpty, "\(name): geen lijnen naast een lege staat", file: file, line: line)
+        } else {
+            XCTAssertFalse(m.lines.isEmpty, "\(name): een grafiek heeft lijnen", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(m.allPoints.count, 1, "\(name): en punten", file: file, line: line)
+        }
+        XCTAssertFalse(m.summary.isEmpty, name, file: file, line: line)
+        XCTAssertFalse(m.summary.contains("groeit mee"), name, file: file, line: line)
+        XCTAssertFalse((m.footnote ?? "").contains("meetpunt"), name, file: file, line: line)
+        let range = m.domain(nonNegative: true)
+        XCTAssertLessThan(range.lowerBound, range.upperBound, name, file: file, line: line)
+    }
+
+    private func assertDerived(_ m: TrendModel, _ name: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertNil(m.empty, name, file: file, line: line)
+        XCTAssertEqual(m.footnote, derivedFootnote, "\(name): een afgeleide lijn heeft het onderschrift", file: file, line: line)
+        let history = m.allPoints.filter { $0.kind != .projected }
+        XCTAssertFalse(history.isEmpty, name, file: file, line: line)
+        XCTAssertTrue(history.allSatisfy { $0.kind == .estimated }, name, file: file, line: line)
+    }
+
+    // MARK: charts.md 3.2
+
+    func testB1ATickerWithUnitsAndATypedTotalButNoQuoteYet() {
+        var d = base()
+        d.addHolding(holding(ticker: "VWCE.DE", units: 10, invested: 1_000))
+        let m = model(d)
+        assertChartOrActionableEmptyState(m, "b1")
+        assertDerived(m, "b1")
+        XCTAssertEqual(TrendGlance(m)?.end, "Nu \(Fmt.euroWhole(1_000)) (geschat)")
+    }
+
+    func testB1cATickerWithoutUnitsAsksForTheUnitsOrDrawsTheTypedTotal() {
+        var d = base()
+        var h = holding(ticker: "VWCE.DE", units: nil, invested: 0)
+        h.lastPrice = 105
+        d.addHolding(h)
+        let empty = model(d)
+        assertChartOrActionableEmptyState(empty, "b1c zonder bedrag")
+        XCTAssertEqual(empty.empty?.action, .enterUnits(d.holdings[0].id))
+        // Met "Totaal ingelegd" erbij is er wel een lijn.
+        var typed = base()
+        var withTotal = holding(ticker: "VWCE.DE", units: nil, invested: 1_000)
+        withTotal.lastPrice = 105
+        typed.addHolding(withTotal)
+        assertChartOrActionableEmptyState(model(typed), "b1c met bedrag")
+        assertDerived(model(typed), "b1c met bedrag")
+    }
+
+    func testB2AManualValueIsARealLine() {
+        var d = base()
+        d.addHolding(holding(invested: 5_000), initialValue: 5_000, now: day(oct2026, 5))
+        let m = model(d)
+        assertChartOrActionableEmptyState(m, "b2")
+        XCTAssertNil(m.empty)
+        XCTAssertTrue(m.allPoints.filter { $0.kind != .projected }.allSatisfy { $0.kind == .actual })
+        XCTAssertNotEqual(m.footnote, derivedFootnote)
+    }
+
+    func testB3OnlyAMonthlyContributionIsADerivedLine() {
+        var d = base()
+        d.addHolding(holding(monthly: 200, start: oct2026.adding(-3)))
+        let m = model(d)
+        assertChartOrActionableEmptyState(m, "b3")
+        assertDerived(m, "b3")
+    }
+
+    func testB3bATypedTotalPlusAContributionIsADerivedLineEndingAtTheTotal() {
+        var d = base()
+        d.addHolding(holding(invested: 3_000, monthly: 200, start: oct2026.adding(-3)))
+        let m = model(d)
+        assertChartOrActionableEmptyState(m, "b3b")
+        assertDerived(m, "b3b")
+        XCTAssertEqual(PortfolioFigures(d, current: oct2026, today: today).value, 3_000, accuracy: 0.001)
+    }
+
+    func testB4aABelegdSindsInThePastDrawsHistoryFromThatMonth() {
+        var d = base()
+        d.addHolding(holding(invested: 2_000, monthly: 200, start: oct2026.adding(-6)))
+        let m = model(d)
+        assertChartOrActionableEmptyState(m, "b4a")
+        assertDerived(m, "b4a")
+        let first = m.allPoints.first
+        XCTAssertEqual(first.map { YearMonth(date: $0.date) }, oct2026.adding(-6), "de lijn begint bij Belegd sinds")
+    }
+
+    func testG1AMeasurementOfZeroIsAFlatLineNotAnEmptyChart() {
+        var d = base()
+        let h = holding(invested: 0)
+        d.addHolding(h)
+        d.addSnapshot(holdingID: h.id, value: 0, invested: 0, date: day(oct2026, 5))
+        let m = model(d)
+        assertChartOrActionableEmptyState(m, "g1")
+        XCTAssertNil(m.empty)
+        XCTAssertTrue(m.allPoints.allSatisfy { $0.value == 0 })
+    }
+
+    func testG2ANegativeContributionNeverDrawsAValueBelowZero() {
+        var d = base()
+        d.addHolding(holding(invested: 1_000, monthly: -300, start: oct2026), initialValue: 1_000, now: day(oct2026, 5))
+        let m = model(d)
+        assertChartOrActionableEmptyState(m, "g2")
+        XCTAssertNil(m.empty)
+        XCTAssertTrue(m.allPoints.allSatisfy { $0.value >= 0 }, "een verwachte waarde onder 0 bestaat niet")
+    }
+
+    // MARK: de drie -mybuddy-demo-holding-scenario's (DebugLaunch.DemoHoldingScenario)
+
+    private func demo(ticker: String?, units: Double?) -> FinanceData {
+        var d = base()
+        d.addHolding(holding(ticker: ticker, units: units, invested: 3_000, monthly: 200, start: oct2026.adding(-8)))
+        return d
+    }
+
+    func testDemoOnlyInvested() {
+        let m = model(demo(ticker: nil, units: nil))
+        assertChartOrActionableEmptyState(m, "only-invested")
+        assertDerived(m, "only-invested")
+        XCTAssertEqual(m.allPoints.filter { $0.kind != .projected }.count, 9, "negen maanden: Belegd sinds t/m nu")
+    }
+
+    func testDemoTickerWithoutUnits() {
+        let m = model(demo(ticker: "VWCE.DE", units: nil))
+        assertChartOrActionableEmptyState(m, "ticker-no-units")
+        assertDerived(m, "ticker-no-units")
+    }
+
+    func testDemoTrackedButOffline() {
+        let m = model(demo(ticker: "VWCE.DE", units: 12))
+        assertChartOrActionableEmptyState(m, "tracked-offline")
+        assertDerived(m, "tracked-offline")
+    }
+
+    /// De keuzebalk 6 mnd / 1 jaar / 3 jaar bestaat alleen als hij iets verandert (scenario 11f).
+    func testTheWindowBarOnlyOffersChoicesThatChangeTheView() {
+        let d = demo(ticker: nil, units: nil)
+        let available = PortfolioTrend.availableMonths(d, current: oct2026, today: today)
+        XCTAssertEqual(available, 9)
+        XCTAssertEqual(PortfolioWindow.options(availableMonths: available), [.sixMonths, .all])
+        XCTAssertEqual(PortfolioWindow.effective(.year, availableMonths: available), .all, "een keuze die niet bestaat valt terug op Alles")
+        XCTAssertEqual(PortfolioWindow.effective(.sixMonths, availableMonths: available), .sixMonths)
+        XCTAssertEqual(PortfolioWindow.options(availableMonths: PortfolioTrend.availableMonths(base(), current: oct2026, today: today)), [])
+    }
+}
