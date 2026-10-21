@@ -3,6 +3,7 @@ import SwiftUI
 /// De commando's in de menubalk (Mac en iPad met toetsenbord): de tabs in het menu Weergave met Cmd+1 t/m Cmd+5 (op de Mac
 /// Cmd+1 t/m Cmd+4, want Instellingen is daar een eigen venster met Cmd+komma), Zoeken met Cmd+F, en in het menu Gegevens
 /// Koersen vernieuwen (Cmd+R) en Back-up maken. Alles is uitgeschakeld zolang er niemand is ingelogd.
+@MainActor
 struct AppCommands: Commands {
     let session: ActiveSession
 
