@@ -123,7 +123,7 @@ final class HoldingDayTests: XCTestCase {
         XCTAssertEqual(now(d, h, engTime(oct2026, 31, hour: 20)), d.holdingStateNow(h, current: oct2026))
     }
 
-    // MARK: Portefeuille, grafiek en soorten
+    // MARK: Alle beleggingen samen, grafiek en soorten
 
     func testPortfolioFunctionsAgreeWithTheHoldingNow() {
         var d = makeBaseData()

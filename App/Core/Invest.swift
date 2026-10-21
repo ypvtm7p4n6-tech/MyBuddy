@@ -181,7 +181,7 @@ extension FinanceData {
         return today
     }
 
-    // MARK: Portefeuille
+    // MARK: Alle beleggingen samen
 
     func portfolioValue(current: YearMonth) -> Double {
         let cache = incomeBasesCache()

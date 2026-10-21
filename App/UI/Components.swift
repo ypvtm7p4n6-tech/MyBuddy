@@ -29,6 +29,7 @@ struct PageScaffold<Content: View>: View {
                 .offset(y: -DebugLaunch.scrollOffset)
                 #endif
         }
+        .scrollDismissesKeyboard(.interactively)
         .background { Theme.canvas.ignoresSafeArea() }
         .navigationTitle(title)
         .toolbarTitleDisplayMode(titleMode)
@@ -56,6 +57,7 @@ struct ListScaffold<Content: View>: View {
             .listStyle(.inset)
             #endif
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .frame(maxWidth: Theme.readableWidth)
             .frame(maxWidth: .infinity)
             .background { Theme.canvas.ignoresSafeArea() }
@@ -324,10 +326,12 @@ struct NavigationRow: View {
                 }
                 Spacer(minLength: 8)
                 if let value {
+                    // De waarde krijgt eerst zijn plek; een lange titel wrapt in de rest.
                     Text(value)
                         .font(.body)
                         .foregroundStyle(Theme.textSecondary)
                         .multilineTextAlignment(.trailing)
+                        .layoutPriority(1)
                 }
                 if isButton {
                     Image(systemName: "chevron.right")
@@ -489,14 +493,17 @@ struct ActionButton: View {
         self.action = action
     }
 
+    /// Een destructieve knop is nooit prominent (BTN-4): de voorkeurskeuze is nooit de knop die iets weggooit.
+    private var isProminent: Bool { prominent && role != .destructive }
+
     var body: some View {
-        if prominent {
+        if isProminent {
             Button(role: role, action: action) {
                 ActionLabel(title: title, symbol: symbol)
                     .foregroundStyle(Theme.onAccent)
             }
             .buttonStyle(.borderedProminent)
-            .tint(role == .destructive ? Theme.negative : Theme.accentFill)
+            .tint(Theme.accentFill)
             .controlSize(actionControlSize)
         } else {
             Button(role: role, action: action) {

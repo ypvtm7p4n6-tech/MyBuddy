@@ -1,7 +1,8 @@
 import Foundation
 // Foundation-only: geen SwiftUI. In de app zit alles in één module. In het testpakket (CoreTests/Tests/MyBuddyCoreTests) staat
 // dit bestand als symlink tussen de tests en leest het de rekenmotor via `@testable import`; de tests staan in ChartAxisTests,
-// PortfolioTrendTests, TrendBuilderTests, DonutModelTests, StackedBarModelTests en ChartSegmentTests.
+// ChartSegmentTests, ChartSelectionTests, ChartAccessibilityTests, PortfolioTrendTests, PortfolioEstimateTests,
+// PortfolioConsistencyTests, TrendBuilderTests, DonutModelTests en StackedBarModelTests.
 #if canImport(MyBuddyCore)
 @testable import MyBuddyCore
 #endif
@@ -149,6 +150,8 @@ struct TrendModel: Equatable {
     var empty: ChartEmpty? = nil
     /// Het y-domein bevat altijd 0 (spaardoel, buffer, toekomstschatting).
     var includesZero = false
+    /// Bedragen met centen tonen (een koers, "€ 105,36") in plaats van hele euro's ("€ 105").
+    var showsCents = false
 
     var allPoints: [ChartPoint] { lines.flatMap { $0.points } }
 
@@ -183,18 +186,30 @@ struct TrendModel: Equatable {
         return lo.addingTimeInterval(-pad)...hi.addingTimeInterval(pad)
     }
 
-    /// De plekken van de x-labels: eigen keuze per soort as (`ChartAxis`), nooit de standaard van Swift Charts.
+    /// De plekken van de x-labels: eigen keuze per soort as (`ChartAxis`), nooit de standaard van Swift Charts. Alleen plekken binnen
+    /// het x-domein (een maandlabel vóór het eerste punt van een koers valt buiten de grafiek); altijd minstens een label.
     var xTicks: [Date] {
         let range = xDomain
+        var ticks: [Date]
         switch xAxis {
         case .months:
-            return ChartAxis.monthTicks(from: range.lowerBound, to: range.upperBound)
+            ticks = ChartAxis.monthTicks(from: range.lowerBound, to: range.upperBound)
         case .days:
-            return ChartAxis.dayTicks(from: range.lowerBound, to: range.upperBound)
+            ticks = ChartAxis.dayTicks(from: range.lowerBound, to: range.upperBound)
         case .elapsed:
             let top = max(ChartAxis.elapsedValue(range.upperBound), ChartAxis.elapsedValue(range.lowerBound) + 1e-6)
             let values = ChartAxis.ticks(in: 0...top, count: 4)
-            return values.map { ChartAxis.elapsedDate($0) }
+            ticks = values.map { ChartAxis.elapsedDate($0) }
+        }
+        let inside = ticks.filter { range.contains($0) }
+        return inside.isEmpty ? [range.lowerBound] : inside
+    }
+
+    /// De titel onder de x-as: alleen bij verstreken tijd de eenheid ("jaren"); maanden en dagen spreken voor zich.
+    var xAxisTitle: String? {
+        switch xAxis {
+        case .elapsed(let unit): return unit.title
+        case .months, .days: return nil
         }
     }
 
@@ -210,6 +225,192 @@ struct TrendModel: Equatable {
     /// Een model zonder lijnen met alleen een lege staat.
     static func placeholder(title: String, empty: ChartEmpty) -> TrendModel {
         TrendModel(title: title, lines: [], summary: "\(title). Geen gegevens. \(empty.title).", empty: empty)
+    }
+}
+
+extension ChartLine {
+    /// Waar het symbool van de lijn staat: het laatste werkelijke of afgeleide punt (het "nu" van de lijn), en anders, als alles
+    /// verwacht is, het laatste punt.
+    var markerPoint: ChartPoint? {
+        points.last(where: { $0.kind != .projected }) ?? points.last
+    }
+}
+
+// MARK: - Een gekozen punt (tik of aanwijzer)
+
+/// Wat de annotatie bij een gekozen punt toont: een titel (de maand, de dag of de verstreken tijd) en per lijn de waarde. Alles wat
+/// de annotatie laat zien bestaat zo ook als tekst (CHT-6). Een zuivere functie van het model, dus te testen zonder SwiftUI.
+struct TrendSelection: Equatable {
+    struct Row: Identifiable, Equatable {
+        let id: String
+        let name: String
+        let date: Date
+        let value: Double
+        /// De waarde als tekst, met "(geschat)" of "(verwacht)" erbij waar dat zo is.
+        let text: String
+        let role: ChartRole
+        let symbol: ChartSymbol?
+    }
+
+    let date: Date
+    let title: String
+    let rows: [Row]
+}
+
+extension TrendModel {
+    /// Een bedrag als tekst: hele euro's, of met centen bij een koers (`showsCents`).
+    func valueText(_ value: Double) -> String {
+        showsCents ? Fmt.euroExact(value) : Fmt.euroWhole(value)
+    }
+
+    /// De titel bij een datum op de x-as: "Oktober 2026" (een maandpunt), "21 okt 2025" (een dagpunt op een maandas), "ma 25 okt"
+    /// (een dag) of "Na 5 jaren" (verstreken tijd). Verschillende datums geven verschillende titels.
+    func selectionTitle(_ date: Date) -> String {
+        switch xAxis {
+        case .months:
+            if YearMonth.calendar.component(.day, from: date) == 1 { return ChartText.monthTitle(YearMonth(date: date)) }
+            return Fmt.date(date)
+        case .days:
+            return DayText.weekdayShort(date)
+        case .elapsed(let unit):
+            return "Na \(Fmt.input(ChartAxis.elapsedValue(date), maxDigits: 1)) \(unit.title)"
+        }
+    }
+
+    /// Het punt van `line` dat het dichtst bij `date` ligt, of nil als de lijn daar niets heeft (een kortere lijn eindigt eerder).
+    /// Een punt telt als het hoogstens een halve tussenruimte van `date` ligt.
+    static func nearestPoint(in line: ChartLine, to date: Date, minimumTolerance: TimeInterval) -> ChartPoint? {
+        guard var best = line.points.first else { return nil }
+        var distance = abs(best.date.timeIntervalSince(date))
+        var largestGap: TimeInterval = 0
+        var previous: Date?
+        for point in line.points {
+            let d = abs(point.date.timeIntervalSince(date))
+            if d < distance {
+                best = point
+                distance = d
+            }
+            if let before = previous { largestGap = max(largestGap, point.date.timeIntervalSince(before)) }
+            previous = point.date
+        }
+        let tolerance = max(largestGap / 2, minimumTolerance) + 1
+        return distance <= tolerance ? best : nil
+    }
+
+    /// Het gekozen punt bij `target` (de plek van de vinger of aanwijzer): het dichtstbijzijnde punt van alle lijnen bepaalt de plek,
+    /// en elke lijn die daar iets heeft staat in de rijen. nil zonder punten.
+    func selection(near target: Date) -> TrendSelection? {
+        let points = allPoints
+        guard var closest = points.first else { return nil }
+        var distance = abs(closest.date.timeIntervalSince(target))
+        for point in points {
+            let d = abs(point.date.timeIntervalSince(target))
+            if d < distance {
+                closest = point
+                distance = d
+            }
+        }
+        let anchor = closest.date
+        let minimum: TimeInterval
+        switch xAxis {
+        case .elapsed: minimum = 1
+        case .months, .days: minimum = 86_400
+        }
+        var rows: [TrendSelection.Row] = []
+        for line in lines {
+            guard let point = TrendModel.nearestPoint(in: line, to: anchor, minimumTolerance: minimum) else { continue }
+            var text = valueText(point.value)
+            switch point.kind {
+            case .actual: break
+            case .estimated: text += " (geschat)"
+            case .projected: text += " (verwacht)"
+            }
+            rows.append(TrendSelection.Row(id: line.id, name: line.name, date: point.date, value: point.value, text: text,
+                                           role: line.role, symbol: line.symbol))
+        }
+        return TrendSelection(date: anchor, title: selectionTitle(anchor), rows: rows)
+    }
+}
+
+// MARK: - Gegevens voor VoiceOver (de grafiekbeschrijving)
+
+/// De punten van een grafiek als categorieën en reeksen, voor `AXChartDescriptor`. Foundation-only: de view zet dit om in de
+/// typen van het Accessibility-framework. Elke categorie is uniek en elk punt verwijst naar een categorie.
+struct ChartAccessibility: Equatable {
+    struct Point: Equatable {
+        let category: String
+        let value: Double
+        /// Extra uitleg bij het punt: "verwacht" of "geschat".
+        let label: String?
+    }
+
+    struct Series: Equatable {
+        let name: String
+        let isContinuous: Bool
+        let points: [Point]
+    }
+
+    let xTitle: String
+    let categories: [String]
+    let series: [Series]
+
+    /// Het y-domein van alle punten, vanaf 0 als `includesZero`.
+    func domain(includesZero: Bool) -> ClosedRange<Double> {
+        var values: [Double] = []
+        for item in series {
+            for point in item.points { values.append(point.value) }
+        }
+        return ChartAxis.domain(values, includeZero: includesZero)
+    }
+
+    /// Maakt elke naam uniek door een nummer toe te voegen waar twee gelijk zijn ("Oktober 2026", "Oktober 2026 (2)").
+    static func uniqueNames(_ names: [String]) -> [String] {
+        var used = Set<String>()
+        var result: [String] = []
+        for name in names {
+            var candidate = name
+            var n = 2
+            while used.contains(candidate) {
+                candidate = "\(name) (\(n))"
+                n += 1
+            }
+            used.insert(candidate)
+            result.append(candidate)
+        }
+        return result
+    }
+}
+
+extension TrendModel {
+    /// De lijnen als reeksen over de datums van alle lijnen (oplopend), met een unieke tekst per datum.
+    var accessibilityData: ChartAccessibility {
+        var dates: [Date] = Array(Set(allPoints.map { $0.date }))
+        dates.sort()
+        let names = ChartAccessibility.uniqueNames(dates.map { selectionTitle($0) })
+        var categoryByDate: [Date: String] = [:]
+        for (index, date) in dates.enumerated() { categoryByDate[date] = names[index] }
+        var series: [ChartAccessibility.Series] = []
+        for line in lines {
+            var points: [ChartAccessibility.Point] = []
+            for point in line.points {
+                guard let category = categoryByDate[point.date] else { continue }
+                var label: String?
+                switch point.kind {
+                case .actual: label = nil
+                case .estimated: label = "geschat"
+                case .projected: label = "verwacht"
+                }
+                points.append(ChartAccessibility.Point(category: category, value: point.value, label: label))
+            }
+            series.append(ChartAccessibility.Series(name: line.name, isContinuous: true, points: points))
+        }
+        let xTitle: String
+        switch xAxis {
+        case .months: xTitle = "Maand"
+        case .days: xTitle = "Dag"
+        case .elapsed(let unit): xTitle = "Tijd in \(unit.title)"
+        }
+        return ChartAccessibility(xTitle: xTitle, categories: names, series: series)
     }
 }
 
@@ -268,8 +469,9 @@ enum ChartAxis {
             return sign + "€" + fixed(a, step < 1 ? 2 : 0)
         }
         func unique(_ labels: [String]) -> Bool { Set(labels).count == labels.count }
+        // Zonder tussenruimte, wat voor soort spatie de euro-opmaak ook gebruikt (gewone, harde of smalle harde spatie).
         func compacted(_ text: String) -> String {
-            text.replacingOccurrences(of: "\u{00A0}", with: "").replacingOccurrences(of: " ", with: "")
+            String(text.filter { !$0.isWhitespace })
         }
         let biggest: Double = ticks.map { abs($0) }.max() ?? 0
         let short0: [String] = ticks.map { short($0, 0) }
@@ -409,9 +611,10 @@ enum ChartText {
         capitalized(Fmt.month(month))
     }
 
+    /// Alleen de eerste letter met een hoofdletter (zinshoofdletter): "oktober 2026" wordt "Oktober 2026".
     static func capitalized(_ text: String) -> String {
         guard let first = text.first else { return text }
-        return String(first).uppercased() + String(text.dropFirst())
+        return String(first).capitalized + String(text.dropFirst())
     }
 
     static func lowercasedFirst(_ text: String) -> String {
@@ -455,6 +658,12 @@ enum PortfolioWindow: Int, CaseIterable, Identifiable {
     static func options(availableMonths: Int) -> [PortfolioWindow] {
         let shorter: [PortfolioWindow] = [.sixMonths, .year, .threeYears].filter { $0.rawValue + 1 < availableMonths }
         return shorter.isEmpty ? [] : shorter + [.all]
+    }
+
+    /// De keuze die de grafiek werkelijk gebruikt: een bewaarde keuze die niet (meer) in `options` staat valt terug op "Alles".
+    /// Zo toont de keuzebalk nooit een keuze die niet bestaat.
+    static func effective(_ chosen: PortfolioWindow, availableMonths: Int) -> PortfolioWindow {
+        options(availableMonths: availableMonths).contains(chosen) ? chosen : .all
     }
 }
 
@@ -525,7 +734,7 @@ enum PortfolioTrend {
             footnote = "Geschat uit je inleg, zonder rendement."
             parts.append("Geschat uit je inleg, zonder rendement.")
         } else if history.count < 2 {
-            footnote = "Je echte verloop begint op \(Fmt.date(today)). Het gestippelde deel is verwacht."
+            footnote = "Je echte verloop begint op \(Fmt.date(today)). Het gestreepte deel is verwacht."
         }
         return TrendModel(title: title, lines: lines, summary: parts.joined(separator: " "), caption: caption, footnote: footnote)
     }
@@ -605,7 +814,7 @@ enum PriceTrend {
         let summary = "Koers van \(ticker) het afgelopen jaar. Nu \(ChartText.price(now)). Laagste \(ChartText.price(low)), hoogste \(ChartText.price(high))."
         let caption = "Nu \(Fmt.euroExact(now)) · laagste \(Fmt.euroExact(low)) · hoogste \(Fmt.euroExact(high))"
         let footnote: String? = sorted.count < 2 ? "Er is nog maar één koers bekend." : nil
-        return TrendModel(title: title, lines: [line], summary: summary, caption: caption, footnote: footnote)
+        return TrendModel(title: title, lines: [line], summary: summary, caption: caption, footnote: footnote, showsCents: true)
     }
 }
 
@@ -1087,7 +1296,10 @@ struct IncomeMark: Identifiable, Equatable {
 struct BarEntry: Identifiable, Equatable {
     let id: String
     let date: Date
+    /// Het korte label op de x-as ("okt", en met jaartal bij januari).
     let label: String
+    /// De maand voluit ("Oktober 2026"): uniek per maand, voor de annotatie en voor VoiceOver.
+    let title: String
     let income: Double
     /// Alleen het deel van de uitgaven dat van je inkomen gaat (wat uit een spaarpot wordt betaald staat al in de pot).
     let expenses: Double
@@ -1160,6 +1372,7 @@ struct StackedBarModel: Equatable {
                 text += ", \(leftWord) \(ChartText.euro(free))."
             }
             entries.append(BarEntry(id: monthID, date: s.month.firstDay, label: ChartAxis.monthLabel(s.month.firstDay),
+                                    title: ChartText.monthTitle(s.month),
                                     income: s.income, expenses: fromIncome, saved: saved, invested: invested, free: free,
                                     shortfall: shortfall, isProjected: s.isProjected, text: text))
         }
@@ -1174,5 +1387,91 @@ struct StackedBarModel: Equatable {
             summary += " In \(shortfalls) \(monthWord) is er een tekort."
         }
         return StackedBarModel(bars: bars, incomeMarks: marks, kinds: kinds, entries: entries, summary: summary, empty: nil)
+    }
+}
+
+/// Een regel in de annotatie bij een gekozen maand: een naam en een bedrag.
+struct BarDetailRow: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let value: Double
+}
+
+extension BarEntry {
+    /// De bedragen van de maand als rijen, in de volgorde van de staaf: inkomen, uitgaven, gespaard, belegd en dan wat er over is
+    /// ("Overgehouden", of "Nog te verdelen" voor een maand die nog komt) of het tekort.
+    var detailRows: [BarDetailRow] {
+        var rows: [BarDetailRow] = [
+            BarDetailRow(id: "income", label: "Inkomen", value: income),
+            BarDetailRow(id: FlowKind.expenses.rawValue, label: FlowKind.expenses.title, value: expenses),
+            BarDetailRow(id: FlowKind.saved.rawValue, label: FlowKind.saved.title, value: saved),
+            BarDetailRow(id: FlowKind.invested.rawValue, label: FlowKind.invested.title, value: invested)
+        ]
+        if shortfall > 0 {
+            rows.append(BarDetailRow(id: "shortfall", label: "Tekort", value: shortfall))
+        } else {
+            let label: String = isProjected ? "Nog te verdelen" : FlowKind.free.title
+            rows.append(BarDetailRow(id: FlowKind.free.rawValue, label: label, value: free))
+        }
+        return rows
+    }
+}
+
+extension StackedBarModel {
+    /// De maand met deze sleutel ("2026-10").
+    func entry(for id: String) -> BarEntry? {
+        entries.first(where: { $0.id == id })
+    }
+
+    /// Het y-domein: vanaf 0 tot de hoogste stapel of het hoogste inkomen, met ruimte erboven. Altijd `lo < hi`.
+    func domain() -> ClosedRange<Double> {
+        var values: [Double] = []
+        for entry in entries {
+            values.append(entry.expenses + entry.saved + entry.invested + entry.free)
+            values.append(entry.income)
+        }
+        return ChartAxis.domain(values, includeZero: true)
+    }
+
+    /// Elke soort als reeks over de maanden, plus het inkomen; de categorieën zijn de maanden voluit.
+    var accessibilityData: ChartAccessibility {
+        let names = ChartAccessibility.uniqueNames(entries.map { $0.title })
+        var series: [ChartAccessibility.Series] = []
+        for kind in kinds {
+            var points: [ChartAccessibility.Point] = []
+            for (index, entry) in entries.enumerated() {
+                let value: Double
+                switch kind {
+                case .expenses: value = entry.expenses
+                case .saved: value = entry.saved
+                case .invested: value = entry.invested
+                case .free: value = entry.free
+                }
+                points.append(ChartAccessibility.Point(category: names[index], value: value,
+                                                       label: entry.isProjected ? "verwacht" : nil))
+            }
+            series.append(ChartAccessibility.Series(name: kind.title, isContinuous: false, points: points))
+        }
+        var incomePoints: [ChartAccessibility.Point] = []
+        for (index, entry) in entries.enumerated() {
+            incomePoints.append(ChartAccessibility.Point(category: names[index], value: entry.income,
+                                                         label: entry.isProjected ? "verwacht" : nil))
+        }
+        series.append(ChartAccessibility.Series(name: "Inkomen", isContinuous: false, points: incomePoints))
+        return ChartAccessibility(xTitle: "Maand", categories: names, series: series)
+    }
+}
+
+extension DonutModel {
+    /// De soorten als een reeks over de namen van de soorten.
+    var accessibilityData: ChartAccessibility {
+        let names = ChartAccessibility.uniqueNames(slices.map { $0.name })
+        var points: [ChartAccessibility.Point] = []
+        for (index, slice) in slices.enumerated() {
+            let percent = Int((slice.share * 100).rounded())
+            points.append(ChartAccessibility.Point(category: names[index], value: slice.value, label: "\(percent) procent"))
+        }
+        let series = [ChartAccessibility.Series(name: "Verdeling", isContinuous: false, points: points)]
+        return ChartAccessibility(xTitle: "Soort", categories: names, series: series)
     }
 }

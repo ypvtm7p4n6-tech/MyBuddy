@@ -389,6 +389,7 @@ struct SheetScaffold<Content: View>: View {
         NavigationStack {
             Form { content }
                 .formStyle(.grouped)
+                .scrollDismissesKeyboard(.interactively)
                 .navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
                 .toolbar {
@@ -481,10 +482,13 @@ struct ColorChoiceRow: View {
     @Binding var index: Int
     @ScaledMetric(relativeTo: .body) private var swatch: CGFloat = 28
 
+    /// Een cel is minstens een raakdoel breed en wordt groter als het kleurvlak met de tekst meegroeit.
+    private var cell: CGFloat { max(Theme.minTapTarget, swatch) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Kleur")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: Theme.minTapTarget), spacing: 4)], spacing: 4) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: cell), spacing: 4)], spacing: 4) {
                 ForEach(0..<Theme.palette.count, id: \.self) { i in
                     Button { index = i } label: {
                         Circle()
@@ -497,7 +501,7 @@ struct ColorChoiceRow: View {
                                         .foregroundStyle(Theme.onAccent)
                                 }
                             }
-                            .frame(width: Theme.minTapTarget, height: Theme.minTapTarget)
+                            .frame(width: cell, height: cell)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -518,17 +522,19 @@ struct ColorChoiceRow: View {
 struct SymbolChoiceRow: View {
     @Binding var symbol: String
     var color: Color
+    /// De zijde van een keuze: een raakdoel dat met de tekst meegroeit, zodat het symbool er altijd in past.
+    @ScaledMetric(relativeTo: .body) private var cell: CGFloat = Theme.minTapTarget
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Symbool")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: Theme.minTapTarget), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: cell), spacing: 8)], spacing: 8) {
                 ForEach(Theme.potSymbols, id: \.self) { s in
                     Button { symbol = s } label: {
                         Label(potSymbolNames[s] ?? s, systemImage: s)
                             .labelStyle(.iconOnly)
                             .font(.body)
-                            .frame(width: Theme.minTapTarget, height: Theme.minTapTarget)
+                            .frame(width: cell, height: cell)
                             .foregroundStyle(symbol == s ? Theme.onAccent : color)
                             .background(symbol == s ? color : color.opacity(0.15), in: Circle())
                             .contentShape(Circle())

@@ -1,6 +1,7 @@
 import Foundation
 // Foundation-only: geen SwiftUI. In de app zit alles in één module. In het testpakket (CoreTests/Tests/MyBuddyCoreTests) staat
-// dit bestand als symlink tussen de tests; de tests staan in BlockOrderMigrationTests.swift.
+// dit bestand als symlink tussen de tests; de tests staan in BlockOrderMigrationTests.swift. Het bevat de migratie van de
+// opgeslagen volgorde, het uitrekenen van de volgorde (`order`) en de pagina's met hun blokken (`BlockPage`, `BlockInfo`).
 
 /// Zet een opgeslagen blokvolgorde van de oude pagina's (`home`, `savings`, `tools`) om naar de nieuwe pagina's (`overview`,
 /// `month`, `saving`, `planning`), met behoud van de onderlinge volgorde (par. 2.7 van docs/design/plan.md).
@@ -81,5 +82,125 @@ enum BlockOrderMigration {
             result[page] = ids
         }
         return result
+    }
+
+    /// De blok-id's van een pagina in de volgorde van de gebruiker, uit de opgeslagen lijst en de standaardvolgorde.
+    /// Onbekende id's (niet in `defaults`) en dubbele id's worden overgeslagen; blokken die nog niet in de opgeslagen lijst
+    /// staan (nieuwe blokken) komen achteraan, in de standaardvolgorde. Zonder opgeslagen lijst is het de standaardvolgorde.
+    static func order(stored: [String]?, defaults: [String]) -> [String] {
+        var result: [String] = []
+        var seen = Set<String>()
+        for id in stored ?? [] {
+            guard !seen.contains(id), defaults.contains(id) else { continue }
+            seen.insert(id)
+            result.append(id)
+        }
+        for id in defaults where !seen.contains(id) {
+            result.append(id)
+        }
+        return result
+    }
+}
+
+// MARK: - Welke blokken een pagina heeft
+
+/// Eén blok van een pagina, met de naam en het icoon dat in het ordenen-blad staat.
+struct BlockInfo: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let symbol: String
+}
+
+/// De pagina's waarvan je de volgorde van de blokken zelf kunt kiezen. De blok-id's staan ook in `docs/v3-spec.md`.
+/// De kern van een pagina (de hero op het Overzicht, de `MonthBar` op Maand) is geen blok en staat vast bovenaan.
+enum BlockPage: String, CaseIterable, Identifiable {
+    case overview, month, saving, planning
+    // Overgangsvorm tot pakket G: de blokken van de drie oude tabroots.
+    case home, savings, tools
+
+    /// Alleen de vier pagina's van nu; de overgangsvormen doen niet mee in een lijst van alle pagina's.
+    static var allCases: [BlockPage] { [.overview, .month, .saving, .planning] }
+
+    var id: String { rawValue }
+
+    /// Sleutel in `AppSettings.blockOrder`.
+    var key: String { rawValue }
+
+    /// Is dit een van de oude pagina's (tot pakket G)?
+    var isLegacy: Bool {
+        switch self {
+        case .home, .savings, .tools: return true
+        case .overview, .month, .saving, .planning: return false
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .overview, .home: return "Overzicht"
+        case .month, .savings: return "Maand"
+        case .saving: return "Sparen"
+        case .planning, .tools: return "Plannen"
+        }
+    }
+
+    /// Alleen een pagina met drie of meer blokken toont "Volgorde aanpassen": ordenen van twee blokken is zinloos.
+    var allowsOrdering: Bool { blocks.count >= 3 }
+
+    /// De blokken in de standaardvolgorde.
+    var blocks: [BlockInfo] {
+        switch self {
+        case .overview:
+            return [
+                BlockInfo(id: "wealth", title: "Vermogen", symbol: "chart.pie"),
+                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full"),
+                BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis"),
+                BlockInfo(id: "upcoming", title: "Komende dagen", symbol: "calendar.badge.clock")
+            ]
+        case .month:
+            return [
+                BlockInfo(id: "flow", title: "Waar gaat je geld heen", symbol: "chart.bar.xaxis"),
+                BlockInfo(id: "income", title: "Inkomen", symbol: "eurosign.circle"),
+                BlockInfo(id: "expenses", title: "Uitgaven", symbol: "creditcard"),
+                BlockInfo(id: "distribute", title: "Verdelen", symbol: "square.split.2x2"),
+                BlockInfo(id: "bank", title: "Bankrekening", symbol: "building.columns"),
+                BlockInfo(id: "days", title: "Dag voor dag", symbol: "list.bullet.rectangle")
+            ]
+        case .saving:
+            return [
+                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full"),
+                BlockInfo(id: "portfolio", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis")
+            ]
+        case .planning:
+            return [
+                BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered"),
+                BlockInfo(id: "buffer", title: "Noodbuffer", symbol: "shield.lefthalf.filled"),
+                BlockInfo(id: "accelerators", title: "Versnellers", symbol: "bolt"),
+                BlockInfo(id: "projection", title: "Toekomstschatting", symbol: "calendar.badge.clock"),
+                BlockInfo(id: "purchase", title: "Aankoopcheck", symbol: "cart")
+            ]
+        case .home:
+            return [
+                BlockInfo(id: "overview", title: "Overzicht", symbol: "chart.bar.xaxis"),
+                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full.fill"),
+                BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis")
+            ]
+        case .savings:
+            return [
+                BlockInfo(id: "period", title: "Overzicht", symbol: "chart.bar.xaxis"),
+                BlockInfo(id: "income", title: "Inkomen", symbol: "eurosign.circle.fill"),
+                BlockInfo(id: "bank", title: "Bankrekening", symbol: "building.columns.fill"),
+                BlockInfo(id: "distribute", title: "Verdelen", symbol: "square.split.2x2.fill"),
+                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full.fill"),
+                BlockInfo(id: "buffer", title: "Noodbuffer", symbol: "shield.lefthalf.filled"),
+                BlockInfo(id: "portfolio", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis"),
+                BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered")
+            ]
+        case .tools:
+            return [
+                BlockInfo(id: "accelerators", title: "Versnellers", symbol: "bolt.fill"),
+                BlockInfo(id: "projection", title: "Toekomstschatting", symbol: "calendar.badge.clock"),
+                BlockInfo(id: "purchase", title: "Aankoopcheck", symbol: "cart")
+            ]
+        }
     }
 }

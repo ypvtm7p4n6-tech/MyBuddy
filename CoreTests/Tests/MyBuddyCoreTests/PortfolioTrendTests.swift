@@ -125,6 +125,21 @@ final class PortfolioTrendTests: XCTestCase {
         XCTAssertEqual(PortfolioWindow.allCases.map { $0.title }, ["6 mnd", "1 jaar", "3 jaar", "Alles"])
     }
 
+    func testAStoredChoiceThatIsNotInTheBarFallsBackToAll() {
+        XCTAssertEqual(PortfolioWindow.effective(.sixMonths, availableMonths: 3), .all)
+        XCTAssertEqual(PortfolioWindow.effective(.year, availableMonths: 8), .all)
+        XCTAssertEqual(PortfolioWindow.effective(.sixMonths, availableMonths: 8), .sixMonths)
+        XCTAssertEqual(PortfolioWindow.effective(.threeYears, availableMonths: 40), .threeYears)
+        XCTAssertEqual(PortfolioWindow.effective(.all, availableMonths: 0), .all)
+        for months in [0, 1, 2, 7, 8, 14, 40] {
+            let options = PortfolioWindow.options(availableMonths: months)
+            for chosen in PortfolioWindow.allCases {
+                let shown = PortfolioWindow.effective(chosen, availableMonths: months)
+                XCTAssertTrue(options.isEmpty ? shown == .all : options.contains(shown), "\(months) maanden, keuze \(chosen)")
+            }
+        }
+    }
+
     /// 22 maanden meetpunten (januari 2025 t/m oktober 2026).
     private func longHistory() -> FinanceData {
         var d = FinanceData(startMonth: YearMonth(year: 2025, month: 1))

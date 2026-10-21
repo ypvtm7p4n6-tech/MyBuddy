@@ -2,110 +2,8 @@ import SwiftUI
 
 // De volgorde van de blokken op een pagina (par. 2.7 van docs/design/plan.md). De gebruiker kiest de volgorde zelf: via het
 // menu in de werkbalk ("Volgorde aanpassen…"), via Instellingen, Indeling en via lang indrukken op een blok. Een opgeslagen
-// volgorde onder de oude sleutels (`home`, `savings`, `tools`) wordt bij het lezen omgezet (`BlockOrderMigration`).
-
-// MARK: - Welke blokken een pagina heeft
-
-/// Eén blok van een pagina, met de naam en het icoon dat in het ordenen-blad staat.
-struct BlockInfo: Identifiable, Equatable {
-    let id: String
-    let title: String
-    let symbol: String
-}
-
-/// De pagina's waarvan je de volgorde van de blokken zelf kunt kiezen. De blok-id's staan ook in `docs/v3-spec.md`.
-/// De kern van een pagina (de hero op het Overzicht, de `MonthBar` op Maand) is geen blok en staat vast bovenaan.
-enum BlockPage: String, CaseIterable, Identifiable {
-    case overview, month, saving, planning
-    // Overgangsvorm tot pakket G: de blokken van de drie oude tabroots.
-    case home, savings, tools
-
-    /// Alleen de vier pagina's van nu; de overgangsvormen doen niet mee in een lijst van alle pagina's.
-    static var allCases: [BlockPage] { [.overview, .month, .saving, .planning] }
-
-    var id: String { rawValue }
-
-    /// Sleutel in `AppSettings.blockOrder`.
-    var key: String { rawValue }
-
-    /// Is dit een van de oude pagina's (tot pakket G)?
-    var isLegacy: Bool {
-        switch self {
-        case .home, .savings, .tools: return true
-        case .overview, .month, .saving, .planning: return false
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .overview, .home: return "Overzicht"
-        case .month, .savings: return "Maand"
-        case .saving: return "Sparen"
-        case .planning, .tools: return "Plannen"
-        }
-    }
-
-    /// Alleen een pagina met drie of meer blokken toont "Volgorde aanpassen": ordenen van twee blokken is zinloos.
-    var allowsOrdering: Bool { blocks.count >= 3 }
-
-    /// De blokken in de standaardvolgorde.
-    var blocks: [BlockInfo] {
-        switch self {
-        case .overview:
-            return [
-                BlockInfo(id: "wealth", title: "Vermogen", symbol: "chart.pie"),
-                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full"),
-                BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis"),
-                BlockInfo(id: "upcoming", title: "Komende dagen", symbol: "calendar.badge.clock")
-            ]
-        case .month:
-            return [
-                BlockInfo(id: "flow", title: "Waar gaat je geld heen", symbol: "chart.bar.xaxis"),
-                BlockInfo(id: "income", title: "Inkomen", symbol: "eurosign.circle"),
-                BlockInfo(id: "expenses", title: "Uitgaven", symbol: "creditcard"),
-                BlockInfo(id: "distribute", title: "Verdelen", symbol: "square.split.2x2"),
-                BlockInfo(id: "bank", title: "Bankrekening", symbol: "building.columns"),
-                BlockInfo(id: "days", title: "Dag voor dag", symbol: "list.bullet.rectangle")
-            ]
-        case .saving:
-            return [
-                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full"),
-                BlockInfo(id: "portfolio", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis")
-            ]
-        case .planning:
-            return [
-                BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered"),
-                BlockInfo(id: "buffer", title: "Noodbuffer", symbol: "shield.lefthalf.filled"),
-                BlockInfo(id: "accelerators", title: "Versnellers", symbol: "bolt"),
-                BlockInfo(id: "projection", title: "Toekomstschatting", symbol: "calendar.badge.clock"),
-                BlockInfo(id: "purchase", title: "Aankoopcheck", symbol: "cart")
-            ]
-        case .home:
-            return [
-                BlockInfo(id: "overview", title: "Overzicht", symbol: "chart.bar.xaxis"),
-                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full.fill"),
-                BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis")
-            ]
-        case .savings:
-            return [
-                BlockInfo(id: "period", title: "Overzicht", symbol: "chart.bar.xaxis"),
-                BlockInfo(id: "income", title: "Inkomen", symbol: "eurosign.circle.fill"),
-                BlockInfo(id: "bank", title: "Bankrekening", symbol: "building.columns.fill"),
-                BlockInfo(id: "distribute", title: "Verdelen", symbol: "square.split.2x2.fill"),
-                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full.fill"),
-                BlockInfo(id: "buffer", title: "Noodbuffer", symbol: "shield.lefthalf.filled"),
-                BlockInfo(id: "portfolio", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis"),
-                BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered")
-            ]
-        case .tools:
-            return [
-                BlockInfo(id: "accelerators", title: "Versnellers", symbol: "bolt.fill"),
-                BlockInfo(id: "projection", title: "Toekomstschatting", symbol: "calendar.badge.clock"),
-                BlockInfo(id: "purchase", title: "Aankoopcheck", symbol: "cart")
-            ]
-        }
-    }
-}
+// volgorde onder de oude sleutels (`home`, `savings`, `tools`) wordt bij het lezen omgezet (`BlockOrderMigration`). De pagina's
+// en hun blokken (`BlockPage`, `BlockInfo`) staan zonder SwiftUI in `BlockOrderMigration.swift`, zodat ze getest worden.
 
 // MARK: - Opslaan en uitrekenen
 
@@ -116,17 +14,8 @@ extension AppSettings {
     func orderedBlocks(for page: BlockPage) -> [BlockInfo] {
         let defaults = page.blocks
         let stored: [String: [String]] = page.isLegacy ? blockOrder : BlockOrderMigration.migrate(blockOrder)
-        var result: [BlockInfo] = []
-        var seen = Set<String>()
-        for id in stored[page.key] ?? [] {
-            guard !seen.contains(id), let info = defaults.first(where: { $0.id == id }) else { continue }
-            seen.insert(id)
-            result.append(info)
-        }
-        for info in defaults where !seen.contains(info.id) {
-            result.append(info)
-        }
-        return result
+        let ids = BlockOrderMigration.order(stored: stored[page.key], defaults: defaults.map { $0.id })
+        return ids.compactMap { id in defaults.first(where: { $0.id == id }) }
     }
 
     func blockIDs(for page: BlockPage) -> [String] {
