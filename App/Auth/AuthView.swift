@@ -5,6 +5,8 @@ import SwiftUI
 /// Volledig scherm om in te loggen of een account te maken. Wordt getoond zolang er niemand is ingelogd.
 /// Met een Firebase-sleutel (zie `FirebaseConfig`) logt het in via de cloud, met "Wachtwoord vergeten".
 /// Zonder sleutel maakt het lokale accounts die alleen op dit apparaat bestaan.
+/// Het scherm staat op het vlakke `Theme.canvas` met een `Card`; knoppen, tekstlinks en pictogramknoppen zijn minstens
+/// `Theme.minTapTarget` groot. De wachtwoord-, verwijder- en wijzigpagina's staan bij Instellingen, Account.
 struct AuthView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.cloudAccount) private var cloud
@@ -36,6 +38,8 @@ struct AuthView: View {
     @State private var infoText: String?
     @State private var isWorking = false
     @FocusState private var focus: Field?
+    /// De breedte van het pictogram voor een veld; schaalt mee met Dynamic Type.
+    @ScaledMetric(relativeTo: .body) private var fieldIconWidth: CGFloat = 20
 
     /// Inloggen via Firebase? Alleen als er een sleutel is ingevuld.
     private var isCloud: Bool {
@@ -53,6 +57,14 @@ struct AuthView: View {
         Binding(get: { mode == .reset ? .signIn : mode }, set: { chosenMode = $0 })
     }
 
+    private var submitControlSize: ControlSize {
+        #if os(macOS)
+        return .regular
+        #else
+        return .large
+        #endif
+    }
+
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
@@ -61,7 +73,7 @@ struct AuthView: View {
                     card
                     footer
                 }
-                .padding(.horizontal, 16)
+                .scenePadding(.horizontal)
                 .padding(.vertical, 24)
                 .frame(maxWidth: 460)
                 .frame(maxWidth: .infinity, minHeight: proxy.size.height)
@@ -70,7 +82,7 @@ struct AuthView: View {
             .scrollDismissesKeyboard(.interactively)
             #endif
         }
-        .background { MeshBackground() }
+        .background { Theme.canvas.ignoresSafeArea() }
     }
 
     // MARK: Onderdelen
@@ -79,17 +91,16 @@ struct AuthView: View {
         VStack(spacing: 10) {
             SymbolBadge(symbol: "leaf.fill", color: Theme.accent, size: 64)
             Text("MyBuddy")
-                .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .font(.largeTitle.weight(.bold))
+                .accessibilityAddTraits(.isHeader)
             Text(subtitle)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
-        .animation(Theme.quickMotion, value: mode)
+        .animated(by: mode, quick: true)
     }
 
     private var subtitle: String {
@@ -101,71 +112,18 @@ struct AuthView: View {
     }
 
     private var card: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if mode == .reset {
-                resetHeader
-            } else {
-                Picker("Inloggen of account maken", selection: modeBinding) {
-                    ForEach([Mode.signIn, Mode.create]) { option in
-                        Text(option.title).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-
-            if isCloud, mode == .signIn, let notice = cloud?.notice {
-                noticeRow(notice)
-            }
-
-            emailField
-            if showEmailHint {
-                hintRow("Dit lijkt geen geldig e-mailadres.")
-            }
-
-            if mode != .reset {
-                passwordField
-            }
-
-            if isCloud, mode == .signIn {
-                forgotButton
-            }
-
-            if mode == .create {
-                if isCloud {
-                    CloudPasswordHint(password: password)
-                        .padding(.horizontal, 4)
-                } else {
-                    PasswordRequirements(password: password)
-                }
-                confirmField
-                if showMismatchHint {
-                    hintRow("De wachtwoorden zijn niet hetzelfde.")
-                }
-                if !isCloud {
-                    nameField
-                }
-            }
-
+        Card {
+            cardHeader
+            cardFields
             messageRows
-
             submitButton
-
             if mode == .reset {
-                Button("Terug naar inloggen") { leaveReset() }
-                    .font(.footnote.weight(.semibold))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 2)
+                backToSignInLink
             }
         }
-        .padding(Theme.cardInset)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
-        .animation(.snappy(duration: 0.25), value: mode)
-        .animation(Theme.quickMotion, value: errorText)
-        .animation(Theme.quickMotion, value: infoText)
+        .animated(by: mode, quick: true)
+        .animated(by: errorText, quick: true)
+        .animated(by: infoText, quick: true)
         .onChange(of: mode) { _, _ in
             errorText = nil
             infoText = nil
@@ -177,6 +135,61 @@ struct AuthView: View {
         }
         .onChange(of: password) { _, _ in errorText = nil }
         .onChange(of: confirm) { _, _ in errorText = nil }
+    }
+
+    /// Bovenaan de kaart: de keuzebalk (of de kop van "Wachtwoord vergeten") en een uitleg als je opnieuw moet inloggen.
+    @ViewBuilder
+    private var cardHeader: some View {
+        if mode == .reset {
+            resetHeader
+        } else {
+            Picker("Inloggen of account maken", selection: modeBinding) {
+                ForEach([Mode.signIn, Mode.create]) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        if isCloud, mode == .signIn, let notice = cloud?.notice {
+            noticeRow(notice)
+        }
+    }
+
+    /// De velden van de kaart.
+    @ViewBuilder
+    private var cardFields: some View {
+        emailField
+        if showEmailHint {
+            hintRow("Dit lijkt geen geldig e-mailadres.")
+        }
+        if mode != .reset {
+            passwordField
+        }
+        if isCloud, mode == .signIn {
+            forgotButton
+        }
+        if mode == .create {
+            createFields
+        }
+    }
+
+    /// Alleen bij "Account maken": de eisen aan het wachtwoord, herhalen en (lokaal) een naam.
+    @ViewBuilder
+    private var createFields: some View {
+        if isCloud {
+            CloudPasswordHint(password: password)
+                .padding(.horizontal, 4)
+        } else {
+            PasswordRequirements(password: password)
+        }
+        confirmField
+        if showMismatchHint {
+            hintRow("De wachtwoorden zijn niet hetzelfde.")
+        }
+        if !isCloud {
+            nameField
+        }
     }
 
     /// Het resultaat van de laatste poging: een gelukt-bericht of een foutmelding.
@@ -192,37 +205,49 @@ struct AuthView: View {
 
     private var resetHeader: some View {
         HStack(spacing: 8) {
-            Button {
+            IconButton("Terug naar inloggen", symbol: "chevron.left") {
                 leaveReset()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.body.weight(.semibold))
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Terug naar inloggen")
             Text("Wachtwoord vergeten")
                 .font(.headline)
+                .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
         }
     }
 
+    private var backToSignInLink: some View {
+        Button {
+            leaveReset()
+        } label: {
+            Text("Terug naar inloggen")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .frame(maxWidth: .infinity, minHeight: Theme.minTapTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var forgotButton: some View {
-        Button("Wachtwoord vergeten?") { startReset() }
-            .font(.footnote.weight(.semibold))
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.accent)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.horizontal, 4)
+        Button {
+            startReset()
+        } label: {
+            Text("Wachtwoord vergeten?")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .frame(maxWidth: .infinity, minHeight: Theme.minTapTarget, alignment: .trailing)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var footer: some View {
         VStack(spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "lock.shield")
+                    .accessibilityHidden(true)
                 if isCloud {
-                    Text("Je gegevens gaan versleuteld naar je eigen Firebase-database en blijven ook op dit apparaat staan, zodat de app zonder internet gewoon werkt.")
+                    Text("Je gegevens worden gesynchroniseerd met je account en blijven ook op dit apparaat staan, zodat de app zonder internet gewoon werkt.")
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("Je account en gegevens blijven op dit apparaat. Er is geen wachtwoordherstel.")
@@ -240,7 +265,7 @@ struct AuthView: View {
             }
         }
         .font(.footnote)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Theme.textSecondary)
         .multilineTextAlignment(.leading)
         .padding(.horizontal, 8)
     }
@@ -250,12 +275,13 @@ struct AuthView: View {
     private func fieldRow<Content: View>(symbol: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: fieldIconWidth)
+                .accessibilityHidden(true)
             content()
         }
         .padding(.horizontal, 12)
-        .frame(minHeight: Theme.buttonHeight + 4)
+        .frame(minHeight: Theme.minTapTarget + 4)
         .tile()
     }
 
@@ -289,14 +315,10 @@ struct AuthView: View {
             }
             .passwordFieldTraits(creating: mode == .create)
 
-            Button { toggleReveal() } label: {
-                Image(systemName: showPassword ? "eye.slash" : "eye")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
+            IconButton(showPassword ? "Verberg wachtwoord" : "Toon wachtwoord",
+                       symbol: showPassword ? "eye.slash" : "eye") {
+                toggleReveal()
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(showPassword ? "Verberg wachtwoord" : "Toon wachtwoord")
         }
     }
 
@@ -338,24 +360,26 @@ struct AuthView: View {
         }
     }
 
+    /// De ene logische vervolgstap van het scherm: een gevulde knop met de accentvulling, met een rondje tijdens het werk.
     private var submitButton: some View {
         Button(action: submit) {
             HStack(spacing: 8) {
                 if isWorking {
                     ProgressView()
                         .controlSize(.small)
-                        .transition(.opacity)
+                        .tint(Theme.onAccent)
                 }
                 Text(submitTitle)
                     .font(.body.weight(.semibold))
-                    .lineLimit(1)
             }
-            .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
-            .animation(Theme.quickMotion, value: isWorking)
+            .foregroundStyle(Theme.onAccent)
+            .frame(maxWidth: .infinity, minHeight: Theme.minTapTarget)
         }
-        .glassButton(prominent: true)
-        .tint(Theme.olive)
+        .buttonStyle(.borderedProminent)
+        .tint(Theme.accentFill)
+        .controlSize(submitControlSize)
         .disabled(!canSubmit || isWorking)
+        .animated(by: isWorking, quick: true)
     }
 
     private func hintRow(_ text: String) -> some View {
@@ -534,8 +558,8 @@ struct AuthView: View {
 
 // MARK: - Eisen aan het wachtwoord
 
-/// Vinkjes die laten zien wat een nieuw wachtwoord nog mist.
-private struct PasswordRequirements: View {
+/// Vinkjes die laten zien wat een nieuw wachtwoord nog mist (lokaal account). Ook gebruikt op de pagina Wachtwoord wijzigen.
+struct PasswordRequirements: View {
     let password: String
 
     var body: some View {
@@ -547,7 +571,7 @@ private struct PasswordRequirements: View {
                     Text(rule.title)
                 }
                 .font(.footnote)
-                .foregroundStyle(met ? Theme.positive : Color.secondary)
+                .foregroundStyle(met ? Theme.positive : Theme.textSecondary)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -605,205 +629,5 @@ extension View {
         #else
         self
         #endif
-    }
-}
-
-// MARK: - Account in de instellingen
-
-/// Rijen voor in een `Form` op het instellingenscherm: wie je bent, uitloggen, wachtwoord wijzigen, account verwijderen.
-struct AccountSection: View {
-    @Environment(AuthStore.self) private var auth
-    @State private var showChangePassword = false
-    @State private var showDelete = false
-
-    var body: some View {
-        if let account = auth.currentAccount {
-            Section {
-                HStack(spacing: 12) {
-                    SymbolBadge(symbol: "person.fill", color: Theme.accent, size: 40)
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let displayName = account.displayName {
-                            Text(displayName).font(.headline).lineLimit(1)
-                        }
-                        Text(account.email)
-                            .font(account.displayName == nil ? .headline : .footnote)
-                            .foregroundStyle(account.displayName == nil ? Color.primary : Color.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .sheet(isPresented: $showChangePassword) { ChangePasswordSheet() }
-                .sheet(isPresented: $showDelete) { DeleteAccountSheet() }
-
-                Button("Wachtwoord wijzigen") { showChangePassword = true }
-                Button("Uitloggen") { auth.signOut() }
-                Button("Account verwijderen", role: .destructive) { showDelete = true }
-            } header: {
-                Text("Account")
-            } footer: {
-                Text("Je account en gegevens blijven op dit apparaat. Er is geen wachtwoordherstel.")
-            }
-        }
-    }
-}
-
-// MARK: - Wachtwoord wijzigen
-
-private struct ChangePasswordSheet: View {
-    @Environment(AuthStore.self) private var auth
-    @Environment(\.dismiss) private var dismiss
-    @State private var oldPassword = ""
-    @State private var newPassword = ""
-    @State private var repeatPassword = ""
-    @State private var errorText: String?
-
-    private var canSave: Bool {
-        !oldPassword.isEmpty && AuthRules.isStrongPassword(newPassword) && newPassword == repeatPassword
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    SecureField("Huidig wachtwoord", text: $oldPassword)
-                        .passwordFieldTraits(creating: false)
-                }
-
-                Section {
-                    SecureField("Nieuw wachtwoord", text: $newPassword)
-                        .passwordFieldTraits(creating: true)
-                    SecureField("Herhaal nieuw wachtwoord", text: $repeatPassword)
-                        .passwordFieldTraits(creating: true)
-                } footer: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        PasswordRequirements(password: newPassword)
-                        if !repeatPassword.isEmpty && repeatPassword != newPassword {
-                            Text("De wachtwoorden zijn niet hetzelfde.")
-                                .font(.footnote)
-                                .foregroundStyle(Theme.warning)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-
-                if let errorText {
-                    Section {
-                        Text(errorText)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Theme.negative)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .background { MeshBackground() }
-            .navigationTitle("Wachtwoord wijzigen")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annuleer") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Wijzig") { save() }
-                        .disabled(!canSave)
-                }
-            }
-            .onChange(of: oldPassword) { _, _ in errorText = nil }
-            .onChange(of: newPassword) { _, _ in errorText = nil }
-        }
-        #if os(macOS)
-        .frame(minWidth: 460, minHeight: 420)
-        #endif
-    }
-
-    private func save() {
-        do {
-            try auth.changePassword(old: oldPassword, new: newPassword)
-            oldPassword = ""
-            newPassword = ""
-            repeatPassword = ""
-            dismiss()
-        } catch {
-            errorText = (error as? AuthError)?.errorDescription ?? error.localizedDescription
-            if let authError = error as? AuthError, authError == .wrongCredentials {
-                oldPassword = ""
-            }
-        }
-    }
-}
-
-// MARK: - Account verwijderen
-
-private struct DeleteAccountSheet: View {
-    @Environment(AuthStore.self) private var auth
-    @Environment(\.dismiss) private var dismiss
-    @State private var password = ""
-    @State private var errorText: String?
-    @State private var confirming = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text("Je account en alle gegevens die erbij horen worden van dit apparaat gewist. Dit kan niet ongedaan worden gemaakt en er is geen wachtwoordherstel of back-up bij ons.")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.negative)
-                    SecureField("Wachtwoord", text: $password)
-                        .passwordFieldTraits(creating: false)
-                } header: {
-                    Text("Bevestig met je wachtwoord")
-                }
-
-                if let errorText {
-                    Section {
-                        Text(errorText)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Theme.negative)
-                    }
-                }
-
-                Section {
-                    Button("Verwijder account en gegevens", role: .destructive) { confirming = true }
-                        .disabled(password.isEmpty)
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .background { MeshBackground() }
-            .navigationTitle("Account verwijderen")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annuleer") { dismiss() }
-                }
-            }
-            .onChange(of: password) { _, _ in errorText = nil }
-            .confirmationDialog("Weet je het zeker?", isPresented: $confirming, titleVisibility: .visible) {
-                Button("Verwijder definitief", role: .destructive) { performDelete() }
-            } message: {
-                Text("Je account en je gegevens worden van dit apparaat gewist.")
-            }
-        }
-        #if os(macOS)
-        .frame(minWidth: 460, minHeight: 380)
-        #endif
-    }
-
-    private func performDelete() {
-        do {
-            try auth.deleteCurrentAccount(password: password)
-            password = ""
-            dismiss()
-        } catch {
-            errorText = (error as? AuthError)?.errorDescription ?? error.localizedDescription
-            if let authError = error as? AuthError, authError == .wrongCredentials {
-                password = ""
-            }
-        }
     }
 }

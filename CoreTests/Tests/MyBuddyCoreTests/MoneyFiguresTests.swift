@@ -202,6 +202,16 @@ final class MoneyFiguresTests: XCTestCase {
         XCTAssertEqual(MoneyLabels.netWorthEnd(of: YearMonth(year: 2027, month: 1)), "Vermogen eind januari")
     }
 
+    func testRemainingLabelsFollowTheTermList() {
+        // Termenlijst: "Nog te verdelen" voor nu en komende maanden, "Overgehouden" voor het verleden en voor periodes. Nooit kaal "Over".
+        XCTAssertEqual(MoneyLabels.remaining, "Nog te verdelen")
+        XCTAssertEqual(MoneyLabels.leftOver, "Overgehouden")
+        XCTAssertEqual(MoneyLabels.remainingLabel(of: oct2026, current: oct2026), "Nog te verdelen")
+        XCTAssertEqual(MoneyLabels.remainingLabel(of: oct2026.adding(2), current: oct2026), "Nog te verdelen")
+        XCTAssertEqual(MoneyLabels.remainingLabel(of: oct2026.adding(-1), current: oct2026), "Overgehouden")
+        XCTAssertEqual(MoneyLabels.remainingLabel(of: oct2026, current: oct2026, isPeriod: true), "Overgehouden")
+    }
+
     // MARK: Inleg als bedrag of percentage
 
     func testContributionInfoForAFixedAmount() {

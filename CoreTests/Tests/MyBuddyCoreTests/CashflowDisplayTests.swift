@@ -489,7 +489,7 @@ final class CashflowDisplayTests: XCTestCase {
         let soft = BankLowPointNote.make(low: dip, buffer: 1_000, balanceNow: 1_500, today: today)
         XCTAssertEqual(soft?.severe, false)
         XCTAssertTrue(soft?.text.hasPrefix("Op zo 25 okt zakt je saldo naar") ?? false, soft?.text ?? "nil")
-        XCTAssertTrue(soft?.text.contains("gewenste bankbuffer") ?? false)
+        XCTAssertTrue(soft?.text.contains("minimumsaldo") ?? false)
         let todayDip = plainDay(engTime(oct2026, 14, hour: 12), balance: 400)
         XCTAssertTrue(BankLowPointNote.make(low: todayDip, buffer: 1_000, balanceNow: 1_500, today: today)?.text.hasPrefix("Vandaag zakt je saldo naar") ?? false)
 
@@ -555,6 +555,176 @@ final class CashflowDisplayTests: XCTestCase {
     func testPrintedFormats() {
         // Alleen om te zien hoe de bedragen in de meldingen eruitzien.
         print("euroExact:", Fmt.euroExact(12.34), "euro:", Fmt.euro(1234.5), "signed:", CashflowText.signed(-40.2))
+    }
+
+    // MARK: Bankrekening en Dag voor dag (herbouw): teksten, binnen en eruit, boekingen, komende dagen
+
+    func testStatusAndTitlesFollowTheTermList() {
+        let (d, today) = sampleData()
+        let l = LedgerBook(d, today: today).ledger(oct2026)
+        XCTAssertEqual(CashflowText.status(of: l.days[13]), "Vandaag")
+        XCTAssertEqual(CashflowText.status(of: l.days[14]), "Gepland")
+        XCTAssertEqual(CashflowText.status(of: l.days[2]), nil, "een dag die geweest is, heeft geen status")
+
+        XCTAssertEqual(CashflowText.leftoverTitle(month: oct2026, current: oct2026), "Nog te verdelen")
+        XCTAssertEqual(CashflowText.leftoverTitle(month: engNov2026, current: oct2026), "Nog te verdelen")
+        XCTAssertEqual(CashflowText.leftoverTitle(month: sep2026, current: oct2026), "Overgehouden")
+
+        XCTAssertEqual(CashflowText.monthEndTitle(oct2026, current: oct2026), "Verwacht eind oktober")
+        XCTAssertEqual(CashflowText.monthEndTitle(engNov2026, current: oct2026), "Verwacht eind november")
+        XCTAssertEqual(CashflowText.monthEndTitle(sep2026, current: oct2026), "Saldo eind september")
+    }
+
+    /// "Binnen en eruit" komt uit dezelfde bronnen als de rest: het getal onderaan is `remaining(in:)`, en de stukken van de balk
+    /// (wat van de bank gaat, de inleg en wat overblijft) vormen samen het inkomen.
+    func testFlowFiguresAddUpAndMatchTheEngine() {
+        var checked = 0
+        for seed in 1...120 {
+            let sc = ledgerScenario(seed: UInt64(seed))
+            for month in sc.months {
+                let f = BankFlowFigures(sc.data, month: month)
+                let o = sc.data.expenseOverview(in: month)
+                XCTAssertEqual(f.leftAfterTransfers, o.leftAfterTransfers, "seed \(seed) \(month.key)")
+                XCTAssertEqual(CentsMath.int(f.leftAfterTransfers), CentsMath.int(sc.data.remaining(in: month)),
+                               "gelijk aan remaining(in:): seed \(seed) \(month.key)")
+                let bank = CentsMath.int(f.fixedFromBank) + CentsMath.int(f.variableFromBank)
+                XCTAssertEqual(bank, CentsMath.int(f.fixed) + CentsMath.int(f.variable) - CentsMath.int(f.fromPots),
+                               "wat van de bank gaat: seed \(seed) \(month.key)")
+                let parts = bank + CentsMath.int(f.toPots) + CentsMath.int(f.toInvestments) + CentsMath.int(f.leftAfterTransfers)
+                XCTAssertEqual(parts, CentsMath.int(f.income), "de stukken vormen het inkomen: seed \(seed) \(month.key)")
+                XCTAssertEqual(CentsMath.int(f.leftAfterExpenses), CentsMath.int(f.income) - bank, "seed \(seed) \(month.key)")
+                checked += 1
+            }
+        }
+        XCTAssertGreaterThan(checked, 500)
+    }
+
+    func testFlowFiguresOfAnEmptyMonthAreEmpty() {
+        let empty = FinanceData(startMonth: oct2026)
+        XCTAssertTrue(BankFlowFigures(empty, month: oct2026).isEmpty)
+        XCTAssertTrue(BankFlowFigures(empty, month: sep2026).isEmpty, "een maand voor de start")
+        let (d, _) = sampleData()
+        let f = BankFlowFigures(d, month: sep2026)
+        XCTAssertFalse(f.isEmpty)
+        XCTAssertEqual(f.income, 3_100)
+        XCTAssertEqual(f.fixed, 1_000)
+        XCTAssertEqual(f.toPots, 200)
+        XCTAssertEqual(f.fixedFromBank, 1_000)
+        XCTAssertEqual(f.variableFromBank, 0)
+        XCTAssertEqual(f.leftAfterTransfers, 1_900)
+    }
+
+    func testHistoryListsSnapshotsAndEntriesNewestFirst() {
+        var (d, _) = sampleData()
+        d.addBankEntry(amount: 250, note: "Cadeau", date: engTime(sep2026, 10, hour: 9))
+        d.addBankEntry(amount: -80, note: "Pinnen", date: engTime(oct2026, 3, hour: 9))
+        d.addBankSnapshot(balance: 2_000, note: "Gemeten", date: engTime(sep2026, 20, hour: 9))
+        let items = BankHistoryItem.items(from: d)
+        XCTAssertEqual(items.count, 4, "het saldo van het begin, een storting, een opname en een saldo")
+        XCTAssertEqual(items.map { $0.date }, items.map { $0.date }.sorted(by: >), "de nieuwste eerst")
+        XCTAssertEqual(Set(items.map { $0.id }).count, items.count)
+        XCTAssertEqual(items.first?.title, "Geld eraf")
+        XCTAssertEqual(items.first?.amount, -80)
+        XCTAssertEqual(items.first?.isSnapshot, false)
+        XCTAssertEqual(items.filter { $0.isSnapshot }.map { $0.title }, ["Saldo ingevuld", "Saldo ingevuld"])
+        XCTAssertEqual(items.first { $0.detail == "Gemeten" }?.amount, 2_000)
+        XCTAssertEqual(items.first { $0.detail == "Cadeau" }?.title, "Geld erbij")
+        XCTAssertTrue(BankHistoryItem.items(from: FinanceData(startMonth: oct2026)).isEmpty)
+    }
+
+    func testRemovalWarningOnlyForTransfers() {
+        var (d, _) = sampleData()
+        let pot = d.pots[0]
+        d.addBankEntry(amount: 250, note: "Cadeau", date: engTime(sep2026, 10, hour: 9))
+        d.transferBankToPot(potID: pot.id, amount: 120, date: engTime(sep2026, 12, hour: 9))
+        let deposit = d.bankEntries.first { $0.kind == .deposit }
+        let transfer = d.bankEntries.first { $0.kind == .toPot }
+        XCTAssertNil(BankHistoryItem.removalWarning(forBankEntry: deposit?.id ?? UUID(), in: d), "een losse storting verdwijnt zonder vraag")
+        let warning = BankHistoryItem.removalWarning(forBankEntry: transfer?.id ?? UUID(), in: d)
+        XCTAssertTrue(warning?.contains("bijbehorende boeking") ?? false, warning ?? "nil")
+        XCTAssertEqual(warning, d.pairedEntries(ofBank: transfer?.id ?? UUID()).warning, "de tekst komt van de rekenmotor")
+        XCTAssertNil(BankHistoryItem.removalWarning(forBankEntry: UUID(), in: d), "onbekend id")
+
+        // Een oude overboeking zonder pairID: alleen de bankkant verdwijnt.
+        var legacy = d
+        let old = BankEntry(date: engTime(sep2026, 15, hour: 9), amount: -30, kind: .toPot, note: "Oud", potID: pot.id)
+        legacy.bankEntries.append(old)
+        let legacyWarning = BankHistoryItem.removalWarning(forBankEntry: old.id, in: legacy)
+        XCTAssertTrue(legacyWarning?.hasPrefix("Dit verwijdert alleen de boeking op de bankrekening") ?? false, legacyWarning ?? "nil")
+    }
+
+    func testUpcomingDaysWindowIsFourteenDaysFromToday() {
+        let (d, today) = sampleData()
+        let window = UpcomingDaysWindow.range(today: today)
+        XCTAssertEqual(window.from, cal.startOfDay(for: today))
+        XCTAssertEqual(cal.dateComponents([.month, .day], from: window.to), DateComponents(month: 10, day: 27), "14 dagen, vandaag meegerekend")
+        let book = LedgerBook(d, today: today)
+        let busy = UpcomingDaysWindow.busyDays(in: book, today: today)
+        XCTAssertFalse(busy.isEmpty)
+        XCTAssertLessThanOrEqual(busy.count, UpcomingDaysWindow.length)
+        XCTAssertTrue(busy.allSatisfy { !$0.events.isEmpty })
+        XCTAssertEqual(busy.map { $0.day }, book.days(from: window.from, to: window.to).filter { !$0.events.isEmpty }.map { $0.day })
+        XCTAssertTrue(busy.allSatisfy { $0.date >= cal.startOfDay(for: window.from) && cal.startOfDay(for: $0.date) <= window.to })
+        // Over de maandwisseling heen.
+        let late = engTime(oct2026, 28, hour: 9)
+        let lateWindow = UpcomingDaysWindow.range(today: late)
+        XCTAssertEqual(cal.dateComponents([.month, .day], from: lateWindow.to), DateComponents(month: 11, day: 10))
+    }
+
+    func testLowPointNoteForAMonthUsesTheLedger() {
+        var (d, today) = sampleData()
+        let book = LedgerBook(d, today: today)
+        // Zonder iets bijzonders is er geen melding in een maand die voorbij is.
+        XCTAssertNil(BankLowPointNote.forMonth(sep2026, in: d, current: oct2026, today: today, book: book))
+        // Zonder enig saldo valt er niets te rekenen.
+        let empty = FinanceData(startMonth: oct2026)
+        XCTAssertNil(BankLowPointNote.forMonth(oct2026, in: empty, current: oct2026, today: today,
+                                               book: LedgerBook(empty, today: today)))
+        // Een grote opname later deze maand: het saldo komt onder nul.
+        d.addBankEntry(amount: -50_000, note: "Auto", date: engTime(oct2026, 20, hour: 9))
+        let dipBook = LedgerBook(d, today: today)
+        let note = BankLowPointNote.forMonth(oct2026, in: d, current: oct2026, today: today, book: dipBook)
+        XCTAssertEqual(note?.severe, true)
+        XCTAssertTrue(note?.text.hasPrefix("Let op: ") ?? false, note?.text ?? "nil")
+        XCTAssertTrue(note?.text.contains("onder nul") ?? false, note?.text ?? "nil")
+        // Hij is de melding van het laagste punt van de dagboekhouding.
+        let window = BankLowPointWindow.range(for: oct2026, current: oct2026, today: today)
+        let low = CashflowLowPoint.lowest(in: dipBook.days(from: window.from, to: window.to))
+        XCTAssertEqual(note, BankLowPointNote.make(low: low!, buffer: d.bankBuffer(current: oct2026),
+                                                   balanceNow: d.bankBalanceNowIfKnown(current: oct2026, today: today), today: today))
+    }
+
+    func testEventActionsLeadToTheRightPlace() {
+        let (d, today) = sampleData()
+        let book = LedgerBook(d, today: today)
+        let ledger = book.ledger(oct2026)
+        let lookup = CashflowLineLookup(plan: d.plan(for: oct2026))
+        var seen: Set<String> = []
+        for day in ledger.days {
+            for event in day.events {
+                switch CashflowAction.make(for: event, lookup: lookup, month: oct2026) {
+                case .open(let destination):
+                    switch event.kind {
+                    case .salary: XCTAssertEqual(destination, .income)
+                    case .toPot, .interest: XCTAssertEqual(destination, .pot(event.potID ?? UUID()))
+                    case .toHolding: XCTAssertEqual(destination, .holding(event.holdingID ?? UUID()))
+                    default: XCTFail("onverwachte bestemming voor \(event.kind)")
+                    }
+                    seen.insert("open-\(event.kind.rawValue)")
+                case .edit(let target):
+                    XCTAssertEqual(target.line.id, event.lineID)
+                    XCTAssertEqual(target.month, oct2026)
+                    XCTAssertEqual(target.kind == .income, event.kind == .income)
+                    seen.insert("edit-\(event.kind.rawValue)")
+                case .none:
+                    seen.insert("none-\(event.kind.rawValue)")
+                }
+            }
+        }
+        XCTAssertTrue(seen.contains("open-salary"), seen.sorted().joined(separator: ","))
+        XCTAssertTrue(seen.contains("open-toPot"), seen.sorted().joined(separator: ","))
+        XCTAssertTrue(seen.contains("edit-expense"), seen.sorted().joined(separator: ","))
+        XCTAssertTrue(seen.contains("edit-income"), seen.sorted().joined(separator: ","))
     }
 
     func testLineLookupSurvivesDuplicateIDs() {

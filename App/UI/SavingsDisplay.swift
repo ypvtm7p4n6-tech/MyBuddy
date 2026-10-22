@@ -1,6 +1,7 @@
 import Foundation
 // Foundation-only: geen SwiftUI. In de app zit alles in één module. In het testpakket (CoreTests/Tests/MyBuddyCoreTests) staat
-// dit bestand als symlink tussen de tests en leest het de rekenmotor via `@testable import`; de tests staan in SavingsDisplayTests.swift.
+// dit bestand als symlink tussen de tests en leest het de rekenmotor via `@testable import`; de tests staan in
+// LineSaveTests.swift, SalaryScheduleEditTests.swift en AllocationEditTests.swift.
 #if canImport(MyBuddyCore)
 @testable import MyBuddyCore
 #endif
@@ -12,7 +13,7 @@ enum SalaryScheduleText {
     /// "Elke 4 weken, volgende op 23 oktober": de eerste letter een hoofdletter.
     static func capitalized(_ text: String) -> String {
         guard let first = text.first else { return text }
-        return String(first).uppercased() + String(text.dropFirst())
+        return String(first).capitalized + String(text.dropFirst())
     }
 
     /// Het aantal weken van een cyclus zoals het in een rekensom staat: "4 weken", "1 week", "10 ÷ 7 weken" (bij dagen).
@@ -293,5 +294,61 @@ enum AllocationEdit {
             data.setContributionPercent(id, percent: rule.percent, basis: rule.basis, current: current)
         }
         if month > current { data.clearAllocationOverride(id, in: month) }
+    }
+}
+
+// MARK: - Verdelen: teksten
+
+/// De teksten op de pagina Verdelen (Maand, Verdelen). Alleen tekst: dagen, bedragen en regels komen uit de rekenmotor.
+enum DistributeText {
+    /// Waar de overschrijfdag van een pot of belegging vandaan komt: "dag van deze maand", "eigen dag", "salarisdag" of, bij
+    /// een salaris om de zoveel weken of dagen, "eerste salaris van de maand".
+    static func transferSource(_ data: FinanceData, id: UUID, month: YearMonth) -> String {
+        if data.months[month.key]?.transferDay != nil { return "dag van deze maand" }
+        let ownDay = data.pot(id)?.transferDay ?? data.holdings.first(where: { $0.id == id })?.transferDay
+        if ownDay != nil { return "eigen dag" }
+        return data.salary.isMonthly ? "salarisdag" : "eerste salaris van de maand"
+    }
+
+    /// "Wordt overgeschreven op de 25e · salarisdag". Staat er niets voor deze maand, dan "Overschrijfdag: de 25e · salarisdag".
+    /// Per kalenderdag: de overschrijfdag zelf is al gebeurd (vanaf het begin van die dag), pas een latere dag is gepland.
+    static func transferCaption(_ data: FinanceData, id: UUID, month: YearMonth, today: Date) -> String {
+        let day = data.transferDay(for: id, in: month)
+        let source = transferSource(data, id: id, month: month)
+        if data.allocationCents(id, in: month) == 0 {
+            return "Overschrijfdag: \(DayText.ordinal(day)) · \(source)"
+        }
+        let planned = DayMath.isPlanned(month.date(day: day), asOf: today)
+        let verb = planned ? "Wordt overgeschreven op" : "Overgeschreven op"
+        return "\(verb) \(DayText.ordinal(day)) · \(source)"
+    }
+
+    /// Wat de overschrijfdag van de maand betekent: de gekozen dag, of de standaard (eigen dag per pot of belegging, anders de
+    /// salarisdag).
+    static func transferExplanation(_ data: FinanceData, month: YearMonth) -> String {
+        if let chosen = data.months[month.key]?.transferDay {
+            let day = min(YearMonth.clampedDay(chosen), month.dayCount)
+            return "Alles wat je deze maand verdeelt gaat op \(DayText.ordinal(day)) over."
+        }
+        let salaryDay = DayText.ordinal(data.salaryDay(in: month))
+        let phrase = data.salary.isMonthly ? "je salarisdag (\(salaryDay))" : "de eerste salarisdag van de maand (\(salaryDay))"
+        return "Standaard geldt per pot of belegging de eigen overschrijfdag, en anders \(phrase)."
+    }
+
+    /// Korte samenvatting voor de kop van de uitklapper Overschrijfdag: "Standaard" of "Deze maand: de 12e".
+    static func transferSummary(_ data: FinanceData, month: YearMonth) -> String {
+        guard let chosen = data.months[month.key]?.transferDay else { return "Standaard" }
+        return "Deze maand: \(DayText.ordinal(min(YearMonth.clampedDay(chosen), month.dayCount)))"
+    }
+
+    /// Waarover de percentages van deze maand rekenen, en wat ze samen vragen. nil als niets een percentage heeft.
+    static func percentExplanation(_ data: FinanceData, month: YearMonth) -> String? {
+        let ids = data.pots.map { $0.id } + data.holdings.map { $0.id }
+        guard ids.contains(where: { data.allocationRule($0, in: month).isPercent }) else { return nil }
+        let bases = data.incomeBases(in: month)
+        let salary = Fmt.euro(CentsMath.value(bases.cents(for: .salary)))
+        let all = Fmt.euro(CentsMath.value(bases.cents(for: .allIncome)))
+        let total = Fmt.percent(data.percentTotal(in: month) / 100, digits: 2)
+        return "Een percentage rekent over het inkomen van \(Fmt.month(month)): \(salary) salaris, \(all) met extra inkomsten. Je percentages samen: \(total). \"Rest over potten verdelen\" in het menu maakt van een percentage een vast bedrag."
     }
 }

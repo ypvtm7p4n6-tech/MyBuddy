@@ -201,16 +201,20 @@ struct PotsSummarySection: View {
                         StatTile(title: "Rente dit jaar", value: PotFormat.interest(received.thisYear), color: Theme.positive)
                     }
                 }
-                goalProgress(goal: d.totalGoal(), towardGoals: d.savedTowardGoals(current: now, today: today))
+                PotsGoalProgress(goal: d.totalGoal(), towardGoals: d.savedTowardGoals(current: now, today: today))
             }
         } header: {
             SectionHeader("Samenvatting", domain: .saving)
         }
     }
+}
 
-    /// De voortgang naar het totale doel van alle potten met een doel. Zonder doel staat er niets.
-    @ViewBuilder
-    private func goalProgress(goal: Double, towardGoals: Double) -> some View {
+/// De voortgang naar het totale doel van alle potten met een doel, als balk met een regel eronder. Zonder doel staat er niets.
+struct PotsGoalProgress: View {
+    let goal: Double
+    let towardGoals: Double
+
+    var body: some View {
         if goal > 0 {
             let fraction = towardGoals / goal
             VStack(alignment: .leading, spacing: 6) {

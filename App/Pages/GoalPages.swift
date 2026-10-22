@@ -482,7 +482,7 @@ struct GoalDetailPage: View {
                     Label("Bij je huidige inleg haal je dit over \(Fmt.duration(months: months)).", systemImage: "flag.checkered")
                         .font(.subheadline.weight(.semibold))
                     if let month = a.reachMonth {
-                        PlanningFootnote("Dat is in \(Fmt.month(month))" + (a.reachAge.map { ", als je ongeveer \(SafeInt.clamped($0.rounded(.down), to: 0...150)) jaar bent" } ?? "") + ".")
+                        PlanningFootnote(reachSentence(month: month, age: a.reachAge))
                     }
                 }
             }
@@ -492,6 +492,16 @@ struct GoalDetailPage: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.negative)
         }
+    }
+
+    /// "Dat is in oktober 2040, als je ongeveer 61 jaar bent."
+    private func reachSentence(month: YearMonth, age: Double?) -> String {
+        var text = "Dat is in \(Fmt.month(month))"
+        if let age {
+            let years = SafeInt.clamped(age.rounded(.down), to: 0...150)
+            text += ", als je ongeveer \(years) jaar bent"
+        }
+        return text + "."
     }
 
     @ViewBuilder

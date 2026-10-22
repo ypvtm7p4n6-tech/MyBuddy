@@ -186,6 +186,50 @@ struct MoneyLineRow: View {
     }
 }
 
+// MARK: - Teksten bij een sectie met regels
+
+/// Titels, symbolen en uitleg van een sectie met regels, gedeeld door `MoneyLinesSection` en `MoneyLinesBlock`.
+enum MoneyLinesText {
+    static func title(kind: FinanceData.LineKind, expenseKind: ExpenseKind?) -> String {
+        if kind == .income { return "Overige inkomsten" }
+        switch expenseKind {
+        case .fixed: return "Vaste uitgaven"
+        case .variable: return "Variabele uitgaven"
+        case nil: return "Uitgaven"
+        }
+    }
+
+    static func symbol(kind: FinanceData.LineKind, expenseKind: ExpenseKind?) -> String {
+        if kind == .income { return "plus.circle" }
+        return expenseKind == .variable ? "cart" : "lock"
+    }
+
+    static func emptyTitle(kind: FinanceData.LineKind, expenseKind: ExpenseKind?) -> String {
+        if kind == .income { return "Geen overige inkomsten" }
+        switch expenseKind {
+        case .fixed: return "Nog geen vaste uitgaven"
+        case .variable: return "Nog geen variabele uitgaven"
+        case nil: return "Nog geen uitgaven"
+        }
+    }
+
+    static func emptyText(kind: FinanceData.LineKind, expenseKind: ExpenseKind?) -> String {
+        if kind == .income { return "Denk aan zorgtoeslag, huurtoeslag of een bijverdienste." }
+        switch expenseKind {
+        case .fixed: return "Denk aan huur, verzekeringen en abonnementen."
+        case .variable: return "Denk aan boodschappen, uit eten en kleding."
+        case nil: return "Voeg een uitgave toe."
+        }
+    }
+
+    static func recurringHint(month: YearMonth, current: YearMonth) -> String {
+        if month > current {
+            return "Terugkerende regels staan er vanzelf in. Pas je er een aan, dan kies je of dat alleen voor \(Fmt.month(month)) geldt of ook voor de maanden erna."
+        }
+        return "Een terugkerende regel komt elke maand terug op zijn eigen dag, ook in maanden die nog komen."
+    }
+}
+
 // MARK: - Een sectie met regels
 
 /// De regels van één soort in één maand als sectie van een `List`: rijen, het totaal en een lege staat met een knop. Bij
@@ -200,45 +244,6 @@ struct MoneyLinesSection: View {
 
     @Environment(AppStore.self) private var store
 
-    private var title: String {
-        if kind == .income { return "Overige inkomsten" }
-        switch expenseKind {
-        case .fixed: return "Vaste uitgaven"
-        case .variable: return "Variabele uitgaven"
-        case nil: return "Uitgaven"
-        }
-    }
-
-    private var symbol: String {
-        if kind == .income { return "plus.circle" }
-        return expenseKind == .variable ? "cart" : "lock"
-    }
-
-    private var emptyTitle: String {
-        if kind == .income { return "Geen overige inkomsten" }
-        switch expenseKind {
-        case .fixed: return "Nog geen vaste uitgaven"
-        case .variable: return "Nog geen variabele uitgaven"
-        case nil: return "Nog geen uitgaven"
-        }
-    }
-
-    private var emptyText: String {
-        if kind == .income { return "Denk aan zorgtoeslag, huurtoeslag of een bijverdienste." }
-        switch expenseKind {
-        case .fixed: return "Denk aan huur, verzekeringen en abonnementen."
-        case .variable: return "Denk aan boodschappen, uit eten en kleding."
-        case nil: return "Voeg een uitgave toe."
-        }
-    }
-
-    private var recurringHint: String {
-        if month > store.now {
-            return "Terugkerende regels staan er vanzelf in. Pas je er een aan, dan kies je of dat alleen voor \(Fmt.month(month)) geldt of ook voor de maanden erna."
-        }
-        return "Een terugkerende regel komt elke maand terug op zijn eigen dag, ook in maanden die nog komen."
-    }
-
     var body: some View {
         let d = store.data
         let plan = d.plan(for: month)
@@ -251,17 +256,21 @@ struct MoneyLinesSection: View {
             if beforeStart {
                 MonthExplanation(text: "Maanden vóór je startmaand (\(Fmt.month(d.startMonth))) tellen niet mee: daar vul je niets in.")
             } else if lines.isEmpty {
-                EmptyHint(symbol: symbol, title: emptyTitle, message: emptyText, actionTitle: "Toevoegen", action: onAdd)
+                EmptyHint(symbol: MoneyLinesText.symbol(kind: kind, expenseKind: expenseKind),
+                          title: MoneyLinesText.emptyTitle(kind: kind, expenseKind: expenseKind),
+                          message: MoneyLinesText.emptyText(kind: kind, expenseKind: expenseKind),
+                          actionTitle: "Toevoegen", action: onAdd)
             }
             ForEach(lines) { line in
                 MoneyLineRow(line: line, kind: kind, month: month, onEdit: { onEdit(line) })
             }
             totalRow(d, lines: lines)
             if lines.contains(where: { $0.isRecurring }) {
-                MonthExplanation(text: recurringHint)
+                MonthExplanation(text: MoneyLinesText.recurringHint(month: month, current: store.now))
             }
         } header: {
-            SectionHeader(title, symbol: symbol, domain: .money)
+            SectionHeader(MoneyLinesText.title(kind: kind, expenseKind: expenseKind),
+                          symbol: MoneyLinesText.symbol(kind: kind, expenseKind: expenseKind), domain: .money)
         }
     }
 

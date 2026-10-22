@@ -1,7 +1,44 @@
 import SwiftUI
-import Charts
 
-/// Rekenmachine: wat is mijn belegging over x dagen, weken, maanden of jaren waard?
+// MARK: - De kaart Toekomstschatting op het tabblad Plannen
+
+/// Wat je beleggingen over 5, 10 en 20 jaar waard zijn, met je huidige inleg en rendement. Een tik opent de pagina.
+struct ProjectionSummaryCard: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let d = store.data
+        let now = store.now
+        let start = d.portfolioValue(current: now)
+        // Een schatting: wat er per maand wordt ingelegd, en bij een salaris om de zoveel weken of dagen een gemiddelde maand
+        // (`monthlyInvestment`, zie SalarySchedule.swift). Zo rekent ook de toekomstschatting zelf.
+        let monthly = d.monthlyInvestment(current: now)
+        let rate = d.weightedNetReturn(current: now)
+        let inflation = d.settings.inflation
+        LinkCard(title: "Toekomstschatting", symbol: "calendar.badge.clock", domain: .tools,
+                 subtitle: "Wat is het over x jaar?", destination: .projection) {
+            if start == 0 && monthly == 0 {
+                PlanningFootnote("Vul beleggingen in en reken uit wat ze over dagen, maanden of jaren waard zijn.")
+            } else {
+                VStack(alignment: .leading, spacing: Theme.rowSpacing) {
+                    FigureRow {
+                        ForEach([5, 10, 20], id: \.self) { years in
+                            StatTile(title: "Over \(years) jaar",
+                                     value: Fmt.euro(Growth.projection(start: start, monthly: monthly, annualReturn: rate,
+                                                                       months: Double(years * 12), inflation: inflation).total))
+                        }
+                    }
+                    PlanningFootnote("Met \(d.salary.isMonthly ? "" : "gemiddeld ")\(Fmt.euro(monthly)) per maand en \(Fmt.percent(rate)) rendement per jaar.")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - De pagina
+
+/// Rekenmachine: wat is mijn belegging over x dagen, weken, maanden of jaren waard? De uitkomst en het verloop staan bovenaan,
+/// de looptijd is altijd zichtbaar en de uitgangspunten zitten in een uitklapper.
 struct ProjectionPage: View {
     @Environment(AppStore.self) private var store
 
@@ -13,13 +50,7 @@ struct ProjectionPage: View {
     @State private var inflationAdjusted = false
     @State private var target = 0.0
     @State private var loaded = false
-
-    private struct SeriesPoint: Identifiable {
-        let id: String
-        let t: Double
-        let value: Double
-        let scenario: String
-    }
+    @State private var assumptionsOpen = false
 
     private struct ScenarioResult: Identifiable {
         let scenario: ReturnScenario
@@ -41,16 +72,16 @@ struct ProjectionPage: View {
                 })
     }
 
-    /// "Gebruik mijn beleggingen" start bij je beleggingen aan het EIND van deze maand (de schatting rekent per maand
+    /// "Gebruik je beleggingen" start bij je beleggingen aan het EIND van deze maand (de schatting rekent per maand
     /// verder, vanaf volgende maand). Staat er nog een inleg van deze maand te wachten, dan is dat meer dan wat je vandaag
-    /// hebt: zeg dat erbij, zodat het getal niet tegenspreekt wat Home en Beleggingen tonen.
+    /// hebt: zeg dat erbij, zodat het getal niet tegenspreekt wat het Overzicht en Beleggingen tonen.
     private var startNote: String? {
         let d = store.data
         let now = store.now
         let monthEnd = CentsMath.int(d.portfolioValue(current: now))
         let today = CentsMath.int(d.portfolioValue(current: now, today: store.today))
         guard monthEnd > today else { return nil }
-        return "Gebruik mijn beleggingen telt de inleg van deze maand die nog moet worden overgeschreven al mee (\(Fmt.euro(CentsMath.value(monthEnd - today)))). Vandaag heb je \(Fmt.euro(CentsMath.value(today)))."
+        return "Gebruik je beleggingen telt de inleg van deze maand die nog moet worden overgeschreven al mee (\(Fmt.euro(CentsMath.value(monthEnd - today)))). Vandaag heb je \(Fmt.euro(CentsMath.value(today)))."
     }
 
     var body: some View {
@@ -63,85 +94,16 @@ struct ProjectionPage: View {
                                                      months: months, inflation: inflation))
         }
         let expected = results[1].result
-        let points = chartPoints(months: months, inflation: inflation)
 
         PageScaffold(title: "Toekomstschatting") {
             VStack(spacing: Theme.pageSpacing) {
-                GlassBlock(title: "Hoe ver kijk je vooruit?", symbol: "calendar.badge.clock") {
-                    NumberRow(title: "Over", value: horizonBinding, unit: .plain(unit.title), maxDigits: 1)
-                    Picker("Eenheid", selection: $unit) {
-                        ForEach(HorizonUnit.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    Text("Je kunt maximaal 100 jaar vooruit kijken.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    ChipGrid(minimumWidth: 90) {
-                        ForEach([1, 5, 10, 20, 30], id: \.self) { years in
-                            ChipButton(title: "\(years) jaar") {
-                                unit = .years
-                                horizon = Double(years)
-                            }
-                        }
-                    }
-                }
-
-                GlassBlock(title: "Uitgangspunten", symbol: "slider.horizontal.3") {
-                    NumberRow(title: "Startbedrag", value: $start)
-                    NumberRow(title: "Inleg per maand", value: $monthly)
-                    // Bij een salaris om de zoveel weken of dagen is de voorgestelde inleg een gemiddelde maand.
-                    if !store.data.salary.isMonthly {
-                        Text("De voorgestelde inleg is een gemiddelde maand: je salaris komt niet elke maand even vaak binnen.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    NumberRow(title: "Rendement per jaar", value: $annualReturn, unit: .percent, maxDigits: 2)
-                    Toggle("In koopkracht van vandaag", isOn: $inflationAdjusted)
-                    if inflationAdjusted {
-                        Text("Bedragen zijn gecorrigeerd voor \(Fmt.percent(inflation)) inflatie per jaar. Je past dat aan in Instellingen.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let note = startNote {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    ChipButton(title: "Gebruik mijn beleggingen", symbol: "arrow.counterclockwise") { resetToPortfolio() }
-                }
-
-                GlassBlock(title: "Verwachte waarde", symbol: "sparkles",
-                           subtitle: "Over \(Fmt.input(horizon, maxDigits: 1)) \(unit.title)", tint: Theme.olive.opacity(0.3)) {
-                    BigAmount(value: inflationAdjusted ? expected.real : expected.total)
-                    HStack(spacing: 8) {
-                        ForEach(results) { item in
-                            StatTile(title: item.scenario.title,
-                                     value: Fmt.euro(inflationAdjusted ? item.result.real : item.result.total),
-                                     caption: "\(Fmt.percent(annualReturn + item.scenario.delta)) p.j.")
-                        }
-                    }
-                    breakdown(expected)
-                }
-
-                GlassBlock(title: "Verloop", symbol: "chart.xyaxis.line") {
-                    Chart(points) { p in
-                        LineMark(x: .value("Tijd", p.t), y: .value("Waarde", p.value))
-                            .foregroundStyle(by: .value("Scenario", p.scenario))
-                            .interpolationMethod(.monotone)
-                    }
-                    .chartForegroundStyleScale(domain: ReturnScenario.allCases.map { $0.title },
-                                               range: [Theme.flowExpenses, Theme.accent, Theme.flowInvested])
-                    .chartXAxisLabel(unit.title)
-                    .chartAxes(shown: true)
-                    .frame(height: 210)
-                }
-
-                GlassBlock(title: "Streefbedrag", symbol: "target") {
-                    NumberRow(title: "Ik wil graag", value: $target)
-                    targetResult(months: months)
-                }
+                outcomeCard(results, expected: expected)
+                chartCard(months: months, inflation: inflation)
+                horizonCard
+                assumptionsCard(inflation: inflation)
+                targetCard(months: months)
             }
+            .frame(maxWidth: Theme.readableWidth)
         }
         .onAppear {
             guard !loaded else { return }
@@ -154,22 +116,141 @@ struct ProjectionPage: View {
         }
     }
 
-    // MARK: Onderdelen
+    // MARK: Uitkomst
 
-    @ViewBuilder
+    private func outcomeCard(_ results: [ScenarioResult], expected: ProjectionResult) -> some View {
+        Card(title: "Uitkomst", symbol: "sparkles", domain: .tools,
+             subtitle: "Over \(Fmt.input(horizon, maxDigits: 1)) \(unit.title)") {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Verwachte waarde")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                BigAmount(value: inflationAdjusted ? expected.real : expected.total)
+            }
+            .accessibilityElement(children: .combine)
+            FigureRow {
+                ForEach(results) { item in
+                    StatTile(title: item.scenario.title,
+                             value: Fmt.euro(inflationAdjusted ? item.result.real : item.result.total),
+                             caption: "\(Fmt.percent(annualReturn + item.scenario.delta)) per jaar")
+                }
+            }
+            breakdown(expected)
+        }
+    }
+
+    /// Hoeveel van de uitkomst je zelf inlegt en hoeveel het rendement oplevert.
     private func breakdown(_ r: ProjectionResult) -> some View {
         let total = max(r.total, 0.01)
-        VStack(alignment: .leading, spacing: 6) {
-            ProgressBar(progress: r.contributed / total, tint: Theme.flowSaved, height: 10)
-            HStack {
-                Label("Ingelegd \(Fmt.euro(r.contributed))", systemImage: "circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(Theme.flowSaved)
-                Spacer()
-                Label("Rendement \(Fmt.euro(r.growth))", systemImage: "circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        return VStack(alignment: .leading, spacing: 6) {
+            ProgressMeter(value: r.contributed / total, tint: Theme.chartSaved, style: .bar(height: 10),
+                          label: "Ingelegd tegenover rendement",
+                          valueText: "Ingelegd \(Fmt.euro(r.contributed)), rendement \(Fmt.euro(r.growth))")
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    Label("Ingelegd \(Fmt.euro(r.contributed))", systemImage: "circle.fill")
+                        .foregroundStyle(Theme.chartSaved)
+                    Spacer()
+                    Label("Rendement \(Fmt.euro(r.growth))", systemImage: "circle")
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Ingelegd \(Fmt.euro(r.contributed))", systemImage: "circle.fill")
+                        .foregroundStyle(Theme.chartSaved)
+                    Label("Rendement \(Fmt.euro(r.growth))", systemImage: "circle")
+                        .foregroundStyle(Theme.textSecondary)
+                }
             }
+            .font(.footnote)
+        }
+    }
+
+    // MARK: Verloop
+
+    private func chartCard(months: Double, inflation: Double) -> some View {
+        Card(title: "Verloop", symbol: "chart.xyaxis.line", domain: .tools) {
+            TrendChart(model: ProjectionTrend.model(start: start, monthly: monthly, annualReturn: annualReturn,
+                                                    months: months, unit: unit, target: target,
+                                                    inflationAdjusted: inflationAdjusted, inflation: inflation),
+                       size: .tall)
+        }
+    }
+
+    // MARK: Looptijd
+
+    /// "Hoe ver kijk je vooruit?" is altijd zichtbaar: het veld, de eenheid en de snelkeuzes.
+    private var horizonCard: some View {
+        Card(title: "Looptijd", symbol: "calendar.badge.clock", domain: .tools, subtitle: "Hoe ver kijk je vooruit?") {
+            NumberRow(title: "Over", value: horizonBinding, unit: .plain(unit.title), maxDigits: 1)
+            Picker("Eenheid", selection: $unit) {
+                ForEach(HorizonUnit.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            PlanningFootnote("Je kunt maximaal 100 jaar vooruit kijken.")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 8)], spacing: 8) {
+                ForEach([1, 5, 10, 20, 30], id: \.self) { years in
+                    ActionButton(title: "\(years) jaar") {
+                        unit = .years
+                        horizon = Double(years)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Uitgangspunten (uitklapper)
+
+    private func assumptionsCard(inflation: Double) -> some View {
+        Card {
+            DisclosureGroup(isExpanded: $assumptionsOpen) {
+                assumptionFields(inflation: inflation)
+                    .padding(.top, 8)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Uitgangspunten", systemImage: "slider.horizontal.3")
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("Start \(Fmt.euro(start)), inleg \(Fmt.euro(monthly)) per maand, \(Fmt.percent(annualReturn)) rendement per jaar")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+    }
+
+    private func assumptionFields(inflation: Double) -> some View {
+        VStack(alignment: .leading, spacing: Theme.rowSpacing) {
+            NumberRow(title: "Startbedrag", value: $start)
+            NumberRow(title: "Inleg per maand", value: $monthly)
+            // Bij een salaris om de zoveel weken of dagen is de voorgestelde inleg een gemiddelde maand.
+            if !store.data.salary.isMonthly {
+                PlanningFootnote("De voorgestelde inleg is een gemiddelde maand: je salaris komt niet elke maand even vaak binnen.")
+            }
+            NumberRow(title: "Rendement per jaar", value: $annualReturn, unit: .percent, maxDigits: 2)
+            Toggle("In koopkracht van vandaag", isOn: $inflationAdjusted)
+                .frame(minHeight: Theme.minTapTarget)
+            assumptionNotes(inflation: inflation)
+            ActionButton(title: "Gebruik je beleggingen", symbol: "arrow.counterclockwise") { resetToPortfolio() }
+        }
+    }
+
+    @ViewBuilder
+    private func assumptionNotes(inflation: Double) -> some View {
+        if inflationAdjusted {
+            PlanningFootnote("Bedragen zijn gecorrigeerd voor \(Fmt.percent(inflation)) inflatie per jaar. Je past dat aan in Instellingen.")
+        }
+        if let note = startNote {
+            PlanningFootnote(note)
+        }
+    }
+
+    // MARK: Doelbedrag
+
+    private func targetCard(months: Double) -> some View {
+        Card(title: "Doelbedrag", symbol: "target", domain: .tools, subtitle: "Hoe lang duurt het, en wat leg je in?") {
+            NumberRow(title: "Bedrag dat je wilt halen", value: $target)
+            targetResult(months: months)
         }
     }
 
@@ -194,32 +275,14 @@ struct ProjectionPage: View {
                 Label("Om het binnen \(Fmt.input(horizon, maxDigits: 1)) \(unit.title) te halen, leg je \(Fmt.euro(required)) per maand in.",
                       systemImage: "calendar")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
             }
         } else {
-            Text("Vul een bedrag in om te zien hoe lang het duurt en wat je per maand moet inleggen.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            PlanningFootnote("Vul een bedrag in om te zien hoe lang het duurt en wat je per maand moet inleggen.")
         }
     }
 
     // MARK: Berekening
-
-    private func chartPoints(months: Double, inflation: Double) -> [SeriesPoint] {
-        var points: [SeriesPoint] = []
-        for scenario in ReturnScenario.allCases {
-            let curve = Growth.curve(start: start, monthly: monthly, annualReturn: annualReturn + scenario.delta,
-                                     totalMonths: max(months, 0.1), unit: unit, steps: 36)
-            for (i, p) in curve.enumerated() {
-                var value = p.value
-                if inflationAdjusted {
-                    value = Growth.deflate(value, years: unit.months(p.t) / 12, inflation: inflation)
-                }
-                points.append(SeriesPoint(id: "\(scenario.rawValue)-\(i)", t: p.t, value: value, scenario: scenario.title))
-            }
-        }
-        return points
-    }
 
     private func resetToPortfolio() {
         let d = store.data

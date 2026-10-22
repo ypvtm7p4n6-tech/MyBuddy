@@ -7,13 +7,13 @@ import SwiftUI
 // MARK: - Kleuren en symbolen
 
 extension PurchaseVerdict {
-    /// Kleur van de uitspraak "kan het?".
+    /// Kleur van de uitspraak "kan het?". De titel en het symbool dragen de betekenis, de kleur versterkt hem.
     var tint: Color {
         switch self {
         case .easy: return Theme.positive
         case .tight: return Theme.warning
         case .notNow: return Theme.negative
-        case .unknown: return Color.secondary
+        case .unknown: return Theme.textSecondary
         }
     }
 }
@@ -31,28 +31,33 @@ extension PurchaseNoteKind {
         switch self {
         case .positive: return Theme.positive
         case .warning: return Theme.warning
-        case .neutral: return Color.secondary
+        case .neutral: return Theme.textSecondary
         }
     }
 }
 
-// MARK: - Wie is er ingelogd
+// MARK: - De kaart Aankoopcheck op het tabblad Plannen
 
-// MARK: - Blok op de Tools-pagina
-
-/// Tegel op de Tools-pagina: korte uitleg en je uurloon. Toont nooit wat iets kost.
-struct PurchaseBlock: View {
+/// Korte uitleg en je uurloon. Toont nooit wat iets kost. Een tik opent de pagina.
+struct PurchaseSummaryCard: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.cloudAccount) private var cloud
 
     var body: some View {
-        // Dezelfde account-id als de Buffer en het spaardoel (zie `accountPrefsID`).
+        // Dezelfde account-id als de Noodbuffer en het spaardoel (zie `accountPrefsID`).
         let account = accountPrefsID(auth: auth, cloud: cloud)
-        PurchaseBlockContent(key: AccountPrefs.key(PurchaseCalc.wageStorageKey, account: account))
+        PurchaseSummaryCardContent(key: AccountPrefs.key(PurchaseCalc.wageStorageKey, account: account))
     }
 }
 
-private struct PurchaseBlockContent: View {
+/// Overgangsvorm (tot golf 1c): de oude tabroot Tools roept dit blok nog aan en krijgt nu de nieuwe kaart.
+struct PurchaseBlock: View {
+    var body: some View {
+        PurchaseSummaryCard()
+    }
+}
+
+private struct PurchaseSummaryCardContent: View {
     @Environment(AppStore.self) private var store
     @AppStorage private var manualWage: Double
 
@@ -62,30 +67,37 @@ private struct PurchaseBlockContent: View {
 
     var body: some View {
         let wage = PurchaseCalc.resolvedWage(manual: manualWage, data: store.data)
-        LinkedBlock(title: "Aankoopcheck", symbol: "cart", subtitle: "Is het je werkuren waard?", destination: .purchase) {
-            Text("Zet een aankoop tegenover je werktijd en kijk of je er genoeg uren voor over hebt.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+        LinkCard(title: "Aankoopcheck", symbol: "cart", domain: .tools, subtitle: "Is het je werkuren waard?",
+                 destination: .purchase) {
+            PlanningFootnote("Zet een aankoop tegenover je werktijd en kijk of je er genoeg uren voor over hebt.")
             if let wage = wage {
                 StatTile(title: "Je uurloon", value: Fmt.euroExact(wage) + " per uur", caption: "netto")
             } else {
-                HStack(spacing: 10) {
-                    Image(systemName: "pencil.line")
-                        .font(.title3)
-                        .foregroundStyle(Theme.accent)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Je uurloon").font(.caption).foregroundStyle(.secondary)
-                        Text("Vul je uurloon in om te beginnen")
-                            .font(.subheadline.weight(.semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .tile()
+                wagePrompt
             }
         }
+    }
+
+    private var wagePrompt: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "pencil.line")
+                .font(.title3)
+                .foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Je uurloon")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                Text("Vul je uurloon in om te beginnen")
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .tile()
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -117,16 +129,14 @@ struct PurchaseStepBar: View {
                         .fill(item.rawValue <= current.rawValue ? Theme.accent : Theme.accent.opacity(0.22))
                         .frame(height: 5)
                     Text("\(item.rawValue + 1). \(item.shortTitle)")
-                        .font(.caption.weight(item == current ? .semibold : .regular))
-                        .foregroundStyle(item == current ? Color.primary : Color.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .font(.footnote.weight(item == current ? .semibold : .regular))
+                        .foregroundStyle(item == current ? Color.primary : Theme.textSecondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal, 4)
-        .animation(Theme.motion, value: current)
+        .animated(by: current)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Stap \(current.rawValue + 1) van \(PurchaseStep.allCases.count): \(current.shortTitle)")
     }
@@ -143,18 +153,18 @@ struct PurchaseCategoryTile: View {
             Image(systemName: category.symbol)
                 .font(.title3)
                 .foregroundStyle(Theme.accent)
+                .accessibilityHidden(true)
             Text(category.shortTitle)
-                .font(.caption.weight(.semibold))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.primary)
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, minHeight: 76)
         .padding(.horizontal, 6)
         .background(selected ? Theme.accent.opacity(0.26) : Color.primary.opacity(0.07), in: shape)
         .overlay { shape.strokeBorder(selected ? Theme.accent : Color.clear, lineWidth: 1.5) }
         .contentShape(shape)
-        .animation(Theme.quickMotion, value: selected)
+        .animated(by: selected, quick: true)
     }
 }
 
@@ -163,31 +173,27 @@ struct PurchaseNoteRow: View {
     let note: PurchaseNote
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: note.kind.symbol)
-                .font(.subheadline)
-                .foregroundStyle(note.kind.tint)
-                .frame(width: 22)
+        Label {
             Text(note.text)
                 .font(.footnote)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        } icon: {
+            Image(systemName: note.kind.symbol)
+                .foregroundStyle(note.kind.tint)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 /// Zoekknop die een webadres opent in de browser (zelfde uiterlijk en hoogte als de andere knoppen).
-struct PurchaseURLChip: View {
+struct PurchaseSearchButton: View {
     let link: PurchaseSearchLink
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Button {
+        ActionButton(title: link.title, symbol: link.symbol) {
             openURL(link.url)
-        } label: {
-            ChipLabel(title: link.title, symbol: link.symbol)
         }
-        .buttonStyle(.plain)
         .accessibilityHint("Opent een zoekopdracht in je browser")
     }
 }
@@ -199,8 +205,8 @@ struct PurchasePage: View {
     @Environment(\.cloudAccount) private var cloud
 
     var body: some View {
-        // Uurloon en buffer staan onder dezelfde account-id (zie `accountPrefsID`): de Buffer-pagina bewaart zijn
-        // keuzes onder dezelfde sleutel, en hier lezen we ze om te weten welke pot jouw buffer is.
+        // Uurloon en noodbuffer staan onder dezelfde account-id (zie `accountPrefsID`): de pagina Noodbuffer bewaart zijn
+        // keuzes onder dezelfde sleutel, en hier lezen we ze om te weten welke pot jouw noodbuffer is.
         let account = accountPrefsID(auth: auth, cloud: cloud)
         PurchasePageContent(wageKey: AccountPrefs.key(PurchaseCalc.wageStorageKey, account: account),
                             bufferKey: AccountPrefs.key(BufferSetup.storageKey, account: account))
@@ -209,9 +215,10 @@ struct PurchasePage: View {
 
 private struct PurchasePageContent: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Je eigen uurloon, per account bewaard. 0 = niet ingevuld.
     @AppStorage private var manualWage: Double
-    /// De keuzes van de Buffer-pagina (JSON), om te weten welke pot jouw buffer is.
+    /// De keuzes van de pagina Noodbuffer (JSON), om te weten welke pot jouw noodbuffer is.
     @AppStorage private var storedBuffer: String
 
     @State private var step: PurchaseStep = .product
@@ -241,20 +248,11 @@ private struct PurchasePageContent: View {
                 VStack(spacing: Theme.pageSpacing) {
                     PurchaseStepBar(current: step)
                         .id(topID)
-                    ZStack(alignment: .top) {
-                        switch step {
-                        case .product:
-                            productStep.transition(stepTransition)
-                        case .hours:
-                            hoursStep.transition(stepTransition)
-                        case .outcome:
-                            outcomeStep.transition(stepTransition)
-                        }
-                    }
+                    stepContent
                 }
-                .frame(maxWidth: 640)
+                .frame(maxWidth: Theme.readableWidth)
                 .onChange(of: step) { _, _ in
-                    withAnimation(Theme.motion) { proxy.scrollTo(topID, anchor: .top) }
+                    withAnimation(reduceMotion ? nil : Theme.motion) { proxy.scrollTo(topID, anchor: .top) }
                 }
             }
         }
@@ -267,8 +265,19 @@ private struct PurchasePageContent: View {
         }
     }
 
-    private var stepTransition: AnyTransition {
-        .asymmetric(insertion: .opacity.combined(with: .offset(y: 14)), removal: .opacity)
+    /// De stap die nu aan de beurt is; een andere stap komt met een fade.
+    private var stepContent: some View {
+        ZStack(alignment: .top) {
+            switch step {
+            case .product:
+                productStep.transition(.opacity)
+            case .hours:
+                hoursStep.transition(.opacity)
+            case .outcome:
+                outcomeStep.transition(.opacity)
+            }
+        }
+        .animated(by: step)
     }
 
     // MARK: Gegevens
@@ -329,7 +338,7 @@ private struct PurchasePageContent: View {
         return "Vul je uurloon in."
     }
 
-    /// De pot die jij op de Buffer-pagina als buffer koos (alleen als de buffer uit een pot komt).
+    /// De pot die jij op de pagina Noodbuffer koos (alleen als de noodbuffer uit een pot komt).
     private var chosenBufferPotID: UUID? {
         guard let setup = BufferSetup.fromJSON(storedBuffer), setup.source.usesPot else { return nil }
         return BufferCalc.resolvedPot(in: store.data, preferred: setup.potID)?.id
@@ -341,48 +350,59 @@ private struct PurchasePageContent: View {
     }
 
     private func go(to target: PurchaseStep) {
-        withAnimation(Theme.motion) { step = target }
+        step = target
     }
 
     private func restart() {
-        withAnimation(Theme.motion) {
-            step = .product
-            name = ""
-            searchTerm = ""
-            category = nil
-            price = 0
-            shipping = 0
-            hours = 0
-            foundPrice = 0
-            foundShipping = 0
-        }
+        step = .product
+        name = ""
+        searchTerm = ""
+        category = nil
+        price = 0
+        shipping = 0
+        hours = 0
+        foundPrice = 0
+        foundShipping = 0
         fieldReset += 1
     }
 
     // MARK: Stap 1: wat wil je kopen
 
-    @ViewBuilder
     private var productStep: some View {
-        GlassBlock(title: "Wat wil je kopen?", symbol: "cart", subtitle: "Stap 1 van 3") {
+        Card(title: "Wat wil je kopen?", symbol: "cart", domain: .tools, subtitle: "Stap 1 van 3") {
             TextField("Naam van het product", text: $name)
                 .textFieldStyle(.plain)
                 #if os(iOS)
                 .textInputAutocapitalization(.sentences)
                 #endif
                 .padding(.horizontal, 12)
-                .frame(minHeight: Theme.buttonHeight)
+                .frame(minHeight: Theme.minTapTarget)
                 .tile()
+            categoryChoice
+            productAmounts
+            wageHint
+            if !canContinue {
+                PlanningFootnote(missingText)
+            }
+            ActionButton(title: "Verder", symbol: "arrow.right", prominent: true) { go(to: .hours) }
+                .disabled(!canContinue)
+        }
+    }
 
-            Text("Soort product").font(.subheadline.weight(.semibold))
-            // Twee kolommen: tien soorten vormen zo altijd vijf volle rijen, op elk scherm.
+    /// De tien soorten product, in twee kolommen: ze vormen zo altijd vijf volle rijen, op elk scherm.
+    private var categoryChoice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Soort product")
+                .font(.subheadline.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                 ForEach(PurchaseCategory.allCases) { item in
                     Button {
-                        withAnimation(Theme.quickMotion) { category = item }
+                        category = item
                     } label: {
                         PurchaseCategoryTile(category: item, selected: category == item)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PlanningPressStyle())
                     .accessibilityLabel(item.title)
                     .accessibilityAddTraits(category == item ? .isSelected : [])
                 }
@@ -394,38 +414,28 @@ private struct PurchasePageContent: View {
                     Image(systemName: "lightbulb")
                 }
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .id(selected)
                 .transition(.opacity)
             }
-
-            VStack(spacing: 10) {
-                NumberRow(title: "Prijs", value: $price)
-                NumberRow(title: "Verzendkosten", value: $shipping)
-                NumberRow(title: "Netto uurloon", value: wageBinding)
-                    .id(fieldReset)
-                if showsWeeklyHours {
-                    NumberRow(title: "Uren per week", value: weeklyHoursBinding, unit: .plain("uur"), maxDigits: 1)
-                }
-            }
-            .padding(12)
-            .tile()
-            wageHint
-
-            if !canContinue {
-                Text(missingText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            ChipButton(title: "Verder", symbol: "arrow.right") { go(to: .hours) }
-                .disabled(!canContinue)
-                .opacity(canContinue ? 1 : 0.45)
-                .animation(Theme.quickMotion, value: canContinue)
         }
-        .animation(Theme.motion, value: category)
-        .animation(Theme.motion, value: canContinue)
-        .animation(Theme.motion, value: manualWage > 0)
+        .animated(by: category)
+    }
+
+    /// Prijs, verzendkosten en uurloon (en bij een vast salaris je uren per week).
+    private var productAmounts: some View {
+        VStack(spacing: 10) {
+            NumberRow(title: "Prijs", value: $price)
+            NumberRow(title: "Verzendkosten", value: $shipping)
+            NumberRow(title: "Netto uurloon", value: wageBinding)
+                .id(fieldReset)
+            if showsWeeklyHours {
+                NumberRow(title: "Uren per week", value: weeklyHoursBinding, unit: .plain("uur"), maxDigits: 1)
+            }
+        }
+        .padding(12)
+        .tile()
     }
 
     /// Hoe het uurloon uit een vast salaris volgt, zoals `effectiveHourlyWage` het rekent: bij het maandelijkse schema uit het
@@ -442,28 +452,20 @@ private struct PurchasePageContent: View {
     private var wageHint: some View {
         if manualWage > 0 {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Je eigen uurloon. Het wordt onthouden voor de volgende keer.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                PlanningFootnote("Je eigen uurloon. Het wordt onthouden voor de volgende keer.")
                 if autoWage != nil {
-                    ChipButton(title: "Gebruik mijn salaris", symbol: "arrow.counterclockwise") {
-                        withAnimation(Theme.motion) { manualWage = 0 }
+                    ActionButton(title: "Gebruik je salaris", symbol: "arrow.counterclockwise") {
+                        manualWage = 0
                         fieldReset += 1
                     }
                 }
             }
         } else if autoWage != nil {
-            Text("Voorgevuld uit je salaris. Typ een ander bedrag om het zelf te bepalen.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            PlanningFootnote("Voorgevuld uit je salaris. Typ een ander bedrag om het zelf te bepalen.")
         } else if showsWeeklyHours {
-            Text(weeklyHoursHint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            PlanningFootnote(weeklyHoursHint)
         } else {
-            Text("Typ je netto (gemiddelde) uurloon. Vul je uurloon of salaris in bij Salaris & inkomsten, dan staat het hier voortaan al klaar.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            PlanningFootnote("Typ je netto (gemiddelde) uurloon. Vul je uurloon of salaris in bij Inkomen, dan staat het hier voortaan al klaar.")
         }
     }
 
@@ -480,8 +482,7 @@ private struct PurchasePageContent: View {
 
     /// Kiest een aantal uren (ook meer dan de schuif aankan), op 0,1 uur afgerond.
     private func setHours(_ value: Double) {
-        let clamped = PurchaseCalc.sanitizedHours(value)
-        withAnimation(Theme.quickMotion) { hours = clamped }
+        hours = PurchaseCalc.sanitizedHours(value)
         fieldReset += 1
     }
 
@@ -501,49 +502,46 @@ private struct PurchasePageContent: View {
         )
     }
 
-    @ViewBuilder
     private var hoursStep: some View {
         let ready = hours > 0
-        GlassBlock(title: "Hoeveel uur wil je ervoor werken?", symbol: "clock", subtitle: "Stap 2 van 3") {
+        return Card(title: "Hoeveel uur wil je ervoor werken?", symbol: "clock", domain: .tools, subtitle: "Stap 2 van 3") {
             Label(productName, systemImage: (category ?? .other).symbol)
                 .font(.subheadline.weight(.semibold))
-            Text("Beslis eerst, voordat je ziet wat het kost. Hoeveel uur van je werktijd is dit je eerlijk waard?")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            VStack(spacing: 4) {
-                Text(PurchaseCalc.hoursText(hours))
-                    .font(.system(size: 44, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                    .contentTransition(.numericText())
-                Text(workdaysText(hours))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .tile()
-
+            PlanningFootnote("Beslis eerst, voordat je ziet wat het kost. Hoeveel uur van je werktijd is dit je eerlijk waard?")
+            hoursDisplay
             hoursControls
-
-            ChipGrid(minimumWidth: 150) {
-                ChipButton(title: "Terug", symbol: "arrow.left") { go(to: .product) }
-                ChipButton(title: "Laat zien wat het kost", symbol: "eye") { go(to: .outcome) }
+            ActionGroup {
+                ActionButton(title: "Terug", symbol: "arrow.left") { go(to: .product) }
+                ActionButton(title: "Laat zien wat het kost", symbol: "eye", prominent: true) { go(to: .outcome) }
                     .disabled(!ready)
-                    .opacity(ready ? 1 : 0.45)
-                    .animation(Theme.quickMotion, value: ready)
             }
             if !ready {
-                Text("Kies eerst hoeveel uur je ervoor wilt werken.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                PlanningFootnote("Kies eerst hoeveel uur je ervoor wilt werken.")
             }
         }
     }
 
+    /// Het gekozen aantal uren, groot, met wat dat in werkdagen is.
+    private var hoursDisplay: some View {
+        VStack(spacing: 4) {
+            Text(PurchaseCalc.hoursText(hours))
+                .font(Theme.heroAmount)
+                .monospacedDigit()
+                .multilineTextAlignment(.center)
+                .contentTransition(.numericText())
+                .animated(by: hours)
+            Text(workdaysText(hours))
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .tile()
+        .accessibilityElement(children: .combine)
+    }
+
     /// Schuif, getypt aantal en snelknoppen.
-    @ViewBuilder
     private var hoursControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             Slider(value: sliderBinding, in: PurchaseCalc.hoursRange, step: PurchaseCalc.hoursStep,
@@ -559,33 +557,44 @@ private struct PurchasePageContent: View {
             }
             .padding(12)
             .tile()
-            Text("De schuif gaat tot \(Fmt.input(PurchaseCalc.hoursRange.upperBound, maxDigits: 0)) uur. Voor een groter bedrag typ je het aantal uur zelf.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            PlanningFootnote("De schuif gaat tot \(Fmt.input(PurchaseCalc.hoursRange.upperBound, maxDigits: 0)) uur. Voor een groter bedrag typ je het aantal uur zelf.")
 
-            ChipGrid(minimumWidth: 150) {
-                ChipButton(title: "Een half uur minder", symbol: "minus") { setHours(hours - PurchaseCalc.hoursStep) }
-                ChipButton(title: "Een half uur meer", symbol: "plus") { setHours(hours + PurchaseCalc.hoursStep) }
+            ActionGroup {
+                ActionButton(title: "Een half uur minder", symbol: "minus") { setHours(hours - PurchaseCalc.hoursStep) }
+                ActionButton(title: "Een half uur meer", symbol: "plus") { setHours(hours + PurchaseCalc.hoursStep) }
             }
 
             Text("Snel kiezen, in uren")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            // Vijf even brede knoppen in één rij, zodat er nooit een eenzame knop op een tweede regel staat.
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+            quickChoices
+        }
+    }
+
+    /// Vijf even brede knoppen in één rij, zodat er nooit een eenzame knop op een tweede regel staat; bij grote tekst in twee kolommen.
+    private var quickChoices: some View {
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
-                ForEach(quickHours, id: \.self) { quick in
-                    ChipButton(title: Fmt.input(quick, maxDigits: 0)) { setHours(quick) }
-                        .accessibilityLabel("\(Fmt.input(quick, maxDigits: 0)) uur")
-                }
+                quickButtons
             }
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                quickButtons
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var quickButtons: some View {
+        ForEach(quickHours, id: \.self) { quick in
+            ActionButton(title: Fmt.input(quick, maxDigits: 0)) { setHours(quick) }
+                .accessibilityLabel("\(Fmt.input(quick, maxDigits: 0)) uur")
         }
     }
 
     // MARK: Stap 3: uitkomst
 
     private func tone(for r: PurchaseResult) -> Color {
-        if !r.hasWage { return Color.secondary }
+        if !r.hasWage { return Theme.textSecondary }
         return r.isWorthIt ? Theme.positive : Theme.negative
     }
 
@@ -607,102 +616,95 @@ private struct PurchasePageContent: View {
         return "precies gelijk"
     }
 
-    @ViewBuilder
     private var outcomeStep: some View {
         let result = PurchaseCalc.evaluate(input, context: context)
-        VStack(spacing: Theme.pageSpacing) {
+        return VStack(spacing: Theme.pageSpacing) {
             outcomeBlock(result)
             affordabilityBlock(result.affordability)
             cheaperBlock(result)
-            ChipGrid(minimumWidth: 150) {
-                ChipButton(title: "Uren aanpassen", symbol: "slider.horizontal.3") { go(to: .hours) }
-                ChipButton(title: "Opnieuw", symbol: "arrow.counterclockwise") { restart() }
+            ActionGroup {
+                ActionButton(title: "Uren aanpassen", symbol: "slider.horizontal.3") { go(to: .hours) }
+                ActionButton(title: "Opnieuw", symbol: "arrow.counterclockwise") { restart() }
             }
         }
-        .animation(Theme.motion, value: result)
     }
 
     private func outcomeBlock(_ r: PurchaseResult) -> some View {
-        let color = tone(for: r)
-        let shippingShown = PurchaseCalc.sanitizedAmount(r.usesCheaper ? foundShipping : shipping)
-        return GlassBlock(title: productName, symbol: (category ?? .other).symbol, subtitle: category?.title) {
-            VStack(spacing: 6) {
-                Text(Fmt.euro(r.totalCost))
-                    .font(.system(size: 48, weight: .bold, design: .rounded))
-                    .foregroundStyle(color)
-                    .minimumScaleFactor(0.5)
-                    .lineLimit(1)
-                    .contentTransition(.numericText())
-                if r.usesCheaper {
-                    HStack(spacing: 6) {
-                        Text(Fmt.euro(r.originalTotal))
-                            .strikethrough()
-                            .foregroundStyle(.secondary)
-                        Text("Je bespaart \(PurchaseCalc.moneyText(r.savedByCheaper))")
-                            .foregroundStyle(Theme.positive)
-                    }
-                    .font(.footnote.weight(.semibold))
-                } else {
-                    Text(shippingShown > 0 ? "Totaal, inclusief \(Fmt.euro(shippingShown)) verzendkosten" : "Totaalprijs")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                Label(verdictTitle(r), systemImage: verdictSymbol(r))
-                    .font(.headline)
-                    .foregroundStyle(color)
-                    .padding(.top, 4)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .padding(.horizontal, 12)
-            .tile(tint: color)
-
-            HStack(spacing: 10) {
+        Card(title: productName, symbol: (category ?? .other).symbol, domain: .tools, subtitle: category?.title) {
+            verdictTile(r)
+            FigureRow {
                 StatTile(title: "Het kost je", value: PurchaseCalc.costHoursText(r.hoursNeeded) + " werken",
-                         color: color, caption: PurchaseCalc.workdaysCaption(days: r.daysOfWork))
+                         color: tone(for: r), caption: PurchaseCalc.workdaysCaption(days: r.daysOfWork))
                 StatTile(title: "Jij wilde", value: PurchaseCalc.hoursText(r.hoursWilling) + " werken",
                          caption: differenceText(r))
             }
-
-            if r.hasWage {
-                Text("Gerekend met een netto uurloon van \(Fmt.euroExact(r.hourlyWage)).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let share = r.shareOfMonthlyIncome, share < PurchaseCalc.incomeWarningShare,
-               let shareText = PurchaseCalc.incomeShareText(share) {
-                Text(shareText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(r.feedback) { note in
-                    PurchaseNoteRow(note: note)
-                        .transition(.opacity)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .tile()
+            outcomeNotes(r)
         }
     }
 
+    /// Het totaalbedrag groot, met de uitspraak in woorden en een symbool (de kleur is een aanvulling).
+    private func verdictTile(_ r: PurchaseResult) -> some View {
+        let color = tone(for: r)
+        let shippingShown = PurchaseCalc.sanitizedAmount(r.usesCheaper ? foundShipping : shipping)
+        return VStack(spacing: 6) {
+            BigAmount(value: r.totalCost, font: Theme.heroAmount, color: color, label: "Totaalprijs")
+            if r.usesCheaper {
+                VStack(spacing: 2) {
+                    Text(Fmt.euro(r.originalTotal))
+                        .strikethrough()
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("Je bespaart \(PurchaseCalc.moneyText(r.savedByCheaper))")
+                        .foregroundStyle(Theme.positive)
+                }
+                .font(.footnote.weight(.semibold))
+            } else {
+                Text(shippingShown > 0 ? "Totaal, inclusief \(Fmt.euro(shippingShown)) verzendkosten" : "Totaalprijs")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            Label(verdictTitle(r), systemImage: verdictSymbol(r))
+                .font(.headline)
+                .foregroundStyle(color)
+                .multilineTextAlignment(.center)
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .padding(.horizontal, 12)
+        .tile(tint: color)
+    }
+
+    @ViewBuilder
+    private func outcomeNotes(_ r: PurchaseResult) -> some View {
+        if r.hasWage {
+            PlanningFootnote("Gerekend met een netto uurloon van \(Fmt.euroExact(r.hourlyWage)).")
+        }
+        if let share = r.shareOfMonthlyIncome, share < PurchaseCalc.incomeWarningShare,
+           let shareText = PurchaseCalc.incomeShareText(share) {
+            PlanningFootnote(shareText)
+        }
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(r.feedback) { note in
+                PurchaseNoteRow(note: note)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .tile()
+    }
+
     private func affordabilityBlock(_ a: PurchaseAffordability) -> some View {
-        GlassBlock(title: "Kan het?", symbol: "banknote", subtitle: "Past het in jouw geld?") {
+        Card(title: "Kan het?", symbol: "banknote", domain: .tools, subtitle: "Past het in jouw geld?") {
             Label(a.verdict.title, systemImage: a.verdict.symbol)
                 .font(.headline)
                 .foregroundStyle(a.verdict.tint)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(a.summary)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            PlanningFootnote(a.summary)
             if !a.details.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(a.details) { note in
                         PurchaseNoteRow(note: note)
-                            .transition(.opacity)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -722,68 +724,68 @@ private struct PurchasePageContent: View {
 
     private func cheaperBlock(_ r: PurchaseResult) -> some View {
         let links = PurchaseSearch.links(for: searchTerm, category: category)
-        let foundTotal = PurchaseCalc.total(price: foundPrice, shipping: foundShipping)
-        return GlassBlock(title: "Goedkoper te vinden?", symbol: "tag", subtitle: "Zoek zelf en vul de beste prijs in") {
-            Text("De app zoekt niet zelf en haalt geen prijzen op. De knoppen openen een zoekopdracht in je browser. Vul daarna de beste prijs en verzendkosten in die je vindt, dan reken ik meteen opnieuw.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
+        return Card(title: "Goedkoper te vinden?", symbol: "tag", domain: .tools, subtitle: "Zoek zelf en vul de beste prijs in") {
+            PlanningFootnote("De app zoekt niet zelf en haalt geen prijzen op. De knoppen openen een zoekopdracht in je browser. Vul daarna de beste prijs en verzendkosten in die je vindt, dan reken ik meteen opnieuw.")
             TextField("Zoekterm, bijvoorbeeld merk en model", text: $searchTerm)
                 .textFieldStyle(.plain)
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
                 #endif
                 .padding(.horizontal, 12)
-                .frame(minHeight: Theme.buttonHeight)
+                .frame(minHeight: Theme.minTapTarget)
                 .tile()
-
-            if links.isEmpty {
-                Text("Vul een zoekterm in om de zoekknoppen te zien.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ChipGrid(minimumWidth: 150) {
-                    ForEach(links) { link in
-                        PurchaseURLChip(link: link)
-                    }
-                }
-            }
-
-            VStack(spacing: 10) {
-                NumberRow(title: "Beste prijs gevonden", value: $foundPrice)
-                    .id(fieldReset)
-                NumberRow(title: "Verzendkosten daar", value: $foundShipping)
-                    .id(fieldReset)
-            }
-            .padding(12)
-            .tile()
-            Text("Gratis verzending? Laat de verzendkosten leeg.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
+            searchLinks(links)
+            foundPriceFields
             if foundPrice > 0 {
-                if r.usesCheaper {
-                    Label("Goedkoper: \(Fmt.euro(foundTotal)) inclusief verzending. Je bespaart \(PurchaseCalc.moneyText(r.savedByCheaper)).",
-                          systemImage: "arrow.down.circle.fill")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.positive)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Label(offerComparison(found: foundTotal, original: r.originalTotal),
-                          systemImage: "info.circle")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                ChipButton(title: "Wis gevonden prijs", symbol: "xmark") {
-                    withAnimation(Theme.motion) {
-                        foundPrice = 0
-                        foundShipping = 0
-                    }
-                    fieldReset += 1
+                foundPriceResult(r)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func searchLinks(_ links: [PurchaseSearchLink]) -> some View {
+        if links.isEmpty {
+            PlanningFootnote("Vul een zoekterm in om de zoekknoppen te zien.")
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
+                ForEach(links) { link in
+                    PurchaseSearchButton(link: link)
                 }
             }
+        }
+    }
+
+    private var foundPriceFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            NumberRow(title: "Beste prijs gevonden", value: $foundPrice)
+                .id(fieldReset)
+            NumberRow(title: "Verzendkosten daar", value: $foundShipping)
+                .id(fieldReset)
+            PlanningFootnote("Gratis verzending? Laat de verzendkosten leeg.")
+        }
+        .padding(12)
+        .tile()
+    }
+
+    @ViewBuilder
+    private func foundPriceResult(_ r: PurchaseResult) -> some View {
+        let foundTotal = PurchaseCalc.total(price: foundPrice, shipping: foundShipping)
+        if r.usesCheaper {
+            Label("Goedkoper: \(Fmt.euro(foundTotal)) inclusief verzending. Je bespaart \(PurchaseCalc.moneyText(r.savedByCheaper)).",
+                  systemImage: "arrow.down.circle.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.positive)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Label(offerComparison(found: foundTotal, original: r.originalTotal), systemImage: "info.circle")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        ActionButton(title: "Wis gevonden prijs", symbol: "xmark") {
+            foundPrice = 0
+            foundShipping = 0
+            fieldReset += 1
         }
     }
 }

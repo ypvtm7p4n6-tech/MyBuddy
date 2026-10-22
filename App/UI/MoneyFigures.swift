@@ -8,13 +8,13 @@ import Foundation
 // MARK: - Eén bron per grootheid
 //
 // Dit bestand bevat alleen Foundation: geen SwiftUI. Het is de plek waar een scherm de cijfers haalt die op meer dan één
-// plek voorkomen, zodat Home, Savings, de spaarpot- en beleggingspagina's en de rest hetzelfde getal tonen. Er wordt hier
+// plek voorkomen, zodat het Overzicht, de Maand-pagina's, de spaarpot- en beleggingspagina's en de rest hetzelfde getal tonen. Er wordt hier
 // niets zelf uitgerekend dat de rekenmotor al kan: de functies pakken een motorwaarde, zetten hem om voor weergave of
 // leggen er twee naast elkaar. Waar bedragen worden opgeteld gebeurt dat in hele centen (`CentsMath`).
 //
 // Welke functie levert welke grootheid (de peilmomenten staan erbij):
 //
-//   Nog te verdelen / "Over"     maand   FinanceData.remaining(in:) = MonthFigures.remaining; een periode: PeriodSummary.remaining
+//   Nog te verdelen / Overgehouden maand  FinanceData.remaining(in:) = MonthFigures.remaining; een periode: PeriodSummary.remaining
 //   Inkomen                      maand   income(in:) (de som van de salarisuitbetalingen plus extra inkomsten)
 //   Uitgaven (totaal)            maand   expensesTotal(in:), met het deel uit potten apart: expensesFromPots(in:)
 //   Uitgaven van de bank         maand   expensesFromBank(in:) = totaal min uit potten
@@ -165,10 +165,22 @@ extension FinanceData {
     }
 }
 
-/// Labels die op meer dan één scherm hetzelfde moeten zijn.
+/// Labels die op meer dan één scherm hetzelfde moeten zijn (termenlijst, plan par. 2.8).
 enum MoneyLabels {
+    /// Wat er van het maandinkomen nog te verdelen is, voor de huidige en de komende maanden. Nooit kaal "Over".
+    static let remaining = "Nog te verdelen"
+
+    /// Wat er van het maandinkomen is overgebleven, voor maanden in het verleden en voor periodes (Half jaar, Jaar).
+    static let leftOver = "Overgehouden"
+
+    /// Het label bij het getal "wat blijft er over" van een maand of periode: voor de huidige en de komende maanden
+    /// "Nog te verdelen", voor het verleden en voor een periode "Overgehouden".
+    static func remainingLabel(of month: YearMonth, current: YearMonth, isPeriod: Bool = false) -> String {
+        (isPeriod || month < current) ? leftOver : remaining
+    }
+
     /// "Vermogen eind oktober": bank, spaarpotten en beleggingen aan het eind van de maand, dus met wat er die maand nog
-    /// binnenkomt, uitgaat en wordt overgeschreven (`netWorth(at:current:)`). Het getal staat zo op Home en op het Overzicht.
+    /// binnenkomt, uitgaat en wordt overgeschreven (`netWorth(at:current:)`). Het getal staat zo op het Overzicht en op de Maand-pagina.
     static func netWorthEnd(of month: YearMonth) -> String {
         "Vermogen eind \(Fmt.monthNames[min(max(month.month, 1), 12) - 1])"
     }

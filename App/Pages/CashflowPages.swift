@@ -397,49 +397,6 @@ struct CashflowCheckBanner: View {
     }
 }
 
-// MARK: - Dag voor dag: wat een tik op een gebeurtenis doet
-
-/// Een regel die in een maand staat en die je vanuit Dag voor dag kunt wijzigen.
-struct CashflowLineTarget: Identifiable {
-    let line: MoneyLine
-    let kind: FinanceData.LineKind
-    let month: YearMonth
-    var id: UUID { line.id }
-}
-
-/// Wat een tik op een gebeurtenis doet.
-enum CashflowAction {
-    case open(Destination)
-    case edit(CashflowLineTarget)
-    case none
-
-    /// Een tik op een gebeurtenis: de regel wijzigen, of naar de pot, de belegging of Inkomen waar het bij hoort.
-    static func make(for event: DayEvent, lookup: CashflowLineLookup, month: YearMonth) -> CashflowAction {
-        switch event.kind {
-        case .salary:
-            return .open(.income)
-        case .income:
-            if let id = event.lineID, let line = lookup.income[id] {
-                return .edit(CashflowLineTarget(line: line, kind: .income, month: month))
-            }
-            return .none
-        case .expense:
-            if let id = event.lineID, let line = lookup.expenses[id] {
-                return .edit(CashflowLineTarget(line: line, kind: .expense, month: month))
-            }
-            return .none
-        case .toPot, .interest:
-            if let id = event.potID { return .open(.pot(id)) }
-            return .none
-        case .toHolding:
-            if let id = event.holdingID { return .open(.holding(id)) }
-            return .none
-        case .bankEntry:
-            return .none
-        }
-    }
-}
-
 /// TIJDELIJK (tot golf 1c): Dag voor dag is een onderdeel van Bankrekening. `DestinationView` verwijst voor `.cashflow` nog naar
 /// deze naam; hij toont meteen het onderdeel Dag voor dag van de nieuwe pagina.
 struct CashflowPage: View {

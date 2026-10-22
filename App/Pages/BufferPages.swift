@@ -159,7 +159,7 @@ private struct BufferPageContent: View {
         let progressText = "\(Fmt.percent(r.progress, digits: 0)) van je doel"
         return VStack(alignment: .leading, spacing: Theme.rowSpacing) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Doelbuffer")
+                Text("Doel noodbuffer")
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
                 BigAmount(value: r.target)

@@ -190,4 +190,75 @@ final class AllocationEditTests: XCTestCase {
         XCTAssertEqual(f.data.allocationRule(f.potID, in: now), .percent(PercentRule(percent: 8, basis: .allIncome)))
         XCTAssertFalse(f.data.effectiveAllocation(f.potID, in: now).isOverride)
     }
+
+    // MARK: Teksten op de pagina Verdelen
+
+    func testTransferSourceNamesWhereTheDayComesFrom() {
+        var f = fixture()
+        XCTAssertEqual(DistributeText.transferSource(f.data, id: f.potID, month: now), "salarisdag")
+        f.data.pots[0].transferDay = 12
+        XCTAssertEqual(DistributeText.transferSource(f.data, id: f.potID, month: now), "eigen dag")
+        XCTAssertEqual(DistributeText.transferSource(f.data, id: f.otherPotID, month: now), "salarisdag")
+        f.data.editPlan(now) { $0.transferDay = 3 }
+        XCTAssertEqual(DistributeText.transferSource(f.data, id: f.potID, month: now), "dag van deze maand")
+        XCTAssertEqual(DistributeText.transferSource(f.data, id: f.holdingID, month: now), "dag van deze maand")
+        // Een andere maand heeft de dag van deze maand niet.
+        XCTAssertEqual(DistributeText.transferSource(f.data, id: f.otherPotID, month: ym(2026, 9)), "salarisdag")
+    }
+
+    func testTransferSourceWithAnEveryFourWeeksSalary() {
+        var f = fixture()
+        f.data.salary.setSchedule(.weeks, interval: 4, anchor: CalendarDay(year: 2026, month: 10, day: 2))
+        XCTAssertEqual(DistributeText.transferSource(f.data, id: f.potID, month: now), "eerste salaris van de maand")
+    }
+
+    func testTransferCaptionSaysPlannedOrDoneAndFollowsTheEngineDay() {
+        let f = fixture()
+        let before = ym(2026, 10).date(day: 14)
+        let after = ym(2026, 10).date(day: 26)
+        let onTheDay = ym(2026, 10).date(day: 25)
+        let day = f.data.transferDay(for: f.potID, in: now)
+        XCTAssertEqual(day, 25)
+        XCTAssertEqual(DistributeText.transferCaption(f.data, id: f.potID, month: now, today: before),
+                       "Wordt overgeschreven op de 25e · salarisdag")
+        // Per kalenderdag: op de overschrijfdag zelf is het al gebeurd.
+        XCTAssertEqual(DistributeText.transferCaption(f.data, id: f.potID, month: now, today: onTheDay),
+                       "Overgeschreven op de 25e · salarisdag")
+        XCTAssertEqual(DistributeText.transferCaption(f.data, id: f.potID, month: now, today: after),
+                       "Overgeschreven op de 25e · salarisdag")
+    }
+
+    func testTransferCaptionWithoutAnAmountOnlyNamesTheDay() {
+        var f = fixture()
+        f.data.pots[0].transferDay = 12
+        AllocationEdit.setAmount(&f.data, id: f.potID, month: now, amount: 0)
+        XCTAssertEqual(DistributeText.transferCaption(f.data, id: f.potID, month: now, today: ym(2026, 10).date(day: 14)),
+                       "Overschrijfdag: de 12e · eigen dag")
+    }
+
+    func testTransferExplanationAndSummary() {
+        var f = fixture()
+        XCTAssertEqual(DistributeText.transferSummary(f.data, month: now), "Standaard")
+        XCTAssertEqual(DistributeText.transferExplanation(f.data, month: now),
+                       "Standaard geldt per pot of belegging de eigen overschrijfdag, en anders je salarisdag (de 25e).")
+        f.data.editPlan(now) { $0.transferDay = 31 }
+        // Oktober heeft 31 dagen; februari zou op de laatste dag vallen.
+        XCTAssertEqual(DistributeText.transferSummary(f.data, month: now), "Deze maand: de 31e")
+        XCTAssertEqual(DistributeText.transferExplanation(f.data, month: now), "Alles wat je deze maand verdeelt gaat op de 31e over.")
+        f.data.editPlan(ym(2027, 2)) { $0.transferDay = 31 }
+        XCTAssertEqual(DistributeText.transferSummary(f.data, month: ym(2027, 2)), "Deze maand: de 28e")
+    }
+
+    func testPercentExplanationOnlyWithAPercentage() {
+        var f = fixture()
+        XCTAssertNil(DistributeText.percentExplanation(f.data, month: now))
+        AllocationEdit.setMode(&f.data, id: f.potID, month: now, to: .percentage)
+        let text = DistributeText.percentExplanation(f.data, month: now)
+        XCTAssertNotNil(text)
+        // De bedragen komen uit de rekenmotor: salaris en salaris plus extra inkomsten.
+        XCTAssertTrue(text?.contains("\(Fmt.euro(3000)) salaris") == true, text ?? "")
+        XCTAssertTrue(text?.contains("\(Fmt.euro(3500)) met extra inkomsten") == true, text ?? "")
+        XCTAssertTrue(text?.contains("Je percentages samen: 10%.") == true, text ?? "")
+        XCTAssertTrue(text?.hasPrefix("Een percentage rekent over het inkomen van oktober 2026") == true, text ?? "")
+    }
 }

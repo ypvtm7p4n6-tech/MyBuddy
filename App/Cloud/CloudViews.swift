@@ -1,9 +1,11 @@
 import SwiftUI
 
-// Schermen rond het cloudaccount en het synchroniseren:
-// - de secties "Account" en "Synchroniseren" in Instellingen (of, zonder sleutel, de uitleg om het aan te zetten)
-// - de meldingen "Lokale gegevens uploaden?" en "Welke versie wil je houden?"
-// - de bladen om het wachtwoord te wijzigen en het account te verwijderen
+// Schermen rond het cloudaccount en het synchroniseren. De pagina's zelf (Account, Wachtwoord wijzigen, Account verwijderen,
+// Back-ups van conflicten) staan in App/Pages/Settings/. Hier staan:
+// - de teksten van de synchronisatie (`SyncText`) en de statusrij (`SyncStatusRow`)
+// - de melding op het Overzicht als de synchronisatie aandacht nodig heeft (`SyncAttentionBanner`)
+// - de eis aan een nieuw cloudwachtwoord (`CloudPasswordHint`)
+// - tot golf 1c: de meldingen bij het starten (`SyncPromptsHost`), die dan vervallen
 
 // MARK: - Teksten
 
@@ -26,236 +28,31 @@ enum SyncText {
     }
 }
 
-// MARK: - Instellingen: account en synchroniseren
+// MARK: - Statusrij
 
-/// Alles voor het account en het synchroniseren in een `Form`. Levert Sections terug.
-/// Met een Firebase-sleutel: het cloudaccount en de synchronisatie. Zonder sleutel: de lokale accounts
-/// en een korte uitleg over het aanzetten van Firebase.
-struct AccountAndSyncSections: View {
-    var body: some View {
-        if FirebaseConfig.isConfigured {
-            CloudAccountSection()
-            SyncSection()
-        } else {
-            AccountSection()
-            FirebaseSetupSection()
-        }
-    }
-}
-
-/// Uitleg voor als er nog geen sleutel is ingevuld.
-struct FirebaseSetupSection: View {
-    var body: some View {
-        if !isDemo {
-            Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Synchroniseren staat uit", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.subheadline.weight(.semibold))
-                    Text("Zet je Firebase Web API-sleutel in FirebaseConfig.swift om in te loggen en je gegevens op al je apparaten bij te houden.")
-                        .font(.footnote)
-                    VStack(alignment: .leading, spacing: 4) {
-                        step("1", "Zet in de Firebase-console Authentication aan (E-mail/wachtwoord).")
-                        step("2", "Plak bij Realtime Database > Regels de inhoud van firebase/database.rules.json.")
-                        step("3", "Kopieer bij Project settings > Algemeen de Web API-sleutel en plak hem in App/Config/FirebaseConfig.swift.")
-                        step("4", "Bouw de app opnieuw en start hem.")
-                    }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            } header: {
-                Text("Synchroniseren")
-            } footer: {
-                Text("Stap voor stap staat het in firebase/README.md. Tot die tijd blijft alles op dit apparaat.")
-            }
-        }
-    }
-
-    private var isDemo: Bool {
-        #if DEBUG
-        return DebugLaunch.isDemo
-        #else
-        return false
-        #endif
-    }
-
-    private func step(_ number: String, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(number + ".").monospacedDigit()
-            Text(text).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-// MARK: - Account
-
-struct CloudAccountSection: View {
-    @Environment(\.cloudAccount) private var cloud
-    @Environment(\.syncController) private var sync
-    @State private var showChangePassword = false
-    @State private var showDelete = false
-    @State private var confirmSignOut = false
-
-    var body: some View {
-        if let cloud, let user = cloud.user {
-            Section {
-                HStack(spacing: 12) {
-                    SymbolBadge(symbol: "person.fill", color: Theme.accent, size: 40)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(user.email)
-                            .font(.headline)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                        Text("Ingelogd")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .sheet(isPresented: $showChangePassword) { ChangeCloudPasswordSheet() }
-                .sheet(isPresented: $showDelete) { DeleteCloudAccountSheet() }
-
-                Button("Wachtwoord wijzigen") { showChangePassword = true }
-                Button("Uitloggen") { confirmSignOut = true }
-                    .confirmationDialog("Uitloggen?", isPresented: $confirmSignOut, titleVisibility: .visible) {
-                        Button("Uitloggen") { cloud.signOut() }
-                    } message: {
-                        Text(signOutMessage)
-                    }
-                Button("Account verwijderen", role: .destructive) { showDelete = true }
-            } header: {
-                Text("Account")
-            } footer: {
-                if cloud.keepsLoginAfterQuit {
-                    Text("Je blijft ingelogd. Het wachtwoord wordt niet op dit apparaat bewaard.")
-                } else {
-                    Text("Let op: dit apparaat kan je login niet veilig bewaren (Keychain). Je bent nu ingelogd, maar moet na het afsluiten van de app opnieuw inloggen.")
-                }
-            }
-        }
-    }
-
-    private var signOutMessage: String {
-        var text = "Je gegevens blijven op dit apparaat en in de cloud staan."
-        if sync?.hasUnsyncedChanges == true {
-            text += " Wijzigingen die nog niet zijn verstuurd, gaan mee zodra je weer inlogt."
-        }
-        return text
-    }
-}
-
-// MARK: - Synchroniseren
-
-struct SyncSection: View {
-    @Environment(\.syncController) private var sync
-    @State private var backups: [ConflictBackupItem] = []
-    @State private var pendingBackup: ConflictBackupItem?
-    @State private var backupResult: String?
-
-    var body: some View {
-        Section {
-            if let sync {
-                SyncStatusRow(sync: sync)
-                    .onAppear { backups = sync.conflictBackups() }
-                    .onChange(of: sync.displayStatus) { _, _ in backups = sync.conflictBackups() }
-
-                if let conflict = sync.conflict {
-                    Text(SyncText.conflictMessage(conflict))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("Bewaar deze versie") { sync.startResolving(.keepLocal) }
-                        .disabled(sync.isResolving)
-                    Button("Neem cloud-versie over") { sync.startResolving(.takeRemote) }
-                        .disabled(sync.isResolving)
-                }
-
-                Button {
-                    Task { await sync.syncNow() }
-                } label: {
-                    HStack {
-                        Text("Nu synchroniseren")
-                        Spacer()
-                        if sync.isBusy { ProgressView().controlSize(.small) }
-                    }
-                }
-                .disabled(sync.isBusy)
-
-                if let last = sync.lastSyncedAt {
-                    LabeledContent("Laatst gesynchroniseerd", value: Fmt.dateTime(last))
-                }
-                if let note = sync.sizeNote {
-                    Label(note, systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.warning)
-                }
-                if !backups.isEmpty {
-                    DisclosureGroup("Back-ups van conflicten (\(backups.count))") {
-                        ForEach(backups) { item in
-                            HStack {
-                                Text(item.title)
-                                    .font(.footnote)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Spacer(minLength: 8)
-                                Button("Terugzetten") { pendingBackup = item }
-                                    .buttonStyle(.borderless)
-                            }
-                        }
-                        if let backupResult {
-                            Text(backupResult)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .confirmationDialog("Deze versie terugzetten?", isPresented: pendingBackupBinding,
-                                        titleVisibility: .visible, presenting: pendingBackup) { item in
-                        Button("Zet terug", role: .destructive) {
-                            backupResult = sync.restoreBackup(item) ? "Teruggezet." : "Terugzetten is mislukt."
-                            backups = sync.conflictBackups()
-                        }
-                    } message: { _ in
-                        Text("Je huidige gegevens worden eerst zelf een back-up. De teruggezette versie gaat ook naar de cloud en je andere apparaten.")
-                    }
-                }
-            } else {
-                Label("Synchroniseren is in deze sessie niet actief.", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            Text("Synchroniseren")
-        } footer: {
-            Text("Je gegevens gaan versleuteld (HTTPS) naar je eigen Firebase-database en worden op al je apparaten bijgewerkt. Ze zijn niet end-to-end versleuteld: wie toegang heeft tot je Firebase-project kan ze lezen. De app werkt altijd ook zonder internet.")
-        }
-    }
-}
-
-extension SyncSection {
-    fileprivate var pendingBackupBinding: Binding<Bool> {
-        Binding(get: { pendingBackup != nil }, set: { if !$0 { pendingBackup = nil } })
-    }
-}
-
-private struct SyncStatusRow: View {
+/// De status van de synchronisatie als rij op de pagina Account: een symbool, een titel en een regel uitleg.
+struct SyncStatusRow: View {
     let sync: SyncController
 
     var body: some View {
         let status = sync.displayStatus
         HStack(spacing: 12) {
-            SymbolBadge(symbol: symbol(status), color: tint(status), size: 40)
+            SymbolBadge(symbol: symbol(status), color: tint(status), size: 32)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title(status)).font(.headline)
+                Text(title(status))
+                    .font(.headline)
                 Text(detail(status))
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             if isWorking(status) {
-                ProgressView().controlSize(.small)
+                ProgressView()
+                    .controlSize(.small)
             }
         }
-        .animation(Theme.motion, value: status)
+        .animated(by: status)
         .accessibilityElement(children: .combine)
     }
 
@@ -311,10 +108,61 @@ private struct SyncStatusRow: View {
     }
 }
 
-// MARK: - Meldingen
+// MARK: - Melding op het Overzicht
+
+/// Een melding bovenaan het Overzicht als de synchronisatie aandacht nodig heeft: er is een conflict ("Kies welke versie je
+/// houdt") of een aanbod om lokale gegevens te uploaden. De keuze zelf staat op de pagina Account; de knop gaat daarheen. Er is
+/// geen melding bij het starten van de app (ALT-5). Zonder aandacht is de view leeg.
+struct SyncAttentionBanner: View {
+    @Environment(\.syncController) private var sync
+    @Environment(Router.self) private var router
+
+    var body: some View {
+        if let sync, let text = attentionText(for: sync) {
+            NoticeCard(text: text,
+                       symbol: SettingsText.attentionSymbol,
+                       actionTitle: "Naar Account",
+                       action: { router.go(.settings(.account)) })
+        }
+    }
+
+    /// Het aanbod om te uploaden gaat voor een conflict, zoals de meldingen bij het starten deden.
+    private func attentionText(for sync: SyncController) -> String? {
+        if sync.importOffer != nil {
+            return "Lokale gegevens uploaden? Je hebt gegevens op dit apparaat die nog niet in je account staan."
+        }
+        if sync.conflict != nil {
+            return "Kies welke versie je houdt. Op dit apparaat en in de cloud staan verschillende gegevens."
+        }
+        return nil
+    }
+}
+
+// MARK: - Eis aan het wachtwoord
+
+/// De ene eis die de cloud aan een wachtwoord stelt, als vinkje.
+struct CloudPasswordHint: View {
+    let password: String
+
+    private var isMet: Bool { password.count >= FirebaseAuthClient.minimumPasswordLength }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: isMet ? "checkmark.circle.fill" : "circle")
+            Text("Minstens \(FirebaseAuthClient.minimumPasswordLength) tekens")
+        }
+        .font(.footnote)
+        .foregroundStyle(isMet ? Theme.positive : Theme.textSecondary)
+        .animated(by: isMet, quick: true)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Meldingen bij het starten (vervalt in golf 1c)
 
 /// Toont de meldingen van de synchronisatie bovenop de app. Eén melding tegelijk, want meerdere alerts op
-/// dezelfde view overschrijven elkaar.
+/// dezelfde view overschrijven elkaar. TIJDELIJK: vervangen door `SyncAttentionBanner`; verdwijnt in golf 1c, zodra
+/// `MyBuddyApp` de aanroep van `.syncPrompts(_:)` niet meer doet.
 struct SyncPromptsHost<Content: View>: View {
     let sync: SyncController?
     let content: Content
@@ -376,213 +224,8 @@ struct SyncPromptsHost<Content: View>: View {
 }
 
 extension View {
-    /// Voegt de meldingen van de synchronisatie toe (lokale gegevens uploaden, conflict).
+    /// Voegt de meldingen van de synchronisatie toe (lokale gegevens uploaden, conflict). Vervalt in golf 1c.
     func syncPrompts(_ sync: SyncController?) -> some View {
         SyncPromptsHost(sync: sync, content: self)
-    }
-}
-
-// MARK: - Wachtwoord wijzigen
-
-struct ChangeCloudPasswordSheet: View {
-    @Environment(\.cloudAccount) private var cloud
-    @Environment(\.dismiss) private var dismiss
-    @State private var current = ""
-    @State private var newPassword = ""
-    @State private var repeated = ""
-    @State private var errorText: String?
-    @State private var isSaving = false
-
-    private var canSave: Bool {
-        !current.isEmpty && newPassword.count >= FirebaseAuthClient.minimumPasswordLength && newPassword == repeated && !isSaving
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    SecureField("Huidig wachtwoord", text: $current)
-                        .passwordFieldTraits(creating: false)
-                }
-
-                Section {
-                    SecureField("Nieuw wachtwoord", text: $newPassword)
-                        .passwordFieldTraits(creating: true)
-                    SecureField("Herhaal nieuw wachtwoord", text: $repeated)
-                        .passwordFieldTraits(creating: true)
-                } footer: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        CloudPasswordHint(password: newPassword)
-                        if !repeated.isEmpty && repeated != newPassword {
-                            Text("De wachtwoorden zijn niet hetzelfde.")
-                                .font(.footnote)
-                                .foregroundStyle(Theme.warning)
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-
-                if let errorText {
-                    Section {
-                        Text(errorText)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Theme.negative)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .background { MeshBackground() }
-            .navigationTitle("Wachtwoord wijzigen")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annuleer") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if isSaving {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Wijzig") { save() }
-                            .disabled(!canSave)
-                    }
-                }
-            }
-            .onChange(of: current) { _, _ in errorText = nil }
-            .onChange(of: newPassword) { _, _ in errorText = nil }
-        }
-        #if os(macOS)
-        .frame(minWidth: 460, minHeight: 420)
-        #endif
-    }
-
-    private func save() {
-        guard let cloud, canSave else { return }
-        isSaving = true
-        errorText = nil
-        Task {
-            do {
-                try await cloud.changePassword(current: current, new: newPassword)
-                current = ""
-                newPassword = ""
-                repeated = ""
-                isSaving = false
-                dismiss()
-            } catch {
-                isSaving = false
-                errorText = error.localizedDescription
-                if let authError = error as? FirebaseAuthError, authError == .wrongCredentials {
-                    current = ""
-                }
-            }
-        }
-    }
-}
-
-/// De ene eis die Firebase aan een wachtwoord stelt, als vinkje.
-struct CloudPasswordHint: View {
-    let password: String
-
-    private var isMet: Bool { password.count >= FirebaseAuthClient.minimumPasswordLength }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: isMet ? "checkmark.circle.fill" : "circle")
-            Text("Minstens \(FirebaseAuthClient.minimumPasswordLength) tekens")
-        }
-        .font(.footnote)
-        .foregroundStyle(isMet ? Theme.positive : Color.secondary)
-        .animation(Theme.quickMotion, value: isMet)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-// MARK: - Account verwijderen
-
-struct DeleteCloudAccountSheet: View {
-    @Environment(\.cloudAccount) private var cloud
-    @Environment(\.dismiss) private var dismiss
-    @State private var password = ""
-    @State private var errorText: String?
-    @State private var confirming = false
-    @State private var isDeleting = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text("Je account en alle gegevens in de cloud worden verwijderd, en ook de gegevens op dit apparaat. Dit kan niet ongedaan worden gemaakt. Op je andere apparaten blijven de lokale gegevens staan tot je ze daar wist.")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.negative)
-                    SecureField("Wachtwoord", text: $password)
-                        .passwordFieldTraits(creating: false)
-                } header: {
-                    Text("Bevestig met je wachtwoord")
-                }
-
-                if let errorText {
-                    Section {
-                        Text(errorText)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Theme.negative)
-                    }
-                }
-
-                Section {
-                    Button("Verwijder account en gegevens", role: .destructive) { confirming = true }
-                        .disabled(password.isEmpty || isDeleting)
-                    if isDeleting {
-                        HStack {
-                            ProgressView().controlSize(.small)
-                            Text("Bezig met verwijderen…").foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .background { MeshBackground() }
-            .navigationTitle("Account verwijderen")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Annuleer") { dismiss() }
-                        .disabled(isDeleting)
-                }
-            }
-            .onChange(of: password) { _, _ in errorText = nil }
-            .confirmationDialog("Weet je het zeker?", isPresented: $confirming, titleVisibility: .visible) {
-                Button("Verwijder definitief", role: .destructive) { performDelete() }
-            } message: {
-                Text("Je account en je gegevens worden overal gewist.")
-            }
-        }
-        #if os(macOS)
-        .frame(minWidth: 460, minHeight: 380)
-        #endif
-    }
-
-    private func performDelete() {
-        guard let cloud, !isDeleting else { return }
-        isDeleting = true
-        errorText = nil
-        Task {
-            do {
-                try await cloud.deleteAccount(password: password)
-                password = ""
-                isDeleting = false
-                dismiss()
-            } catch {
-                isDeleting = false
-                errorText = error.localizedDescription
-                if let authError = error as? FirebaseAuthError, authError == .wrongCredentials {
-                    password = ""
-                }
-            }
-        }
     }
 }
