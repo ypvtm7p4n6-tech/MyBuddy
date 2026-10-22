@@ -224,7 +224,7 @@ struct HoldingEditSheet: View {
             NumberRow(title: "Totaal ingelegd", value: $invested)
             valueFields
             contributionFields
-            Toggle("Eigen overschrijfdag", isOn: animated(Binding(
+            Toggle("Eigen overschrijfdag", isOn: softly(Binding(
                 get: { transferDay != nil },
                 set: { on in transferDay = on ? store.data.salaryDay(in: store.now) : nil }
             )))
@@ -345,7 +345,7 @@ struct HoldingEditSheet: View {
     }
 
     /// Dezelfde binding, maar een wijziging beweegt zacht (rijen die verschijnen of verdwijnen), tenzij Verlaag beweging aan staat.
-    private func animated<T>(_ binding: Binding<T>) -> Binding<T> {
+    private func softly<T>(_ binding: Binding<T>) -> Binding<T> {
         Binding(
             get: { binding.wrappedValue },
             set: { newValue in

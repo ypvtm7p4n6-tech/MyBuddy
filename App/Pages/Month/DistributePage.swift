@@ -66,9 +66,11 @@ private struct DistributeSummaryCard: View {
         let availableCents = figures.available
         let over = left < 0
         let progress: Double = availableCents > 0 ? Double(allocatedCents) / Double(availableCents) : 0
-        Card(title: MoneyLabels.remaining, symbol: "square.split.2x2", domain: .money,
+        // Nu en in komende maanden is het "Nog te verdelen", in het verleden "Overgehouden" (termenlijst).
+        let label = MoneyLabels.remainingLabel(of: month, current: store.now)
+        Card(title: label, symbol: "square.split.2x2", domain: .money,
              subtitle: month > store.now ? "Verwacht" : nil) {
-            BigAmount(value: left, color: over ? Theme.negative : Color.primary, label: MoneyLabels.remaining)
+            BigAmount(value: left, color: over ? Theme.negative : Color.primary, label: label)
             ProgressMeter(value: progress, tint: over ? Theme.negative : Theme.accent, style: .bar(height: 10),
                           label: "Verdeeld",
                           valueText: "\(Fmt.euro(CentsMath.value(allocatedCents))) van \(Fmt.euro(CentsMath.value(availableCents)))")
