@@ -1,5 +1,4 @@
 import SwiftUI
-import Charts
 
 /// "2,5 maanden", "1 maand".
 private func bufferMonthsText(_ value: Double) -> String {
@@ -8,21 +7,28 @@ private func bufferMonthsText(_ value: Double) -> String {
     return "\(Fmt.input(rounded, maxDigits: 1)) \(unit)"
 }
 
-// MARK: - Blok op de Savings-pagina
+// MARK: - De kaart Noodbuffer op het tabblad Plannen
 
-/// Samenvatting: doelbuffer, wat er al is, voortgang en hoeveel maanden het dekt.
-/// Gebruikt de keuzes die in de calculator zijn bewaard, zodat de cijfers kloppen met de pagina.
-struct BufferBlock: View {
+/// Samenvatting: doelbuffer, wat er al is, voortgang en hoeveel maanden het dekt. Gebruikt de keuzes die op de pagina Noodbuffer
+/// zijn bewaard, zodat de cijfers kloppen met de pagina. Een tik opent de pagina.
+struct BufferSummaryCard: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.cloudAccount) private var cloud
 
     var body: some View {
         let account = accountPrefsID(auth: auth, cloud: cloud)
-        BufferBlockContent(key: AccountPrefs.key(BufferSetup.storageKey, account: account))
+        BufferSummaryCardContent(key: AccountPrefs.key(BufferSetup.storageKey, account: account))
     }
 }
 
-private struct BufferBlockContent: View {
+/// Overgangsvorm (tot golf 1c): de oude tabroot Savings roept dit blok nog aan en krijgt nu de nieuwe kaart.
+struct BufferBlock: View {
+    var body: some View {
+        BufferSummaryCard()
+    }
+}
+
+private struct BufferSummaryCardContent: View {
     @Environment(AppStore.self) private var store
     @AppStorage private var storedSetup: String
 
@@ -34,39 +40,35 @@ private struct BufferBlockContent: View {
         let d = store.data
         let now = store.now
         let setup = BufferSetup.fromJSON(storedSetup) ?? BufferCalc.initialSetup(for: d, current: now)
-        // Met het saldo van vandaag (`store.today`): dezelfde bank en spaarpot als op de pagina Buffer.
+        // Met het saldo van vandaag (`store.today`): dezelfde bank en spaarpot als op de pagina Noodbuffer.
         let r = BufferCalc.summary(for: d, setup: setup, current: now, today: store.today)
-        LinkedBlock(title: "Buffer", symbol: "shield.lefthalf.filled",
-                    subtitle: r.hasTarget ? "\(r.months) maanden aan uitgaven" : nil,
-                    destination: .buffer) {
+        LinkCard(title: "Noodbuffer", symbol: "shield.lefthalf.filled", domain: .goals,
+                 subtitle: r.hasTarget ? "\(r.months) maanden aan uitgaven" : nil,
+                 destination: .buffer) {
             if r.hasTarget {
-                BigAmount(value: r.target, font: .system(.title, design: .rounded, weight: .bold))
-                ProgressBar(progress: r.progress, tint: r.isFull ? Theme.positive : Theme.accent, height: 10)
-                HStack(spacing: 8) {
-                    Text("Nu \(Fmt.euro(r.current))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Spacer(minLength: 4)
-                    if let coverage = r.coverageMonths {
-                        Text("Dekt \(bufferMonthsText(coverage))")
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                }
+                figures(r)
             } else {
-                Text("Vul je uitgaven in, dan rekent de app uit hoeveel buffer bij je past.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                PlanningFootnote("Vul je uitgaven in, dan rekent de app uit hoeveel noodbuffer bij je past.")
+            }
+        }
+    }
+
+    private func figures(_ r: BufferResult) -> some View {
+        VStack(alignment: .leading, spacing: Theme.rowSpacing) {
+            BigAmount(value: r.target, font: Theme.titleAmount, label: "Doel noodbuffer")
+            ProgressMeter(value: r.progress, tint: r.isFull ? Theme.positive : Theme.accent, style: .bar(height: 10),
+                          label: "Voortgang noodbuffer", valueText: Fmt.percent(r.progress, digits: 0))
+            AmountRow(title: "Nu", value: Fmt.euro(r.current))
+            if let coverage = r.coverageMonths {
+                AmountRow(title: "Dekt", value: bufferMonthsText(coverage))
             }
         }
     }
 }
 
-// MARK: - De calculator
+// MARK: - De pagina
 
+/// De noodbuffer als rekenpagina: de uitkomst met het verloop bovenaan, daaronder de invoer in vier blokken en de spaarpot.
 struct BufferPage: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.cloudAccount) private var cloud
@@ -91,9 +93,6 @@ private struct BufferPageContent: View {
     @State private var didStart = false
     @State private var potMessage: String?
 
-    private let tileColumns = [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .top)]
-    private let chipColumns = [GridItem(.adaptive(minimum: 150), spacing: 10)]
-
     var body: some View {
         let d = store.data
         let now = store.now
@@ -103,16 +102,16 @@ private struct BufferPageContent: View {
                                       today: store.today)
         let result = BufferCalc.calculate(input)
 
-        PageScaffold(title: "Buffer") {
+        PageScaffold(title: "Noodbuffer") {
             VStack(spacing: Theme.pageSpacing) {
-                situationBlock()
-                expensesBlock(d, now: now, result: result)
-                currentBlock(d, now: now, result: result)
-                resultBlock(result)
-                speedBlock(d, now: now, result: result)
-                chartBlock(result, now: now)
-                potBlock(d, result: result)
+                resultCard(result, now: now)
+                situationCard()
+                expensesCard(d, now: now, result: result)
+                currentCard(d, now: now, result: result)
+                speedCard(d, now: now, result: result)
+                potCard(d, result: result)
             }
+            .frame(maxWidth: Theme.readableWidth)
         }
         .onAppear { startOnce() }
         .onChange(of: setup) { _, newValue in storedSetup = newValue.json }
@@ -141,13 +140,74 @@ private struct BufferPageContent: View {
                 set: { newValue in setup.potID = newValue })
     }
 
+    // MARK: Uitkomst
+
+    @ViewBuilder
+    private func resultCard(_ r: BufferResult, now: YearMonth) -> some View {
+        Card(title: "Uitkomst", symbol: "shield.lefthalf.filled", domain: .goals,
+             subtitle: "\(r.months) maanden aan noodzakelijke uitgaven") {
+            if r.hasTarget {
+                resultFigures(r)
+            }
+            // Zonder doel toont de grafiek zijn eigen lege staat met uitleg.
+            TrendChart(model: BufferTrend.model(r, start: now), size: .regular)
+        }
+    }
+
+    private func resultFigures(_ r: BufferResult) -> some View {
+        let statusText: String = r.isFull ? "Doel bereikt" : "Nog \(Fmt.euro(r.gap))"
+        let progressText = "\(Fmt.percent(r.progress, digits: 0)) van je doel"
+        return VStack(alignment: .leading, spacing: Theme.rowSpacing) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Doelbuffer")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                BigAmount(value: r.target)
+            }
+            .accessibilityElement(children: .combine)
+            ProgressMeter(value: r.progress, tint: r.isFull ? Theme.positive : Theme.accent, style: .bar(height: 10),
+                          label: "Voortgang noodbuffer", valueText: Fmt.percent(r.progress, digits: 0))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Text(progressText)
+                    Spacer(minLength: 4)
+                    Text(statusText).fontWeight(.semibold)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(progressText)
+                    Text(statusText).fontWeight(.semibold)
+                }
+            }
+            .font(.footnote)
+            .foregroundStyle(r.isFull ? Theme.positive : Color.primary)
+            FigureRow {
+                StatTile(title: "Nu in noodbuffer", value: Fmt.euro(r.current))
+                StatTile(title: "Nog nodig", value: Fmt.euro(r.gap),
+                         color: r.isFull ? Theme.positive : Color.primary)
+                StatTile(title: "Uitgaven per maand", value: Fmt.euro(r.essentialMonthly))
+                StatTile(title: "Dekking nu", value: r.coverageMonths.map { bufferMonthsText($0) } ?? "-")
+            }
+            coverageSentence(r)
+        }
+    }
+
+    @ViewBuilder
+    private func coverageSentence(_ r: BufferResult) -> some View {
+        if let coverage = r.coverageMonths {
+            Label("Je noodbuffer dekt nu \(bufferMonthsText(coverage)).",
+                  systemImage: r.isFull ? "checkmark.seal.fill" : "shield.lefthalf.filled")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(r.isFull ? Theme.positive : Color.primary)
+        }
+    }
+
     // MARK: Situatie
 
     @ViewBuilder
-    private func situationBlock() -> some View {
+    private func situationCard() -> some View {
         let advice = setup.situation.recommendation
-        GlassBlock(title: "Jouw situatie", symbol: "person.2.fill",
-                   subtitle: "Aanbevolen: \(advice.months) maanden") {
+        Card(title: "Jouw situatie", symbol: "person.2", domain: .goals,
+             subtitle: "Aanbevolen: \(advice.months) maanden") {
             BufferPickerRow(title: "Werk", selection: bind(\.situation.employment)) {
                 ForEach(BufferEmployment.allCases) { item in Text(item.title).tag(item) }
             }
@@ -157,195 +217,151 @@ private struct BufferPageContent: View {
             Stepper(value: bind(\.situation.children), in: 0...10) {
                 Text("Kinderen: \(setup.situation.children)")
             }
+            .frame(minHeight: Theme.minTapTarget)
             Toggle("Eigen woning", isOn: bind(\.situation.isHomeowner))
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(advice.lines, id: \.self) { line in
-                    Text(line)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .padding(10)
-            .tile()
+                .frame(minHeight: Theme.minTapTarget)
+            adviceNote(advice)
         }
+    }
+
+    private func adviceNote(_ advice: BufferRecommendation) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(advice.lines, id: \.self) { line in
+                PlanningFootnote(line)
+            }
+        }
+        .padding(10)
+        .tile()
     }
 
     // MARK: Noodzakelijke uitgaven
 
     @ViewBuilder
-    private func expensesBlock(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
+    private func expensesCard(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
         let overview = d.expenseOverview(in: now)
         let known = overview.fixed + overview.variable > 0
+        Card(title: "Noodzakelijke uitgaven", symbol: "cart", domain: .goals,
+             subtitle: known ? "Uit je uitgaven van \(Fmt.month(now))" : "Nog geen uitgaven ingevuld") {
+            if known {
+                knownExpenses(d, now: now, overview: overview, result: r)
+            } else {
+                PlanningFootnote("Je hebt voor \(Fmt.month(now)) nog geen uitgaven ingevuld. Vul ze in bij Uitgaven, of typ hieronder wat je per maand minstens nodig hebt.")
+                ActionLink(title: "Uitgaven invullen", symbol: "creditcard", destination: .expenses)
+                NumberRow(title: "Noodzakelijk per maand", value: bind(\.manualEssential))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func knownExpenses(_ d: FinanceData, now: YearMonth, overview: ExpenseOverview, result r: BufferResult) -> some View {
         // Een buffer rekent met een gewone maand: bij een salaris om de zoveel weken of dagen is dat het gemiddelde inkomen
         // per maand (`estimatedMonthlyIncome`), niet de maand met twee uitbetalingen. Bij het maandelijkse schema is het
         // inkomen van deze maand.
         let income: Double = d.estimatedMonthlyIncome(in: now)
         let share = BufferCalc.clampedShare(setup.variableShare)
         let sharePercent = Fmt.percent(share, digits: 0)
-        GlassBlock(title: "Noodzakelijke uitgaven", symbol: "cart.fill",
-                   subtitle: known ? "Uit je uitgaven van \(Fmt.month(now))" : "Nog geen uitgaven ingevuld") {
-            if known {
-                LazyVGrid(columns: tileColumns, spacing: 8) {
-                    StatTile(title: d.salary.isMonthly ? "Inkomen" : "Gemiddeld inkomen", value: Fmt.euro(income))
-                    StatTile(title: "Vaste uitgaven", value: Fmt.euro(overview.fixed))
-                    StatTile(title: "Variabele uitgaven", value: Fmt.euro(overview.variable))
-                }
-                if income > 0 {
-                    Text("Je uitgaven zijn \(Fmt.percent((overview.fixed + overview.variable) / income, digits: 0)) van je inkomen.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Variabel dat je meetelt")
-                        Spacer(minLength: 8)
-                        Text(sharePercent).foregroundStyle(.secondary)
-                    }
-                    Slider(value: bind(\.variableShare), in: 0...1, step: 0.05)
-                }
-                Text("Vast \(Fmt.euro(r.fixedPart)) + \(sharePercent) van variabel \(Fmt.euro(overview.variable)) = \(Fmt.euro(r.essentialMonthly)) per maand.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Je hebt voor \(Fmt.month(now)) nog geen uitgaven ingevuld. Vul ze in bij Uitgaven, of typ hieronder wat je per maand minstens nodig hebt.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                NumberRow(title: "Noodzakelijk per maand", value: bind(\.manualEssential))
-            }
+        FigureRow {
+            StatTile(title: d.salary.isMonthly ? "Inkomen" : "Gemiddeld inkomen", value: Fmt.euro(income))
+            StatTile(title: "Vaste uitgaven", value: Fmt.euro(overview.fixed))
+            StatTile(title: "Variabele uitgaven", value: Fmt.euro(overview.variable))
         }
+        if income > 0 {
+            PlanningFootnote("Je uitgaven zijn \(Fmt.percent((overview.fixed + overview.variable) / income, digits: 0)) van je inkomen.")
+        }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Variabel dat je meetelt")
+                Spacer(minLength: 8)
+                Text(sharePercent).foregroundStyle(Theme.textSecondary)
+            }
+            Slider(value: bind(\.variableShare), in: 0...1, step: 0.05)
+                .accessibilityLabel("Variabel dat je meetelt")
+                .accessibilityValue(sharePercent)
+        }
+        PlanningFootnote("Vast \(Fmt.euro(r.fixedPart)) + \(sharePercent) van variabel \(Fmt.euro(overview.variable)) = \(Fmt.euro(r.essentialMonthly)) per maand.")
     }
 
-    // MARK: Huidige buffer
+    // MARK: Huidige noodbuffer
 
     @ViewBuilder
-    private func currentBlock(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
+    private func currentCard(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
         let today = store.today
-        let bank = BufferCalc.bankAmount(in: d, current: now, today: today)
-        let chosenPot = BufferCalc.resolvedPot(in: d, preferred: setup.potID)
-        let potValue = BufferCalc.potAmount(in: d, setup: setup, current: now, today: today)
-        GlassBlock(title: "Wat heb je al?", symbol: "building.columns.fill", subtitle: "Waar staat je buffer nu") {
+        Card(title: "Wat heb je al?", symbol: "building.columns", domain: .goals, subtitle: "Waar staat je noodbuffer nu") {
             BufferPickerRow(title: "Bron", selection: bind(\.source)) {
                 ForEach(BufferSource.allCases) { item in Text(item.title).tag(item) }
             }
             if setup.source.usesPot {
-                if d.pots.isEmpty {
-                    Text("Je hebt nog geen spaarpot. Maak er onderaan een aan.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    BufferPickerRow(title: "Spaarpot", selection: potBinding(d)) {
-                        ForEach(d.pots) { item in Text(item.name).tag(Optional(item.id)) }
-                    }
-                }
+                potChoice(d)
             }
             if setup.source == .manual {
-                NumberRow(title: "Huidige buffer", value: bind(\.manualCurrent))
+                NumberRow(title: "Huidige noodbuffer", value: bind(\.manualCurrent))
             } else {
-                LazyVGrid(columns: tileColumns, spacing: 8) {
-                    if setup.source.usesBank {
-                        StatTile(title: "Bankrekening", value: Fmt.euro(bank))
-                    }
-                    if setup.source.usesPot, let potItem = chosenPot {
-                        StatTile(title: potItem.name, value: Fmt.euro(potValue))
-                    }
-                    StatTile(title: "Totaal in buffer", value: Fmt.euro(r.current), color: Theme.accent)
-                }
+                currentFigures(d, now: now, today: today, result: r)
             }
             // Het saldo van vandaag moet bekend zijn: een saldo dat pas later begint zegt niets over nu.
             if setup.source.usesBank && !d.hasBankBalanceNow(current: now, today: today) {
-                Text(d.hasBankBalance
-                     ? "Je banksaldo van vandaag is nog niet bekend: wat je invulde begint pas later. Tot die tijd telt de bank als 0."
-                     : "Je hebt nog geen banksaldo ingevuld bij Bankrekening. Tot die tijd telt de bank als 0.")
+                Label(d.hasBankBalance
+                      ? "Je banksaldo van vandaag is nog niet bekend: wat je invulde begint pas later. Tot die tijd telt de bank als 0."
+                      : "Je hebt nog geen banksaldo ingevuld bij Bankrekening. Tot die tijd telt de bank als 0.",
+                      systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
                     .foregroundStyle(Theme.warning)
             }
         }
     }
 
-    // MARK: Uitkomst
-
     @ViewBuilder
-    private func resultBlock(_ r: BufferResult) -> some View {
-        let statusText: String = r.isFull ? "Doel bereikt" : "Nog \(Fmt.euro(r.gap))"
-        GlassBlock(title: "Jouw buffer", symbol: "shield.lefthalf.filled",
-                   subtitle: "\(r.months) maanden aan noodzakelijke uitgaven",
-                   tint: Theme.olive.opacity(0.3)) {
-            if r.hasTarget {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Doelbuffer").font(.caption).foregroundStyle(.secondary)
-                    BigAmount(value: r.target)
-                }
-                ProgressBar(progress: r.progress, tint: r.isFull ? Theme.positive : Theme.accent, height: 10)
-                HStack(spacing: 8) {
-                    Text("\(Fmt.percent(r.progress, digits: 0)) van je doel")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 4)
-                    Text(statusText)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(r.isFull ? Theme.positive : Color.primary)
-                }
-                LazyVGrid(columns: tileColumns, spacing: 8) {
-                    StatTile(title: "Nu in buffer", value: Fmt.euro(r.current))
-                    StatTile(title: "Nog nodig", value: Fmt.euro(r.gap),
-                             color: r.isFull ? Theme.positive : Color.primary)
-                    StatTile(title: "Uitgaven per maand", value: Fmt.euro(r.essentialMonthly))
-                    StatTile(title: "Dekking nu", value: r.coverageMonths.map { bufferMonthsText($0) } ?? "-")
-                }
-                coverageSentence(r)
-            } else {
-                EmptyHint(symbol: "shield.lefthalf.filled", title: "Nog geen doel",
-                          message: "Vul je uitgaven in, dan rekent de app uit hoeveel buffer bij je past.")
+    private func potChoice(_ d: FinanceData) -> some View {
+        if d.pots.isEmpty {
+            PlanningFootnote("Je hebt nog geen spaarpot. Maak er onderaan een aan.")
+        } else {
+            BufferPickerRow(title: "Spaarpot", selection: potBinding(d)) {
+                ForEach(d.pots) { item in Text(item.name).tag(Optional(item.id)) }
             }
         }
     }
 
-    @ViewBuilder
-    private func coverageSentence(_ r: BufferResult) -> some View {
-        if let coverage = r.coverageMonths {
-            Label("Je buffer dekt nu \(bufferMonthsText(coverage)).",
-                  systemImage: r.isFull ? "checkmark.seal.fill" : "shield.lefthalf.filled")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(r.isFull ? Theme.positive : Color.primary)
+    private func currentFigures(_ d: FinanceData, now: YearMonth, today: Date, result r: BufferResult) -> some View {
+        let bank = BufferCalc.bankAmount(in: d, current: now, today: today)
+        let chosenPot = BufferCalc.resolvedPot(in: d, preferred: setup.potID)
+        let potValue = BufferCalc.potAmount(in: d, setup: setup, current: now, today: today)
+        return FigureRow {
+            if setup.source.usesBank {
+                StatTile(title: "Bankrekening", value: Fmt.euro(bank))
+            }
+            if setup.source.usesPot, let potItem = chosenPot {
+                StatTile(title: potItem.name, value: Fmt.euro(potValue))
+            }
+            StatTile(title: "Totaal in noodbuffer", value: Fmt.euro(r.current), color: Theme.accent)
         }
     }
 
     // MARK: Hoe snel
 
     @ViewBuilder
-    private func speedBlock(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
+    private func speedCard(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
         let defaultSaving = BufferCalc.defaultMonthlySaving(in: d, setup: setup, current: now)
         let isDefault = abs(monthlySaving - defaultSaving) < 0.005
         let rateText = Fmt.percent(d.settings.savingsRate)
-        GlassBlock(title: "Hoe snel?", symbol: "hourglass", subtitle: "Wat je spaart bepaalt de tijd") {
+        Card(title: "Hoe snel?", symbol: "hourglass", domain: .goals, subtitle: "Wat je spaart bepaalt de tijd") {
             NumberRow(title: "Sparen per maand", value: $monthlySaving)
             Toggle("Spaarrente meerekenen (\(rateText))", isOn: bind(\.useInterest))
+                .frame(minHeight: Theme.minTapTarget)
             if !d.salary.isMonthly {
-                Text("Het standaard bedrag rekent met een gemiddelde maand, omdat je salaris niet elke maand even vaak binnenkomt.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                PlanningFootnote("Het standaard bedrag rekent met een gemiddelde maand, omdat je salaris niet elke maand even vaak binnenkomt.")
             }
-            // Even grote knoppen: naast elkaar als er ruimte is, anders onder elkaar.
-            LazyVGrid(columns: chipColumns, spacing: 10) {
-                ChipButton(title: "Standaard bedrag", symbol: "arrow.uturn.backward") {
+            ActionGroup {
+                ActionButton(title: "Standaard bedrag", symbol: "arrow.uturn.backward") {
                     monthlySaving = defaultSaving
                 }
                 .disabled(isDefault)
-                ChipButton(title: "Gebruik benodigd", symbol: "equal.circle") {
+                ActionButton(title: "Neem benodigd bedrag over", symbol: "equal.circle") {
                     monthlySaving = r.monthlyNeeded
                 }
                 .disabled(!r.hasTarget || r.isFull)
             }
             fillSentence(r, now: now)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Of: alles binnen")
-                    Spacer(minLength: 8)
-                    Text(Fmt.duration(months: r.fillWithin)).foregroundStyle(.secondary)
-                }
-                Slider(value: $fillMonths, in: 1...60, step: 1)
-            }
+            fillSlider(r)
             if r.hasTarget && !r.isFull {
                 StatTile(title: "Nodig per maand", value: Fmt.euro(r.monthlyNeeded),
                          caption: "om binnen \(Fmt.duration(months: r.fillWithin)) klaar te zijn")
@@ -353,14 +369,25 @@ private struct BufferPageContent: View {
         }
     }
 
+    private func fillSlider(_ r: BufferResult) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Of: alles binnen")
+                Spacer(minLength: 8)
+                Text(Fmt.duration(months: r.fillWithin)).foregroundStyle(Theme.textSecondary)
+            }
+            Slider(value: $fillMonths, in: 1...60, step: 1)
+                .accessibilityLabel("Alles binnen")
+                .accessibilityValue(Fmt.duration(months: r.fillWithin))
+        }
+    }
+
     @ViewBuilder
     private func fillSentence(_ r: BufferResult, now: YearMonth) -> some View {
         if !r.hasTarget {
-            Text("Vul eerst je uitgaven in, dan weet de app hoeveel buffer je nodig hebt.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            PlanningFootnote("Vul eerst je uitgaven in, dan weet de app hoeveel noodbuffer je nodig hebt.")
         } else if r.isFull {
-            Label("Je buffer is al op niveau. Je hoeft niets meer te sparen.", systemImage: "checkmark.seal.fill")
+            Label("Je noodbuffer is al op niveau. Je hoeft niets meer te sparen.", systemImage: "checkmark.seal.fill")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.positive)
         } else if let months = r.monthsToFill {
@@ -368,9 +395,7 @@ private struct BufferPageContent: View {
                 Label("Bij \(Fmt.euro(r.monthlySaving)) per maand ben je er over \(Fmt.duration(months: months)).",
                       systemImage: "flag.checkered")
                     .font(.subheadline.weight(.semibold))
-                Text("Dat is in \(Fmt.month(now.adding(months))).")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                PlanningFootnote("Dat is in \(Fmt.month(now.adding(months))).")
             }
         } else {
             let message: String = r.monthlySaving > 0
@@ -382,69 +407,48 @@ private struct BufferPageContent: View {
         }
     }
 
-    // MARK: Grafiek
+    // MARK: Spaarpot Noodbuffer
 
     @ViewBuilder
-    private func chartBlock(_ r: BufferResult, now: YearMonth) -> some View {
-        GlassBlock(title: "Verloop", symbol: "chart.xyaxis.line", subtitle: "Je buffer tegenover je doel") {
-            if r.hasTarget {
-                BufferChart(points: BufferCalc.series(r, start: now))
-            } else {
-                Text("Zodra je uitgaven bekend zijn, zie je hier hoe je buffer groeit.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    // MARK: Spaarpot Buffer
-
-    @ViewBuilder
-    private func potBlock(_ d: FinanceData, result r: BufferResult) -> some View {
+    private func potCard(_ d: FinanceData, result r: BufferResult) -> some View {
         let existing = BufferCalc.bufferPot(in: d)
         let goalText: String = existing?.goalAmount.map { Fmt.euro($0) } ?? "geen doel"
         let explanation: String = existing == nil
             ? "Maak een spaarpot met dit doelbedrag. Je volgt de voortgang dan ook bij je andere spaarpotten."
-            : "Je spaarpot Buffer heeft nu \(goalText) als doel. Pas het aan naar het doel van deze calculator."
+            : "Je spaarpot voor de noodbuffer heeft nu \(goalText) als doel. Pas het aan naar het doel van deze berekening."
         let buttonTitle: String = existing == nil
-            ? "Maak spaarpot Buffer van dit doel"
-            : "Werk spaarpot Buffer bij met dit doel"
-        GlassBlock(title: "Spaarpot Buffer", symbol: "shield.lefthalf.filled",
-                   subtitle: existing == nil ? "Nog niet aangemaakt" : "Bestaat al") {
-            Text(explanation)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Button {
+            ? "Maak een spaarpot van dit doel"
+            : "Werk de spaarpot bij met dit doel"
+        Card(title: "Spaarpot Noodbuffer", symbol: "shield.lefthalf.filled", domain: .goals,
+             subtitle: existing == nil ? "Nog niet aangemaakt" : "Bestaat al") {
+            PlanningFootnote(explanation)
+            ActionButton(title: buttonTitle, symbol: existing == nil ? "plus.circle.fill" : "arrow.triangle.2.circlepath",
+                         prominent: true) {
                 createOrUpdatePot(target: r.target)
-            } label: {
-                Label(buttonTitle, systemImage: existing == nil ? "plus.circle.fill" : "arrow.triangle.2.circlepath")
-                    .font(.subheadline.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, minHeight: Theme.buttonHeight)
             }
-            .glassButton(prominent: true)
             .disabled(!r.hasTarget)
             if let potMessage {
-                Text(potMessage)
-                    .font(.footnote)
+                Label(potMessage, systemImage: "checkmark.circle.fill")
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.positive)
             }
         }
     }
 
-    /// Maakt de spaarpot Buffer met het doelbedrag, of past het doel van de bestaande pot aan.
+    /// Maakt de spaarpot met het doelbedrag, of past het doel van de bestaande pot aan. De pot heet "Buffer": de rekenmotor vindt
+    /// hem op die naam (`BufferCalc.bufferPot`), dus de naam blijft zo tot de rekenmotor ook "Noodbuffer" herkent.
     private func createOrUpdatePot(target: Double) {
         let now = store.now
         if let existing = BufferCalc.bufferPot(in: store.data) {
             var updated = existing
             updated.goalAmount = target
             store.mutate { $0.updatePot(updated, current: now) }
-            potMessage = "Spaarpot Buffer is bijgewerkt: doel \(Fmt.euro(target))."
+            potMessage = "De spaarpot is bijgewerkt: doel \(Fmt.euro(target))."
         } else {
             let pot = Pot(name: "Buffer", symbol: "shield.lefthalf.filled", colorIndex: 0,
                           goalAmount: target, goalDate: nil, monthlyContribution: 0, startMonth: now)
             store.mutate { $0.addPot(pot) }
-            potMessage = "Spaarpot Buffer is gemaakt met een doel van \(Fmt.euro(target)). Verdeel er geld over bij Verdelen."
+            potMessage = "Spaarpot gemaakt met een doel van \(Fmt.euro(target)). Verdeel er geld over bij Verdelen."
         }
     }
 }
@@ -461,68 +465,11 @@ private struct BufferPickerRow<Selection: Hashable, Content: View>: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
             Picker(title, selection: $selection) { content }
                 .labelsHidden()
                 .pickerStyle(.menu)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct BufferChartItem: Identifiable {
-    let id: String
-    let date: Date
-    let kind: String
-    let value: Double
-}
-
-/// Doellijn (gestippeld) en verwachte buffer per maand.
-struct BufferChart: View {
-    let points: [BufferPoint]
-    var height: CGFloat = 200
-
-    static let targetName = "Doelbuffer"
-    static let projectedName = "Verwachte buffer"
-
-    private var items: [BufferChartItem] {
-        var list: [BufferChartItem] = []
-        for p in points {
-            let date = p.month.firstDay
-            list.append(BufferChartItem(id: p.id + "-doel", date: date, kind: BufferChart.targetName, value: p.target))
-            list.append(BufferChartItem(id: p.id + "-buffer", date: date, kind: BufferChart.projectedName, value: p.projected))
-        }
-        return list
-    }
-
-    private var topValue: Double {
-        var top = 1.0
-        for p in points { top = max(top, p.target, p.projected) }
-        return top * 1.05
-    }
-
-    var body: some View {
-        Chart(items) { item in
-            LineMark(x: .value("Maand", item.date), y: .value("Bedrag", item.value))
-                .foregroundStyle(by: .value("Soort", item.kind))
-                .lineStyle(StrokeStyle(lineWidth: 2.5, dash: item.kind == BufferChart.targetName ? [6, 4] : []))
-        }
-        .chartForegroundStyleScale(domain: [BufferChart.targetName, BufferChart.projectedName],
-                                   range: [Theme.warning, Theme.accent])
-        .chartYScale(domain: 0...topValue)
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4))
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
-                AxisGridLine()
-                AxisValueLabel {
-                    if let v = value.as(Double.self) { Text(Fmt.compact(v)).font(.caption2) }
-                }
-            }
-        }
-        .chartLegend(position: .bottom, alignment: .leading)
-        .frame(height: height)
-        .accessibilityLabel("Grafiek van je buffer tegenover je doel")
     }
 }

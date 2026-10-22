@@ -1,152 +1,83 @@
 import SwiftUI
 
+/// De tabroot van Instellingen: een korte lijst van vier groepen en zes rijen, elke rij met een korte waarde eronder en een
+/// pijltje naar een eigen pagina. Account staat bovenaan en los van de rest. Geen sheet en geen "Klaar"-knop: de stapel komt
+/// van `TabStack` (iOS) en op de Mac staat Instellingen in het `Settings`-venster (`SettingsPane`).
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @Environment(AuthStore.self) private var auth
     @Environment(\.cloudAccount) private var cloud
-    @Environment(\.dismiss) private var dismiss
-    @State private var confirmSample = false
-    @State private var confirmErase = false
-    @State private var diagnostics: [String] = []
-    @State private var isTesting = false
-
-    private func setting<T>(_ keyPath: WritableKeyPath<AppSettings, T>) -> Binding<T> {
-        Binding(get: { store.data.settings[keyPath: keyPath] },
-                set: { value in store.mutate { $0.settings[keyPath: keyPath] = value } })
-    }
+    @Environment(\.syncController) private var sync
 
     var body: some View {
-        NavigationStack {
-            Form {
-                AccountAndSyncSections()
-
-                Section {
-                    NumberRow(title: "Inflatie per jaar", value: setting(\.inflation), unit: .percent, maxDigits: 2)
-                    NumberRow(title: "Opnamepercentage", value: setting(\.defaultWithdrawalRate), unit: .percent, maxDigits: 2)
-                    NumberRow(title: "Spaarrente", value: setting(\.savingsRate), unit: .percent, maxDigits: 2)
-                    NumberRow(title: "Buffer op bankrekening", value: setting(\.bankBufferMonths), unit: .plain("mnd"), maxDigits: 1)
-                } header: {
-                    Text("Rekenen")
-                } footer: {
-                    Text("Inflatie gebruikt de app voor 'koopkracht van vandaag'. Het opnamepercentage is het deel van je kapitaal dat je per jaar opneemt (4% is gebruikelijk). De buffer is het aantal maanden aan uitgaven dat op je rekening blijft staan.")
-                }
-
-                MarketDataSection()
-
-                Section {
-                    Toggle("Koersen automatisch ophalen", isOn: setting(\.autoRefreshPrices))
-                    Button {
-                        Task { await store.refreshPrices(force: true) }
-                    } label: {
-                        HStack {
-                            Text("Nu vernieuwen")
-                            Spacer()
-                            if store.isRefreshingPrices { ProgressView().controlSize(.small) }
-                        }
-                    }
-                    if let last = store.lastPriceRefresh {
-                        Text("Laatst bijgewerkt: \(Fmt.dateTime(last))").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    Button {
-                        isTesting = true
-                        Task {
-                            diagnostics = await QuoteDiagnostics.run()
-                            isTesting = false
-                        }
-                    } label: {
-                        HStack {
-                            Text("Koersverbinding testen")
-                            Spacer()
-                            if isTesting { ProgressView().controlSize(.small) }
-                        }
-                    }
-                    ForEach(diagnostics, id: \.self) { line in
-                        Text(line).font(.footnote).foregroundStyle(.secondary)
-                    }
-                    if let message = store.priceMessage {
-                        Text(message).font(.footnote).foregroundStyle(Theme.negative)
-                    }
-                } header: {
-                    Text("Koersen")
-                } footer: {
-                    Text("Koersen komen van Yahoo Finance, met Stooq en CoinGecko als reserve. Dat zijn een gratis, onofficiële bron zonder garantie op beschikbaarheid of juistheid. Gebruik de cijfers als indicatie.")
-                }
-
-                BackupSection()
-
-                Section {
-                    Button("Voorbeelddata laden") { confirmSample = true }
-                    Button("Alles wissen", role: .destructive) { confirmErase = true }
-                    if store.saveFailed {
-                        Label("Opslaan is mislukt. Controleer of er ruimte is op je apparaat.", systemImage: "exclamationmark.triangle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.negative)
-                    }
-                } header: {
-                    Text("Gegevens")
-                } footer: {
-                    if FirebaseConfig.isConfigured {
-                        Text("Je gegevens staan op dit apparaat en worden gesynchroniseerd met je Firebase-account. Zonder internet werk je gewoon op de gegevens van dit apparaat.")
-                    } else {
-                        Text("Alles wordt alleen op dit apparaat bewaard. Accounts zijn lokaal: er is geen server en geen synchronisatie tussen apparaten.")
-                    }
-                }
-
-                Section("Over") {
-                    HStack {
-                        Text("MyBuddy")
-                        Spacer()
-                        Text("Versie 1.0").foregroundStyle(.secondary)
-                    }
-                    Text("Een persoonlijke indicatie, geen financieel advies. Rendementen uit het verleden zijn geen garantie voor de toekomst.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .background { MeshBackground() }
-            .navigationTitle("Instellingen")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Klaar") { dismiss() }
-                }
-            }
-            .confirmationDialog("Voorbeelddata laden?", isPresented: $confirmSample, titleVisibility: .visible) {
-                Button("Vervang mijn gegevens door voorbeelddata", role: .destructive) {
-                    // loadSampleData stempelt de wijziging zelf voor de cloud.
-                    store.loadSampleData()
-                    Task { await store.refreshPrices(force: true) }
-                }
-            } message: {
-                if FirebaseConfig.isConfigured {
-                    Text("Je huidige gegevens worden vervangen, ook in de cloud en op je andere apparaten.")
-                } else {
-                    Text("Je huidige gegevens worden vervangen.")
-                }
-            }
-            .confirmationDialog("Alles wissen?", isPresented: $confirmErase, titleVisibility: .visible) {
-                Button("Wis alle gegevens", role: .destructive) {
-                    // eraseEverything stempelt de wijziging zelf voor de cloud.
-                    store.eraseEverything()
-                    // Ook wat dit apparaat voor dit account onthoudt (spaardoel-concept, buffer, uurloon) gaat weg.
-                    let account = accountPrefsID(auth: auth, cloud: cloud)
-                    AccountPrefs.clearAll(account: account)
-                    SavingsGoalDraft.clearStored(account: account)
-                }
-            } message: {
-                if FirebaseConfig.isConfigured {
-                    Text("Dit wist ook je gegevens in de cloud en op je andere apparaten. Het kan niet ongedaan worden gemaakt.")
-                } else {
-                    Text("Dit kan niet ongedaan worden gemaakt.")
-                }
-            }
+        ListScaffold(title: "Instellingen", large: true) {
+            accountSection
+            calculationSection
+            dataSection
+            aboutSection
         }
-        #if os(macOS)
-        .frame(minWidth: 480, minHeight: 560)
-        #endif
+    }
+
+    // MARK: Groepen
+
+    private var accountSection: some View {
+        Section {
+            SettingsLinkRow(page: .account,
+                            title: accountTitle,
+                            subtitle: accountStatus.text,
+                            symbol: "person.crop.circle",
+                            badgeSize: 40,
+                            needsAttention: accountStatus.needsAttention)
+        }
+    }
+
+    private var calculationSection: some View {
+        Section {
+            SettingsLinkRow(page: .calculations, subtitle: calculationsSummary)
+            SettingsLinkRow(page: .prices, subtitle: pricesSummary)
+        }
+    }
+
+    private var dataSection: some View {
+        Section {
+            SettingsLinkRow(page: .data, subtitle: "Back-up, importeren, exporteren")
+            SettingsLinkRow(page: .layout, subtitle: "Volgorde van de blokken")
+        }
+    }
+
+    private var aboutSection: some View {
+        Section {
+            SettingsLinkRow(page: .about, subtitle: SettingsText.versionText(short: SettingsText.appVersionShort))
+        }
+    }
+
+    // MARK: Waarden
+
+    /// Het e-mailadres (met een lokaal account de naam, als die er is).
+    private var accountTitle: String {
+        if FirebaseConfig.isConfigured, let user = cloud?.user {
+            return user.email
+        }
+        if let account = auth.currentAccount {
+            return account.displayName ?? account.email
+        }
+        return "Account"
+    }
+
+    /// De synchronisatiestatus onder het e-mailadres. Een conflict of een aanbod om lokale gegevens te uploaden is "Actie nodig".
+    private var accountStatus: SyncSummary {
+        let attention = sync?.importOffer != nil || sync?.conflict != nil
+        return SettingsText.syncSummary(isConfigured: FirebaseConfig.isConfigured,
+                                        status: sync?.displayStatus,
+                                        needsAttention: attention)
+    }
+
+    private var calculationsSummary: String {
+        let settings = store.data.settings
+        return SettingsText.calculationsSummary(inflation: settings.inflation, savingsRate: settings.savingsRate)
+    }
+
+    private var pricesSummary: String {
+        SettingsText.pricesSummary(automatic: store.data.settings.autoRefreshPrices, lastRefresh: store.lastPriceRefresh)
     }
 }

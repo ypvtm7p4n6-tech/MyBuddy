@@ -1,6 +1,9 @@
 import SwiftUI
 
-// MARK: - Gedeelde onderdelen
+// "Actuele cijfers" op de pagina Rekenen: inflatie en spaarrente van internet. Een knop haalt ze allebei op, elk cijfer heeft
+// een eigen rij met "Gebruik", en "Beide gebruiken" neemt ze samen over. Een opgehaald cijfer wordt pas gebruikt als je dat kiest.
+
+// MARK: - Toestand van een cijfer
 
 /// Toestand van één cijfer dat van internet wordt gehaald.
 private enum MarketLoad {
@@ -24,152 +27,54 @@ private func marketErrorMessage(_ error: Error) -> String {
     return fallback
 }
 
-/// Knoprij: icoon, titel en een draaiend rondje terwijl er wordt opgehaald.
-private struct MarketFetchLabel: View {
+// MARK: - Rijen
+
+/// Een opgehaald cijfer met uitleg, bron en een knop om het over te nemen.
+private struct MarketReadingRow: View {
     let title: String
-    let symbol: String
-    let loading: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .foregroundStyle(Theme.accent)
-                .frame(width: 24)
-            Text(title)
-            Spacer(minLength: 8)
-            if loading {
-                ProgressView().controlSize(.small)
-            }
-        }
-        .contentShape(Rectangle())
-    }
-}
-
-/// Het opgehaalde cijfer met uitleg, bron en een knop om het over te nemen.
-private struct MarketReadingCard: View {
     let reading: RateReading
-    let actionTitle: String
     let applied: Bool
     let onApply: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(Fmt.percent(reading.value, digits: 2))
-                .font(.system(.title2, design: .rounded, weight: .bold))
-                .minimumScaleFactor(0.6)
-                .lineLimit(1)
-            Text(reading.label)
-                .font(.footnote)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Bron: \(reading.source)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ChipButton(title: applied ? "Overgenomen" : actionTitle,
-                       symbol: applied ? "checkmark" : "arrow.down.circle") {
+        VStack(alignment: .leading, spacing: 8) {
+            AmountRow(title: title,
+                      value: Fmt.percent(reading.value, digits: 2),
+                      detail: "\(reading.label). Bron: \(reading.source).")
+            ActionButton(title: applied ? "Overgenomen" : "Gebruik",
+                         symbol: applied ? "checkmark" : "arrow.down.circle") {
                 onApply()
             }
-            .padding(.top, 4)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
     }
 }
 
-private struct MarketErrorText: View {
+/// De mislukte poging van een cijfer: symbool en tekst, zodat de betekenis niet alleen in de kleur zit.
+private struct MarketErrorRow: View {
+    let title: String
     let message: String
 
     var body: some View {
-        Text(message)
+        Label("\(title): \(message)", systemImage: "exclamationmark.triangle.fill")
             .font(.footnote)
             .foregroundStyle(Theme.negative)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-// MARK: - Losse rij
+// MARK: - Sectie voor de pagina Rekenen
 
-/// Eén knop die een cijfer van internet haalt, het resultaat toont en een knop 'Overnemen' geeft.
-/// Te gebruiken in een Form of in een GlassBlock; met `.chipStyle()` krijgt de knop het glazen capsule-uiterlijk
-/// van de andere acties in een blok.
-struct RateFetchRow: View {
-    let title: String
-    let systemImage: String
-    let fetch: () async throws -> RateReading
-    let apply: (Double) -> Void
-
-    private var usesChips = false
-    @State private var load: MarketLoad = .idle
-    @State private var applied = false
-
-    init(title: String, systemImage: String,
-         fetch: @escaping () async throws -> RateReading,
-         apply: @escaping (Double) -> Void) {
-        self.title = title
-        self.systemImage = systemImage
-        self.fetch = fetch
-        self.apply = apply
-    }
-
-    /// Zelfde knop in het uiterlijk van `ChipButton` (voor in een GlassBlock).
-    func chipStyle(_ enabled: Bool = true) -> RateFetchRow {
-        var copy = self
-        copy.usesChips = enabled
-        return copy
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                Task { await run() }
-            } label: {
-                if usesChips {
-                    ChipLabel(title: load.isLoading ? "Bezig met ophalen…" : title, symbol: systemImage)
-                } else {
-                    MarketFetchLabel(title: title, symbol: systemImage, loading: load.isLoading)
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(load.isLoading)
-
-            switch load {
-            case .loaded(let reading):
-                MarketReadingCard(reading: reading, actionTitle: "Overnemen", applied: applied) {
-                    apply(reading.value)
-                    applied = true
-                }
-            case .failed(let message):
-                MarketErrorText(message: message)
-            case .idle, .loading:
-                EmptyView()
-            }
-        }
-    }
-
-    @MainActor
-    private func run() async {
-        load = .loading
-        applied = false
-        do {
-            let reading = try await fetch()
-            load = .loaded(reading)
-        } catch is CancellationError {
-            load = .idle
-        } catch {
-            load = .failed(marketErrorMessage(error))
-        }
-    }
-}
-
-// MARK: - Sectie voor in Instellingen
-
-/// Rijen voor in een Form (Instellingen): haalt inflatie en spaarrente van internet en laat de gebruiker kiezen of
-/// de waarde wordt overgenomen. Levert Sections terug, dus nooit in een ScrollView zetten.
+/// Rijen voor in een `List` (Rekenen): haalt inflatie en spaarrente van internet en laat de gebruiker kiezen of de waarde wordt
+/// overgenomen. Levert een `Section` terug, dus alleen in een lijst gebruiken.
 struct MarketDataSection: View {
     @Environment(AppStore.self) private var store
     @State private var inflation: MarketLoad = .idle
     @State private var savings: MarketLoad = .idle
     @State private var inflationApplied = false
     @State private var savingsApplied = false
+    @State private var fetchCount = 0
+    @State private var failureCount = 0
 
     private var anyLoading: Bool { inflation.isLoading || savings.isLoading }
 
@@ -183,73 +88,97 @@ struct MarketDataSection: View {
 
     var body: some View {
         Section {
-            Button {
-                Task { await loadInflation() }
-            } label: {
-                MarketFetchLabel(title: "Inflatie ophalen", symbol: "chart.line.uptrend.xyaxis", loading: inflation.isLoading)
-            }
-            .buttonStyle(.plain)
-            .disabled(inflation.isLoading)
-            results(for: inflation, applied: inflationApplied) { useInflation($0) }
+            fetchRow
+            inflationResult
+            savingsResult
+            bothRow
+            updatedRow
+        } header: {
+            SectionHeader("Actuele cijfers")
+        } footer: {
+            SettingsFootnote("Inflatie komt van de Wereldbank (laatst bekende jaar), de spaarrente van de Europese Centrale Bank. Een opgehaald cijfer wordt pas gebruikt als je 'Gebruik' kiest.")
+        }
+        .sensoryFeedback(.success, trigger: fetchCount)
+        .sensoryFeedback(.error, trigger: failureCount)
+    }
 
-            Button {
-                Task { await loadSavings() }
-            } label: {
-                MarketFetchLabel(title: "Spaarrente ophalen", symbol: "percent", loading: savings.isLoading)
-            }
-            .buttonStyle(.plain)
-            .disabled(savings.isLoading)
-            results(for: savings, applied: savingsApplied) { useSavings($0) }
+    // MARK: Onderdelen
 
-            Button {
-                Task { await loadInflation() }
-                Task { await loadSavings() }
-            } label: {
-                MarketFetchLabel(title: "Alles ophalen", symbol: "arrow.triangle.2.circlepath", loading: anyLoading)
-            }
-            .buttonStyle(.plain)
-            .disabled(anyLoading)
-
-            if let both = bothReadings, !(inflationApplied && savingsApplied) {
-                ChipButton(title: "Beide gebruiken", symbol: "checkmark.circle") {
-                    useBoth(inflation: both.inflation.value, savings: both.savings.value)
+    private var fetchRow: some View {
+        Button {
+            Task { @MainActor in await loadBoth() }
+        } label: {
+            HStack(spacing: 8) {
+                Label("Ophalen", systemImage: "arrow.triangle.2.circlepath")
+                Spacer(minLength: 8)
+                if anyLoading {
+                    ProgressView()
+                        .controlSize(.small)
                 }
             }
+            .frame(minHeight: Theme.minTapTarget)
+            .contentShape(Rectangle())
+        }
+        .disabled(anyLoading)
+    }
 
-            if let last = store.data.settings.lastMarketUpdate {
-                LabeledContent("Laatst bijgewerkt", value: Fmt.dateTime(last))
-            } else {
-                Text("Nog niet bijgewerkt")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+    @ViewBuilder
+    private var inflationResult: some View {
+        switch inflation {
+        case .loaded(let reading):
+            MarketReadingRow(title: "Inflatie per jaar", reading: reading, applied: inflationApplied) {
+                useInflation(reading.value)
             }
-        } header: {
-            Text("Cijfers van internet")
-        } footer: {
-            Text("Inflatie komt van de Wereldbank (laatst bekende jaar). De spaarrente is de depositorente van de Europese Centrale Bank: een richtpunt, want banken geven vaak iets minder. Een opgehaald cijfer wordt pas gebruikt als je op 'Gebruik' tikt.")
+        case .failed(let message):
+            MarketErrorRow(title: "Inflatie", message: message)
+        case .idle, .loading:
+            EmptyView()
         }
     }
 
     @ViewBuilder
-    private func results(for load: MarketLoad, applied: Bool, onApply: @escaping (Double) -> Void) -> some View {
-        switch load {
+    private var savingsResult: some View {
+        switch savings {
         case .loaded(let reading):
-            MarketReadingCard(reading: reading, actionTitle: "Gebruik", applied: applied) {
-                onApply(reading.value)
+            MarketReadingRow(title: "Spaarrente", reading: reading, applied: savingsApplied) {
+                useSavings(reading.value)
             }
         case .failed(let message):
-            MarketErrorText(message: message)
+            MarketErrorRow(title: "Spaarrente", message: message)
         case .idle, .loading:
             EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var bothRow: some View {
+        if let both = bothReadings, !(inflationApplied && savingsApplied) {
+            ActionButton(title: "Beide gebruiken", symbol: "checkmark.circle", prominent: true) {
+                useBoth(inflation: both.inflation.value, savings: both.savings.value)
+            }
+            .listRowBackground(Color.clear)
+        }
+    }
+
+    @ViewBuilder
+    private var updatedRow: some View {
+        if let last = store.data.settings.lastMarketUpdate {
+            LabeledContent("Laatst bijgewerkt", value: Fmt.dateTime(last))
+        } else {
+            Text("Nog niet bijgewerkt")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
         }
     }
 
     // MARK: Ophalen
 
     @MainActor
-    private func loadInflation() async {
+    private func loadBoth() async {
         inflation = .loading
+        savings = .loading
         inflationApplied = false
+        savingsApplied = false
         let market = store.market
         do {
             let reading = try await market.fetchInflation()
@@ -259,13 +188,6 @@ struct MarketDataSection: View {
         } catch {
             inflation = .failed(marketErrorMessage(error))
         }
-    }
-
-    @MainActor
-    private func loadSavings() async {
-        savings = .loading
-        savingsApplied = false
-        let market = store.market
         do {
             let reading = try await market.fetchSavingsBenchmarkRate()
             savings = .loaded(reading)
@@ -273,6 +195,13 @@ struct MarketDataSection: View {
             savings = .idle
         } catch {
             savings = .failed(marketErrorMessage(error))
+        }
+        if case .failed = inflation {
+            failureCount += 1
+        } else if case .failed = savings {
+            failureCount += 1
+        } else {
+            fetchCount += 1
         }
     }
 

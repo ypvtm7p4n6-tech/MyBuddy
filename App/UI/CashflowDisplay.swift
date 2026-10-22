@@ -75,6 +75,25 @@ enum CashflowText {
     static func days(_ count: Int) -> String {
         count == 1 ? "1 dag" : "\(count) dagen"
     }
+
+    /// "Vandaag" of "Gepland" bij een dag; nil voor een dag die al geweest is.
+    static func status(of day: DayTotals) -> String? {
+        if day.isToday { return "Vandaag" }
+        if day.isPlanned { return "Gepland" }
+        return nil
+    }
+
+    /// De naam van wat er van het inkomen overblijft (termenlijst): "Nog te verdelen" voor deze en komende maanden,
+    /// "Overgehouden" voor een maand die voorbij is.
+    static func leftoverTitle(month: YearMonth, current: YearMonth) -> String {
+        month >= current ? "Nog te verdelen" : "Overgehouden"
+    }
+
+    /// Het saldo aan het eind van een maand: "Verwacht eind oktober" (deze en komende maanden) of "Saldo eind september".
+    static func monthEndTitle(_ month: YearMonth, current: YearMonth) -> String {
+        let name = Fmt.monthNames[min(max(month.month, 1), 12) - 1]
+        return month >= current ? "Verwacht eind \(name)" : "Saldo eind \(name)"
+    }
 }
 
 /// Houdt de dagboekhouding van de maanden bij die één scherm nodig heeft, zodat elke maand per berekening maar één keer
@@ -250,7 +269,7 @@ enum CashflowSummary {
         rows.append(movement(.inflow, "Binnen", effect: CentsMath.int(l.inflow), zeroSign: "+", tone: .positive,
                              note: payouts > 1 ? "Met \(payouts) salarisuitbetalingen" : nil))
         if CentsMath.int(l.manualInflow) != 0 {
-            rows.append(CashflowRow(kind: .inflowPlan, title: "Salaris en inkomsten", sign: "", amount: l.planInflow, style: .detail))
+            rows.append(CashflowRow(kind: .inflowPlan, title: "Inkomen", sign: "", amount: l.planInflow, style: .detail))
             rows.append(CashflowRow(kind: .inflowManual, title: "Handmatig gestort", sign: "", amount: l.manualInflow, style: .detail))
         }
 
@@ -321,7 +340,7 @@ enum CashflowSummary {
 
 // MARK: Controle
 
-/// De controle "klopt het met je overzicht?". Is alles in orde (`MonthLedger.allReconciles`), dan zijn er geen
+/// De controle "klopt het met de maandcijfers?". Is alles in orde (`MonthLedger.allReconciles`), dan zijn er geen
 /// meldingen. Anders staat er per afwijking een Nederlandse zin met het verschil, zodat de gebruiker ziet waar het zit.
 struct LedgerCheck: Equatable {
     struct Issue: Identifiable, Equatable {
@@ -404,7 +423,7 @@ struct LedgerCheck: Equatable {
             let b = CentsMath.int(days)
             guard a != b else { return }
             out.append(Issue(id: "overview-\(title)",
-                             text: "\(title): overzicht \(Fmt.euroExact(overview)), dagen \(Fmt.euroExact(days)) (verschil \(text(a - b)))."))
+                             text: "\(title): maandcijfers \(Fmt.euroExact(overview)), dagen \(Fmt.euroExact(days)) (verschil \(text(a - b)))."))
         }
         compare("Inkomen", overview: l.income, days: l.planInflow)
         compare("Uitgaven van je rekening", overview: l.expensesFromBank, days: l.planOutflow)
@@ -420,7 +439,7 @@ struct LedgerCheck: Equatable {
             compare("Nog te verdelen op de laatste dag", overview: l.remaining, days: last.remainingSoFar)
         }
         if out.isEmpty {
-            out.append(Issue(id: "overview", text: "De dagen sluiten niet met het overzicht van deze maand."))
+            out.append(Issue(id: "overview", text: "De dagen sluiten niet met de maandcijfers van deze maand."))
         }
         return out
     }
@@ -514,7 +533,7 @@ struct BankLowPointNote: Equatable {
 
     /// - Parameters:
     ///   - low: de dag met het laagste saldo (uit de dagboekhouding, dus hetzelfde saldo als op de dagkaarten).
-    ///   - buffer: de gewenste bankbuffer op de bankrekening (niet de noodbuffer van de buffercalculator).
+    ///   - buffer: het minimumsaldo dat je op de bankrekening wilt houden (niet de noodbuffer van Noodbuffer).
     ///   - balanceNow: het saldo van nu, nil als dat niet bekend is.
     static func make(low: DayTotals, buffer: Double, balanceNow: Double?, today: Date) -> BankLowPointNote? {
         guard let lowBalance = low.bankBalance else { return nil }
@@ -528,17 +547,141 @@ struct BankLowPointNote: Equatable {
                 return BankLowPointNote(text: "Op \(day) stond je saldo onder nul (\(balance)).", severe: true)
             }
             let when = isToday ? "vandaag" : "op \(day)"
-            return BankLowPointNote(text: "Let op: \(when) staat je saldo onder nul (\(balance)). Kijk of je een uitgave of overschrijving naar een andere dag kunt zetten.",
+            return BankLowPointNote(text: "Let op: \(when) staat je saldo onder nul (\(balance)). Kijk of je een uitgave of inleg naar een andere dag kunt zetten.",
                                     severe: true)
         }
-        // De buffermelding is bedoeld voor een dip die je plan veroorzaakt. Zit je nu al onder je buffer,
-        // dan zie je dat bij het blok Buffer en blijft deze balk weg, zodat de melding "onder nul" opvalt.
+        // De melding over het minimumsaldo is bedoeld voor een dip die je plan veroorzaakt. Zit je nu al onder je minimumsaldo,
+        // dan zie je dat bij Minimumsaldo en blijft deze melding weg, zodat de melding "onder nul" opvalt.
         // Is het saldo van nu niet bekend, dan is er niets om mee te vergelijken en blijft de melding ook weg.
         if let now = balanceNow, buffer > 0 && lowBalance < buffer && now >= buffer && !past {
             let start = isToday ? "Vandaag" : "Op \(day)"
-            return BankLowPointNote(text: "\(start) zakt je saldo naar \(balance). Dat is onder je gewenste bankbuffer van \(Fmt.euro(buffer)).",
+            return BankLowPointNote(text: "\(start) zakt je saldo naar \(balance). Dat is onder je minimumsaldo van \(Fmt.euro(buffer)).",
                                     severe: false)
         }
         return nil
+    }
+
+    /// De melding voor `month`, uit de dagboekhouding van `book`: het laagste saldo in het bereik van `BankLowPointWindow`, met
+    /// het minimumsaldo en het saldo van nu uit de rekenmotor. nil zonder enig saldo of meetpunt, en als alles in orde is.
+    static func forMonth(_ month: YearMonth, in data: FinanceData, current: YearMonth, today: Date,
+                         book: LedgerBook) -> BankLowPointNote? {
+        // Zonder een enkel meetpunt of boeking is er nergens een saldo: dan valt er niets te rekenen.
+        guard data.hasBankBalance else { return nil }
+        let window = BankLowPointWindow.range(for: month, current: current, today: today)
+        guard let low = CashflowLowPoint.lowest(in: book.days(from: window.from, to: window.to)) else { return nil }
+        return BankLowPointNote.make(low: low,
+                                     buffer: data.bankBuffer(current: current),
+                                     balanceNow: data.bankBalanceNowIfKnown(current: current, today: today),
+                                     today: today)
+    }
+}
+
+// MARK: Binnen en eruit
+
+/// De cijfers van "Binnen en eruit" voor een maand, allemaal uit dezelfde bronnen als de rest van de app: `expenseOverview`
+/// (inkomen, uitgaven, inleg) en het bankdeel van elke uitgavenregel (`fromBank(of:)`). Er wordt hier niets zelf uitgerekend.
+/// Inkomen min wat van de bank gaat min inleg is `leftAfterTransfers`, hetzelfde getal als `remaining(in:)`.
+struct BankFlowFigures: Equatable {
+    let income: Double
+    /// Alle vaste en variabele uitgaven, ook wat uit spaarpotten komt.
+    let fixed: Double
+    let variable: Double
+    /// Het deel van de uitgaven dat uit spaarpotten wordt betaald.
+    let fromPots: Double
+    /// Het deel van de vaste en de variabele uitgaven dat van de bankrekening gaat.
+    let fixedFromBank: Double
+    let variableFromBank: Double
+    let toPots: Double
+    let toInvestments: Double
+    let leftAfterExpenses: Double
+    let leftAfterTransfers: Double
+
+    init(_ d: FinanceData, month: YearMonth) {
+        let overview = d.expenseOverview(in: month)
+        income = overview.income
+        fixed = overview.fixed
+        variable = overview.variable
+        fromPots = overview.fromPots
+        toPots = overview.toPots
+        toInvestments = overview.toInvestments
+        leftAfterExpenses = overview.leftAfterExpenses
+        leftAfterTransfers = overview.leftAfterTransfers
+        fixedFromBank = BankFlowFigures.bankPart(d, month: month, kind: .fixed)
+        variableFromBank = BankFlowFigures.bankPart(d, month: month, kind: .variable)
+    }
+
+    /// Het deel van de uitgaven van één soort dat van de bankrekening gaat, zoals de rekenmotor het boekt per regel.
+    private static func bankPart(_ d: FinanceData, month: YearMonth, kind: ExpenseKind) -> Double {
+        guard month >= d.startMonth else { return 0 }
+        let cents = d.expenseLines(in: month, kind: kind).map { CentsMath.int(d.fromBank(of: $0)) }
+        return CentsMath.value(CentsMath.sum(cents))
+    }
+
+    /// Er komt niets binnen, er gaat niets uit en er is niets ingelegd: dan is er niets om te tonen.
+    var isEmpty: Bool {
+        income == 0 && fixed == 0 && variable == 0 && toPots == 0 && toInvestments == 0
+    }
+}
+
+// MARK: Boekingen
+
+/// Een regel in de lijst Boekingen: een ingevuld saldo of een boeking op de bankrekening.
+struct BankHistoryItem: Identifiable, Equatable {
+    let id: UUID
+    let date: Date
+    let title: String
+    let detail: String
+    /// Bij een ingevuld saldo het saldo, anders het bedrag van de boeking (positief = erbij).
+    let amount: Double
+    let isSnapshot: Bool
+
+    /// Alle ingevulde saldi en boekingen, de nieuwste eerst (bij dezelfde datum in een vaste volgorde).
+    static func items(from d: FinanceData) -> [BankHistoryItem] {
+        var list: [BankHistoryItem] = []
+        for snapshot in d.bankSnapshots {
+            list.append(BankHistoryItem(id: snapshot.id, date: snapshot.date, title: "Saldo ingevuld", detail: snapshot.note,
+                                        amount: snapshot.balance, isSnapshot: true))
+        }
+        for entry in d.bankEntries {
+            list.append(BankHistoryItem(id: entry.id, date: entry.date, title: entry.kind.title, detail: entry.note,
+                                        amount: entry.amount, isSnapshot: false))
+        }
+        return list.sorted { lhs, rhs in
+            lhs.date != rhs.date ? lhs.date > rhs.date : lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    /// De tekst voor de bevestiging bij het verwijderen van een boeking, of nil als de boeking los staat (dan is verwijderen
+    /// veilig en vraagt de app niets).
+    static func removalWarning(forBankEntry id: UUID, in d: FinanceData) -> String? {
+        guard let entry = d.bankEntries.first(where: { $0.id == id }) else { return nil }
+        // Een overboeking met `pairID`: de rekenmotor verwijdert beide helften en zegt zelf wat er verdwijnt.
+        if let warning = d.pairedEntries(ofBank: id).warning { return warning }
+        // Een oude overboeking zonder `pairID`: alleen de kant op de bankrekening verdwijnt.
+        if entry.kind == .toPot || entry.kind == .fromPot {
+            return "Dit verwijdert alleen de boeking op de bankrekening. De bijbehorende boeking bij de spaarpot blijft staan; die verwijder je bij de spaarpot."
+        }
+        return nil
+    }
+}
+
+// MARK: Komende dagen
+
+/// Het venster van de kaart "Komende dagen" op het Overzicht: de komende 14 dagen, vandaag meegerekend.
+enum UpcomingDaysWindow {
+    static let length = 14
+
+    /// Van het begin van vandaag tot en met de laatste dag van het venster.
+    static func range(today: Date) -> (from: Date, to: Date) {
+        let cal = YearMonth.calendar
+        let start = cal.startOfDay(for: today)
+        let end = cal.date(byAdding: .day, value: length - 1, to: start) ?? start
+        return (start, end)
+    }
+
+    /// De dagen in het venster waarop iets gebeurt, met hun saldo uit de dagboekhouding.
+    static func busyDays(in book: LedgerBook, today: Date) -> [DayTotals] {
+        let window = range(today: today)
+        return book.days(from: window.from, to: window.to).filter { !$0.events.isEmpty }
     }
 }

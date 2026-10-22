@@ -816,7 +816,9 @@ final class HoldingChartScenarioTests: XCTestCase {
         let m = model(d)
         assertChartOrActionableEmptyState(m, "g2")
         XCTAssertNil(m.empty)
-        XCTAssertTrue(m.allPoints.allSatisfy { $0.value >= 0 }, "een verwachte waarde onder 0 bestaat niet")
+        let valueLine = m.lines.first(where: { $0.id == "waarde" })
+        XCTAssertNotNil(valueLine)
+        XCTAssertTrue((valueLine?.points ?? []).allSatisfy { $0.value >= 0 }, "een verwachte waarde onder 0 bestaat niet")
     }
 
     // MARK: de drie -mybuddy-demo-holding-scenario's (DebugLaunch.DemoHoldingScenario)
