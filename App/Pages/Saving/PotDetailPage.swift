@@ -8,7 +8,7 @@ struct PotDetailPage: View {
     @Environment(AppStore.self) private var store
     @State private var sheet: PotDetailSheet?
 
-    /// De bladen die deze pagina opent, in een `.sheet(item:)`.
+    /// De bladen die deze pagina opent, via een blad-item.
     private enum PotDetailSheet: Identifiable {
         case entry(PotAction)
         case edit

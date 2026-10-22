@@ -31,7 +31,7 @@ private struct FavoritePotsCard: View {
     @Environment(AppStore.self) private var store
     @State private var sheet: PotsCardSheet?
 
-    /// De bladen die deze kaart opent, in een `.sheet(item:)`.
+    /// De bladen die deze kaart opent, via een blad-item.
     private enum PotsCardSheet: Identifiable {
         case newPot
         case pickPots
@@ -153,7 +153,7 @@ private struct FavoriteHoldingsCard: View {
     @Environment(Router.self) private var router
     @State private var sheet: HoldingsCardSheet?
 
-    /// De bladen die deze kaart opent, in een `.sheet(item:)`.
+    /// De bladen die deze kaart opent, via een blad-item.
     private enum HoldingsCardSheet: Identifiable {
         case newHolding
         case pickHoldings

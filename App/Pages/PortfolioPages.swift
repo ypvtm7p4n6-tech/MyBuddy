@@ -95,7 +95,7 @@ struct PortfolioPage: View {
     /// Hoe ver de grafiek terugkijkt. Een keuze die (nog) niets verandert valt terug op "Alles".
     @State private var chosenWindow: PortfolioWindow = .year
 
-    /// De bladen die deze pagina opent, in een `.sheet(item:)`.
+    /// De bladen die deze pagina opent, via een blad-item.
     private enum PortfolioSheet: Identifiable {
         case newHolding
         case editHolding(Holding)

@@ -8,7 +8,7 @@ struct HoldingDetailPage: View {
     @Environment(AppStore.self) private var store
     @State private var sheet: HoldingDetailSheet?
 
-    /// De bladen die deze pagina opent, in een `.sheet(item:)`.
+    /// De bladen die deze pagina opent, via een blad-item.
     private enum HoldingDetailSheet: Identifiable {
         case edit
         case value
