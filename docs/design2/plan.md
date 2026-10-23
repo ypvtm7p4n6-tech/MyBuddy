@@ -1,24 +1,24 @@
 # MyBuddy v2: in de stijl van Apple Muziek en Apple TV (ontwerp- en bouwplan)
 
-Peildatum 23 oktober 2026, basis `HEAD` 1b98404. Uitvoerbaar bouwplan voor "verander het design opnieuw waardoor de app simpeler wordt, een combinatie van Apple Muziek en Apple TV", daarna "build". Bronnen: de code (RootView, Router, Navigation, UI, Pages/Tabs), `docs/design/plan.md`, het onderzoek `docs/design2/patterns.md` (tags `[K]`, `[A]`, `[P]`) en eigen proeven tegen de typecontrole (par. 2.2). Er is niets in `App/` of `CoreTests/` aangepast.
+Peildatum 23 oktober 2026, basis `HEAD` 1b98404. Uitvoerbaar bouwplan voor "verander het design opnieuw waardoor de app simpeler wordt, een combinatie van Apple Muziek en Apple TV", daarna "build". Bronnen: de code, `docs/design/plan.md`, het onderzoek `docs/design2/patterns.md` en eigen proeven tegen de typecontrole (2.2). Er is niets in `App/` of `CoreTests/` aangepast.
 
-**Gezag.** Dit plan vervangt `docs/design/plan.md` voor tabstructuur (2.1 t/m 2.7), Instellingen als tab (K2, K3), kaartenpagina's per tab, 4.4 A, 4.5, werkpakketten en eigendom (6). Bindend blijft: kleuren en tokens (4.1, 4.2), gedragsregels 4.6, grafieken (5), Instellingen en Account (3.2 t/m 3.6), de termenlijst 2.8 (aangevuld in 1.6), `hig-notes.md`. **Lezen:** par. 0 besluiten; 1 wat de gebruiker ziet en waar elke oude functie heen gaat (1.5); 2 het contract met exacte handtekeningen; 3 pagina's; 4 pakketten, golven, eigendom; 5 verificatie; 6 risico's.
+**Gezag.** Dit plan vervangt `docs/design/plan.md` voor tabstructuur (2.1 t/m 2.7), Instellingen als tab (K2, K3), kaartenpagina's per tab, 4.4 A, 4.5, werkpakketten en eigendom (6). Bindend blijft: kleuren en tokens (4.1, 4.2), gedragsregels 4.6, grafieken (5), Instellingen en Account (3.2 t/m 3.6), de termenlijst 2.8 (aangevuld in 1.6), `hig-notes.md`. **Lezen:** 0 besluiten, 1 architectuur en oud naar nieuw (1.5), 2 contract, 3 pagina's, 4 pakketten en eigendom, 5 verificatie, 6 risico's.
 
 ## 0. Besluiten (bindend; geen vragen)
 
 | # | Besluit |
 |---|---|
 | B1 | **Drie tabs: Home, Bibliotheek, Zoeken** (`Tab(value:role: .search)`), `.tabViewStyle(.sidebarAdaptable)` op iPhone, iPad en Mac. Reden: gebruiker; TAB-3, TAB-9, SID-1. |
-| B2 | **Tabtitel "Home"** (woord van de gebruiker); "Overzicht" vervalt overal. Reden: Een woord per begrip; de oude termenlijst verbood "Home" (1.6). |
+| B2 | **Tabtitel "Home"** (woord van de gebruiker); "Overzicht" vervalt overal. Reden: een woord per begrip (1.6). |
 | B3 | **Instellingen is geen tab.** iPhone en iPad: een profielknop rechtsboven op de drie wortels pusht `.settingsRoot` (de bestaande lijst, Account eerst en los); nooit een sheet. Mac: geen knop, het `Settings`-venster (Cmd+komma, App-menu). Reden: gebruiker; SID-4, TLB-7. |
 | B4 | **Eerlijk oordeel over "Instellingen altijd bereikbaar"** (eis uit K2/K3): bewust verruimd van 1 tik vanaf elke diepte naar **1 tik vanaf elke tabwortel, 2 vanaf elke diepte**, plus Cmd+komma (Mac, iPad met toetsenbord) en Zoeken. Synchronisatie-aandacht: stip op de profielknop (vervangt de tabbadge) en melding bovenaan Home. Reden: Apple Muziek doet dit ook; vindbaarheid blijft gehaald, snelheid vanaf diepte niet. |
 | B5 | **Een pagina opent op de stapel waar je bent.** `Destination.tab` vervalt; `router.open(_:)` duwt op het pad van de huidige tab (een pagina mag op twee stapels staan); `router.go(_:)` (sneltoetsen, diepe links, `-mybuddy-open`) selecteert de Bibliotheek met ouders + pagina, behalve Instellingen (push op de huidige stapel) en de wortels. K16 blijft: nooit twee keer dezelfde pagina in een pad. Reden: geen tabwissel bij een link. |
 | B6 | **Home = hero en plank.** Hero-carrousel (Nog te verdelen, Vermogen, Saldo vandaag met volgende betaling), daaronder vijf planken: Komende dagen, Spaarpotten, Beleggingen, Doelen, Hulpmiddelen. Plankkop = link "Toon alles". Hoogstens 8 tegels per plank. Reden: gebruiker; patterns 4.1, 4.2. |
 | B7 | **Bibliotheek = lijst, drie groepen, 13 rijen, dan Recent**: Deze maand (Maandoverzicht, Inkomen, Uitgaven, Verdelen, Bankrekening, Dag voor dag), Sparen en beleggen (Spaarpotten, Beleggingen), Plannen (Doelen, Noodbuffer, Versnellers, Toekomstschatting, Aankoopcheck). Rij = `MediaRow` met tegel. **Maandoverzicht is nieuw** (`.flow`): de kaart "Waar gaat je geld heen" had anders geen plek. Reden: niets mag verloren gaan. |
-| B8 | **Maandpagina's openen vanaf Home en Bibliotheek op de huidige maand** (`showCurrentMonth`); binnen die pagina's bladert de `MonthBar` (staat er al). Home en Bibliotheek lezen `focusMonth` en `periodMode` niet (K17). Reden: een regel, geen verrassing. |
+| B8 | **Maandpagina's openen vanaf Home en Bibliotheek op de huidige maand** (`showCurrentMonth`); binnen die pagina's bladert de `MonthBar` (staat er al). Home en Bibliotheek lezen `focusMonth` en `periodMode` niet (K17). |
 | B9 | **Zoeken**: zonder tekst tien bladertegels, met tekst resultaten per `SearchGroup` uit `SearchIndex`; geen zoekgeschiedenis; Cmd+F selecteert de tab en opent het veld; de zoekknop in de werkbalk vervalt. Reden: patterns 4.8; privacy. |
-| B10 | **Spaarpot, belegging en doel zijn albumpagina's**: `AlbumHeader` als eerste rij van de bestaande `List`, daaronder de bestaande secties als tracklijst (swipe, contextmenu), grafieken blijven. Geen logica verandert. Reden: gebruiker. |
-| B11 | **Rekenpagina's blijven formulier- en lijststructuren**; het nieuwe uiterlijk komt vanzelf via de scaffolds (achtergrond, radius, capsule-knoppen). Reden: minder werk en risico. |
+| B10 | **Spaarpot, belegging en doel zijn albumpagina's**: `AlbumHeader` als eerste rij van de bestaande `List`, daaronder de bestaande secties als tracklijst (swipe, contextmenu), grafieken blijven. Geen logica verandert. |
+| B11 | **Rekenpagina's blijven formulier- en lijststructuren**; het nieuwe uiterlijk komt vanzelf via de scaffolds (achtergrond, radius, capsule-knoppen). |
 | B12 | **Achtergrond**: zacht kleurverloop (`BackdropGradient`), tint = bovenste tegelkleur van het domein, hoogstens 55% (donker) of 14% (licht) over `Theme.canvas`, uitlopend over 420 pt; op Home volgt de tint de zichtbare hero-kaart (`animated(by:)`); bij Verhoog contrast en Verlaag transparantie geen tint. Reden: gebruiker; contrast berekend (2.1). |
 | B13 | **Acht tegelkleuren (`TileHue`)**, niet licht/donker-afhankelijk; wit erop 6,4:1 (hoog contrast 9,6:1). Tekst op een tegel is `Theme.onTile` of `onTileSecondary`, nooit rood of groen: tekens en woorden dragen de betekenis. Een grafiek op een tegel staat in een donker paneel (`heroPanel()`). Reden: COL-3, COL-4. |
 | B14 | **Radii**: hero 28, kaart 20 (was 24), artwork rij 8, tegel 16, albumkop 24, `Theme.tileRadius` 12 (was 8). Marge 16 (compact) of 20; tussenruimte 12 of 16; 24 tussen planken. Reden: gebruiker (hero 20 tot 28, tegels 12 tot 16). |
@@ -27,9 +27,9 @@ Peildatum 23 oktober 2026, basis `HEAD` 1b98404. Uitvoerbaar bouwplan voor "vera
 | B17 | **Gekozen potten en beleggingen blijven** (K9a t/m K9c): de plank Spaarpotten toont `homePots()` (max. 3, plus lege plek), de plank Beleggingen `homeHoldings()` (max. 4) met vooraan een samenvattingstegel. Plankmenu ("…"): Kies potten…, Nieuwe spaarpot; Kies beleggingen…, Belegging toevoegen, Koersen vernieuwen. Reden: eerder expliciet gevraagd. |
 | B18 | **Recent = de laatste vijf handmatige boekingen** (bank en potten, zonder Beginsaldo, een overboeking eenmaal): `RecentActivity`, Foundation-only, getest; geen boekingen: geen groep. Reden: dichtst bij "Recent toegevoegd", zonder opslag. |
 | B19 | **`Destination` krijgt `.home`, `.library`, `.flow`, `.tools`, `.settingsRoot`**; `.overview` wordt `.home`; `AppTab` = `home, library, search`. `PageCatalog` is de enige tabel (titel, symbool, tint, groep, "bereikbaar via"); een test bewijst dat elke pagina bereikbaar blijft. Reden: controleerbaar, geen verloren pagina. |
-| B20 | **Niet in deze ronde**: zoom-overgangen, `MeshGradient`, `scrollTransition`, `TabSection`, `ToolbarSpacer`, `@Namespace`: ze staan niet in de nagebootste frameworks en zijn niet te controleren (2.2). Reden: Alleen bouwen wat te controleren is. |
-| B21 | **Twee macOS-risico's uit patterns 3.6 meteen rechtzetten**: `tabBarMinimizeBehavior(.onScrollDown)` en `toolbarTitleDisplayMode(.large)` alleen onder `#if os(iOS)`. Reden: De CI bouwt macOS. |
-| B22 | **Geen rekenregel, model of opslagformaat verandert**: bedragen uit `MonthBoard`, `MoneyFigures`, `LedgerBook`, `netWorth`, `periodSummary`, `PortfolioFigures`, `GoalMath`, `BufferCalc`. Reden: gebruiker. |
+| B20 | **Niet in deze ronde**: zoom-overgangen, `MeshGradient`, `scrollTransition`, `TabSection`, `ToolbarSpacer`, `@Namespace`: ze staan niet in de nagebootste frameworks en zijn niet te controleren (2.2). |
+| B21 | **Twee macOS-risico's uit patterns 3.6 meteen rechtzetten**: `tabBarMinimizeBehavior(.onScrollDown)` en `toolbarTitleDisplayMode(.large)` alleen onder `#if os(iOS)`. |
+| B22 | **Geen rekenregel, model of opslagformaat verandert**: bedragen uit `MonthBoard`, `MoneyFigures`, `LedgerBook`, `netWorth`, `periodSummary`, `PortfolioFigures`, `GoalMath`, `BufferCalc`. |
 
 ## 1. Informatiearchitectuur
 
@@ -80,8 +80,8 @@ enum Destination: Hashable {
 | `.accelerators` | Versnellers | bolt | mustard | Plannen | Bibliotheek, Hulpmiddelen |
 | `.projection` | Toekomstschatting | calendar.badge.clock | plum | Plannen | Bibliotheek, Hulpmiddelen |
 | `.purchase` | Aankoopcheck | cart | plum | Plannen | Bibliotheek, Hulpmiddelen |
-| `.tools` | Hulpmiddelen | wrench.and.screwdriver | plum | - | Home (plankkop), Zoeken |
-| `.settingsRoot` | Instellingen | gearshape | sage | - | profielknop, Zoeken |
+| `.tools` | Hulpmiddelen | wrench.and.screwdriver | plum | - | `.home` (plankkop), Zoeken |
+| `.settingsRoot` | Instellingen | gearshape | sage | - | `.home` (profielknop), Zoeken |
 
 `.pot(id)`, `.holding(id)`, `.goal(id)` en `.settings(_)` staan niet in de tabel: ze zijn bereikbaar via Spaarpotten, Beleggingen, Doelen en Instellingen. Pot, belegging en doel gebruiken eigen tinten: `TileHue.forIndex(pot.colorIndex)`, `TileHue.forIndex(holding.kind.colorIndex)`, doel mustard. Bladertegels (`PageCatalog.browse`, tien): Inkomen, Uitgaven, Verdelen, Bankrekening, Dag voor dag, Spaarpotten, Beleggingen, Doelen, Hulpmiddelen, Instellingen.
 
@@ -89,7 +89,7 @@ enum Destination: Hashable {
 
 ### 1.3 Home
 
-Boven de hero staan de bestaande meldingen (opslaan mislukt, startmelding, synchronisatie, "De cijfers sluiten niet"). Hero 1 Nog te verdelen (olijf), 2 Vermogen met sparklijn (leiblauw), 3 Saldo vandaag met volgende betaling (terracotta). Planken in standaardvolgorde: Komende dagen (brede kaart per dag), Spaarpotten, Beleggingen (samenvattingstegel en tegels), Doelen (tegels en rekentegel), Hulpmiddelen (vier tegels).
+Boven de hero staan de bestaande meldingen (opslaan mislukt, startmelding, synchronisatie, "De cijfers sluiten niet"). Hero 1 Nog te verdelen (olijf), 2 Vermogen met sparklijn (leiblauw), 3 Saldo vandaag met volgende betaling (terracotta). Planken: Komende dagen (brede kaart per dag), Spaarpotten, Beleggingen (samenvattingstegel en tegels), Doelen (tegels en rekentegel), Hulpmiddelen (vier tegels).
 
 Lege start (`isEmptyStart`): een welkomstkaart met pillen "Salaris instellen" en "Voorbeelddata laden" (bestaande bevestiging) in plaats van hero en planken. Zonder bekend banksaldo toont hero 3 "Vul je saldo in" met pil "Saldo invullen" (`BankActionSheet(.balance)`). Elke plank heeft een lege staat.
 
@@ -146,10 +146,10 @@ Gemeten (WCAG 2.x, sRGB; `TilePaletteTests` herberekent het): wit op "boven" 6,3
 
 ### 2.2 Wat de typecontrole kent (proef 23 okt., `/tmp/arch-probe/probe-results.txt`)
 
-De enige compilercontrole is de nagebootste SwiftUI (`/tmp/ctl-all`, gegenereerd uit Apple's documentatie). Een API die daar ontbreekt geeft een fout, ook als Xcode hem kent.
+De enige compilercontrole is de nagebootste SwiftUI (`/tmp/ctl-all`, gegenereerd uit Apple's documentatie): een API die daar ontbreekt geeft een fout, ook als Xcode hem kent.
 
 - **Aanwezig** (naast alles wat de app al gebruikt): `scrollTargetLayout`, `scrollPosition(id:)`, `safeAreaPadding`, `contentMargins`, `containerRelativeFrame` (`count:` vraagt `spacing:`), `onGeometryChange`, `onHover`, `Layout`, `LinearGradient`, `RadialGradient`, `Color.mix`, `searchable(text:isPresented:prompt:)`, `contextMenu(menuItems:preview:)`, `contentShape(.contextMenuPreview, _)`, `buttonBorderShape(.capsule)`, `Tab(value:role:)`.
-- **Ontbreekt, niet gebruiken (B20)**: `MeshGradient`, `scrollTransition`, `visualEffect`, `onScrollGeometryChange`, `scrollEdgeEffectStyle`, `@Namespace`, `matchedTransitionSource`, `navigationTransition`, `TabSection`, `ToolbarSpacer`, `searchToolbarBehavior`, `DragGesture`, `Canvas`, `TimelineView`, `Gauge`, `AsyncImage`, `ShareLink`, `popover`, `Color.gradient`, `containerBackground(for:)`, `accessibilityAdjustableAction`, `Tab("Titel", systemImage:, value:, role:)` (gebruik `Tab(value:role:)`).
+- **Ontbreekt, niet gebruiken (B20)**: `MeshGradient`, `scrollTransition`, `visualEffect`, `onScrollGeometryChange`, `scrollEdgeEffectStyle`, `@Namespace`, `matchedTransitionSource`, `navigationTransition`, `TabSection`, `ToolbarSpacer`, `DragGesture`, `Canvas`, `TimelineView`, `Gauge`, `AsyncImage`, `ShareLink`, `popover`, `Color.gradient`, `containerBackground(for:)`, `Tab("Titel", systemImage:, value:, role:)` (gebruik `Tab(value:role:)`).
 - **Alleen iOS, dus `#if os(iOS)`**: `topBarTrailing` (gebruik `.primaryAction`), `.listStyle(.insetGrouped)`, `hoverEffect`, `fullScreenCover`, `toolbarTitleDisplayMode(.large)`, `tabBarMinimizeBehavior(.onScrollDown)` (B21).
 - **iOS 26**: achter `#available(iOS 26.0, macOS 26.0, *)`, ook als de nabootsing het niet markeert; `run-all.sh` meldt `ONBEWAAKT` en dat moet nul zijn.
 
@@ -235,7 +235,24 @@ enum RecentActivity {
 
 `NavigationModel.swift`: `enum AppTab: String, CaseIterable, Identifiable, Hashable { case home, library, search; var id: String; var title: String /* Home, Bibliotheek, Zoeken */; var symbol: String /* house, books.vertical, magnifyingglass */ }`; `Destination` volgens 1.2 zonder `tab`, met `parents` (pot onder pots enz.); `NavigationRules.go` volgens 1.2. `SearchIndex`: `SearchEntry` krijgt `var hue: TileHue = .olive` en `var group: SearchGroup { get }`; `enum SearchGroup: Int, CaseIterable, Identifiable { case pages, pots, holdings, goals, lines, settings; var id: Int; var title: String }` (Pagina's, Spaarpotten, Beleggingen, Doelen, Inkomen en uitgaven, Instellingen); `static func grouped(for:in:) -> [(group: SearchGroup, entries: [SearchEntry])]` (alleen groepen met resultaat); `pages` komt uit `PageCatalog.all` plus de tien instellingenpagina's.
 
+`Router` (pakket 1; alleen de navigatie-API, de rest blijft zoals nu):
+
+```swift
+@MainActor @Observable final class Router {
+    var tab: AppTab = .home; var paths: [AppTab: [Destination]]; var orderPage: BlockPage?
+    var focusMonth: YearMonth; var periodMode: PeriodMode; var searchRequest = 0; var settingsRequest: SettingsPage?
+    func pathBinding(for tab: AppTab) -> Binding<[Destination]>   // schrijven gaat door NavigationRules.normalize
+    func select(_ tab: AppTab); func popToRoot(_ tab: AppTab)
+    func open(_ d: Destination)      // push op paths[tab]; Mac met .settingsRoot of .settings: go
+    func go(_ d: Destination)        // NavigationRules.go(d, from: tab, path: paths[tab]); Mac met instellingen: settingsRequest (.settingsRoot -> .account)
+    func requestSearch()             // select(.search); searchRequest += 1
+    func showCurrentMonth(_ current: YearMonth); func shiftPeriod(_ direction: Int); func resetFocus(to current: YearMonth)
+}
+```
+
 ### 2.4 SwiftUI-componenten (`App/UI/`, pakket 1)
+
+De handtekeningen van `Shelf`, `HeroCarousel`, `HeroCard`, `AlbumHeader` zijn als proefontwerp getypecheckt (iOS en macOS, met de stubs van stap 0): `/tmp/arch-probe/proto.swift`.
 
 ```swift
 // Theme.swift (uitbreiding)
@@ -326,13 +343,13 @@ extension View { func profileToolbarItem() -> some View }   // ToolbarItem(place
 
 **Per breedte** (maten uit `ShelfMetrics`, patterns 3.4). iPhone: tabbalk, carrousel van 323 tot 388 pt met stippen, plank met 2 tegels en een rand (133 tot 160 pt), albumkop gecentreerd (tegel 220 pt), lijsten `insetGrouped`, 2 bladerkolommen. iPad: tabbalk of zijbalk, carrousel (480 pt) tot 860 pt breed en daarboven drie hero-kaarten naast elkaar, 4 tot 8 tegels per plank (140 tot 166 pt), albumkop met tegel links (200 pt), 3 tot 4 bladerkolommen. Mac: zijbalk en Settings-venster, 3 tot 8 tegels (geen muiswiel: "Toon alles" is de route), lijsten `.inset`; leesbare breedte 720.
 
-**Toegankelijkheid.** VoiceOver: plankkop is een kop; tegel, rij en dagkaart zijn een element met label "titel, ondertitel, waarde" en trait knop of link; tegelsymbolen verborgen; bedragen met teken en woord. Dynamic Type: maten schalen tot 1,5x (`@ScaledMetric`), `minimumScaleFactor` alleen in `BigAmount`, bij toegankelijkheidsformaten staat de hero onder elkaar en een plank als verticale lijst (tegels hoogstens 320 pt, titels hoogstens 2 regels bij gewone tekst). Verlaag beweging: geen animatie bij stipwissel, achtergrondwissel of drukstatus. Verhoog contrast: HC-kleuren, `onTileSecondary` 92%, geen tint, rand om tegels. Mac: `.help` op pillen en menu's. Contextmenu's op tegels: pot (Storten, Opnemen, Bewerken), belegging (Waarde bijwerken, Bewerken); verwijderen blijft op de detailpagina en als swipe, want elke actie moet ook zonder gebaar bereikbaar zijn.
+**Toegankelijkheid.** VoiceOver: plankkop is een kop; tegel, rij en dagkaart zijn een element met label "titel, ondertitel, waarde"; tegelsymbolen verborgen; bedragen met teken en woord. Dynamic Type: maten schalen tot 1,5x (`@ScaledMetric`), `minimumScaleFactor` alleen in `BigAmount`, bij toegankelijkheidsformaten staat de hero onder elkaar en een plank als verticale lijst (tegels hoogstens 320 pt, titels hoogstens 2 regels bij gewone tekst). Verlaag beweging: geen animatie bij stipwissel, achtergrondwissel of drukstatus. Verhoog contrast: HC-kleuren, `onTileSecondary` 92%, geen tint, rand om tegels. Mac: `.help` op pillen en menu's. Contextmenu's op tegels: pot (Storten, Opnemen, Bewerken), belegging (Waarde bijwerken, Bewerken); verwijderen blijft op de detailpagina en als swipe, want elke actie moet ook zonder gebaar bereikbaar zijn.
 
 **Componenten.** Alle bestaande componenten blijven (`Card`, `LinkCard`, `SectionHeader`, `NavigationRow`, `BigAmount`, `StatTile`, `FigureRow`, `AmountRow`, `SymbolBadge`, `IconButton`, `ActionButton`, `ActionLink`, `ActionGroup`, `EmptyHint`, `NoticeCard`, `MonthBar`, `PeriodPicker`, `ProgressMeter`, `SegmentedMeter`, `RowActions`, `Fields`, `Charts`, sheets), behalve deze, die in pakket 3 vervallen: `searchToolbarButton`, `PeriodControl`, `GlassBlock`, `LinkedBlock`, `Chip*`, `ProgressRing`, `ProgressBar`, `SegmentBar`, `MeshBackground`, `Theme.olive*`, `Theme.flow*`, `Theme.buttonHeight`, `glassCard`, `glassButton`, `TabPressStyle`, `TabAmountLink`, de oude tabroots en hun kaarten. `GlassSurface` blijft ongebruikt in `Glass.swift` (B15).
 
 ## 3. Pagina voor pagina
 
-Bedragen en teksten komen uit de bronnen van de kaarten die ze vervangen (1.5): de bouwer kopieert de aanroep en past de vorm aan. Bestanden blijven onder 400 regels, elke `ViewBuilder` onder 10 kinderen (`precheck.sh`).
+Bedragen en teksten komen uit de bronnen van de kaarten die ze vervangen (1.5): de bouwer kopieert de aanroep en past de vorm aan. Bestanden onder 400 regels, elke `ViewBuilder` onder 10 kinderen (`precheck.sh`).
 
 | Scherm | Bestand (pakket) | Opbouw |
 |---|---|---|
@@ -361,7 +378,7 @@ Volgorde: **golf 1 (pakket 1) -> golf 2 (2A, 2B, 2C, 2D tegelijk) -> golf 3 (pak
 0. Stap 0 van 2.2 (stubs) en een basislijn: `run-all.sh` 0 fouten, `swift test` 1736 groen.
 1. Foundation-only en tests: `TilePalette.swift`, `ShelfMetrics.swift`, `Navigation/PageCatalog.swift` (symlinks in `CoreTests/Tests/MyBuddyCoreTests` zoals bij `NavigationModel.swift`), `NavigationModel.swift`, `SearchIndex.swift`, `BlockOrderMigration.swift` (blokken van `.overview`, `allCases == [.overview]`; de oude cases blijven tot pakket 3). Tests herschrijven en uitbreiden: `NavigationRulesTests`, `SearchIndexTests` (uitputtend over `Destination` en `SettingsPage`, `grouped`, `hue`), `BlockOrderMigrationTests` (nieuwe blokken, `wealth` in een opgeslagen volgorde, oude migratietests blijven); nieuw `TilePaletteTests` (alle waarden van 2.1 voor alle tinten, normaal en hoog contrast, achtergrond licht en donker, `forIndex`), `ShelfMetricsTests`, `PageCatalogTests` (5.3). Minimaal 1736 tests.
 2. Ontwerpsysteem: `Theme.swift` (`AppDomain.overview.title` wordt "Home"), `Components.swift` (scaffolds, `DestinationLink`, capsule-knoppen, `#if os(iOS)` voor `.large` en `.onScrollDown`), nieuw `Backdrop.swift`, `Tiles.swift`, `Shelf.swift`, `Hero.swift`, `Rows.swift`, `Album.swift`, `Pills.swift`, `Profile.swift`; `ComponentGallery.swift` toont elke nieuwe component, ook op toegankelijkheidsformaat.
-3. Schil: `Router.swift` (1.2; compat `homePath`, `savingsPath`, `toolsPath`, `showSettings` weg; op de Mac roept `open` met `.settingsRoot` of `.settings` `go` aan), `RootView.swift` (een `TabView`, geen badge), `TabRoots.swift`, `TabStack.swift`, `AppCommands.swift` (Cmd+1 t/m Cmd+3, Cmd+F, op iPad `CommandGroup(replacing: .appSettings)` met Cmd+komma), `DestinationView.swift` (nieuwe cases; `.environment(\.backdropHue, PageCatalog.info(destination)?.hue ?? .olive)`), `DebugLaunch.swift` (tabs `home`, `library`, `search` met aliassen `overview` -> home en `month`, `saving`, `planning`, `savings`, `tools` -> library; `-mybuddy-open` kent ook `flow`, `tools`, `settings`, `home`, `library`; nieuw `-mybuddy-hero 0|1|2`; `-mybuddy-settings` pusht `.settingsRoot`).
+3. Schil: `Router.swift` (1.2; compat `homePath`, `savingsPath`, `toolsPath`, `showSettings` weg; op de Mac roept `open` met `.settingsRoot` of `.settings` `go` aan), `RootView.swift` (een `TabView`, geen badge), `TabRoots.swift`, `TabStack.swift`, `AppCommands.swift` (Cmd+1 t/m Cmd+3, Cmd+F, op iPad een Cmd+komma-commando naar `.settingsRoot`, bij voorkeur `CommandGroup(replacing: .appSettings)`), `DestinationView.swift` (nieuwe cases; `.environment(\.backdropHue, PageCatalog.info(destination)?.hue ?? .olive)`), `DebugLaunch.swift` (tabs `home`, `library`, `search` met aliassen `overview` -> home en `month`, `saving`, `planning`, `savings`, `tools` -> library; `-mybuddy-open` kent ook `flow`, `tools`, `settings`, `home`, `library`; nieuw `-mybuddy-hero 0|1|2`; `-mybuddy-settings` pusht `.settingsRoot`).
 4. Tijdelijke wortels (tot golf 2): `HomeTab` (rendert `OverviewTab()`), `LibraryTab` (`NavigationRow` per `PageCatalog.library`), `SearchTab` (zoekveld, platte resultaten), `FlowPage` (`MonthFlowCard` in een `PageScaffold`), `ToolsPage` (vier `NavigationRow`s), allemaal met `.profileToolbarItem()`: elke pagina blijft bereikbaar.
 5. Scripts: `design-checks.sh` aanpassen (5.2) en kopiëren naar `scripts/`; schrijf `docs/design2/contract-check.sh`, `keep-check.sh`, `own-check.sh` (5.3, eigendomsblok).
 
@@ -369,11 +386,11 @@ Volgorde: **golf 1 (pakket 1) -> golf 2 (2A, 2B, 2C, 2D tegelijk) -> golf 3 (pak
 
 ### Pakket 2A - Home (golf 2)
 
-Vervang de tijdelijke `HomeTab` (3, 1.3): `HomeTab.swift`, `HomeHero.swift`, `HomeShelves.swift`, `HomeWelcome.swift`, `HomePreviews.swift`. Voeg `UpcomingDaysWindow.nextPayment(in book: LedgerBook, today: Date) -> (day: DayTotals, event: DayEvent)?` toe aan `UI/CashflowDisplay.swift` met tests in `CashflowDisplayTests.swift` (geen betaling, morgen, alleen inkomsten, grens 60 dagen). Gegevens: exact de aanroepen van de oude kaarten (alleen lezen: `Tabs/OverviewParts.swift`, `Saving/FavoriteCards.swift`, `FavoriteTiles.swift`, `Bank/UpcomingDays.swift`, `GoalPages.swift`, `BufferPages.swift`, `AcceleratorPages.swift`, `ProjectionPage.swift`, `PurchasePages.swift`); kopieer de plumbing (accountsleutel, `@AppStorage`) naar eigen typen met prefix `Home`. *Klaar*: alles van 1.3 werkt met voorbeelddata, lege start en zonder banksaldo; elke plank heeft een lege staat en alle oude menu-acties; backdrop volgt de hero; VoiceOver-labels; previews. *Niet aanraken*: alles buiten `Pages/Home/`, `UI/CashflowDisplay.swift` en zijn test.
+Vervang de tijdelijke `HomeTab` (par. 3 en 1.3): `HomeTab.swift`, `HomeHero.swift`, `HomeShelves.swift`, `HomeWelcome.swift`, `HomePreviews.swift`. Voeg `UpcomingDaysWindow.nextPayment(in book: LedgerBook, today: Date) -> (day: DayTotals, event: DayEvent)?` toe aan `UI/CashflowDisplay.swift` met tests in `CashflowDisplayTests.swift` (geen betaling, morgen, alleen inkomsten, grens 60 dagen). Gegevens: exact de aanroepen van de oude kaarten (alleen lezen: `Tabs/OverviewParts.swift`, `Saving/FavoriteCards.swift`, `FavoriteTiles.swift`, `Bank/UpcomingDays.swift`, `GoalPages.swift`, `BufferPages.swift`, `AcceleratorPages.swift`, `ProjectionPage.swift`, `PurchasePages.swift`); kopieer de plumbing (accountsleutel, `@AppStorage`) naar eigen typen met prefix `Home`. *Klaar*: alles van 1.3 werkt met voorbeelddata, lege start en zonder banksaldo; elke plank heeft een lege staat en alle oude menu-acties; backdrop volgt de hero; VoiceOver-labels; previews. *Niet aanraken*: alles buiten `Pages/Home/`, `UI/CashflowDisplay.swift` en zijn test.
 
 ### Pakket 2B - Bibliotheek, Zoeken, Maandoverzicht, Hulpmiddelen, Recent (golf 2)
 
-Vervang `LibraryTab`, `SearchTab`, `FlowPage`, `ToolsPage` (3); schrijf `UI/RecentActivity.swift` met symlink en `RecentActivityTests` (leeg, volgorde, `.opening` weg, overboeking eenmaal, toekomst weg, limiet). Waarden uit de bronnen van de oude kaarten (alleen lezen: `Tabs/MonthLinkCards.swift`, `Tabs/MonthFlowCard.swift`, `Saving/FavoriteCards.swift`). *Klaar*: elke rij van 1.4 met de juiste waarde; maandrijen openen op de huidige maand; Zoeken toont tien tegels en gegroepeerde resultaten, Cmd+F opent het veld; `.flow` bevat alles van `MonthFlowCard`. *Niet aanraken*: alles buiten `Pages/Library/`, `Pages/Search/`, `Pages/ToolsPage.swift`, `Pages/Month/FlowPage.swift`, `UI/RecentActivity.swift` en zijn tests.
+Vervang `LibraryTab`, `SearchTab`, `FlowPage`, `ToolsPage` (par. 3); schrijf `UI/RecentActivity.swift` met symlink en `RecentActivityTests` (leeg, volgorde, `.opening` weg, overboeking eenmaal, toekomst weg, limiet). Waarden uit de bronnen van de oude kaarten (alleen lezen: `Tabs/MonthLinkCards.swift`, `Tabs/MonthFlowCard.swift`, `Saving/FavoriteCards.swift`). *Klaar*: elke rij van 1.4 met de juiste waarde; maandrijen openen op de huidige maand; Zoeken toont tien tegels en gegroepeerde resultaten, Cmd+F opent het veld; `.flow` bevat alles van `MonthFlowCard`. *Niet aanraken*: alles buiten `Pages/Library/`, `Pages/Search/`, `Pages/ToolsPage.swift`, `Pages/Month/FlowPage.swift`, `UI/RecentActivity.swift` en zijn tests.
 
 ### Pakket 2C - Sparen: lijsten en albumpagina's (golf 2)
 
@@ -381,7 +398,7 @@ Spaarpot en Belegging als album, lijsten met `MediaRowLabel`, teksten "Kies pott
 
 ### Pakket 2D - Doelen, Plannen, Instellingen, restyle (golf 2)
 
-Doelen als `MediaRowLabel`-lijst en Doel als album (3); controleer elke pagina onder `Month/`, `Bank/`, `Planning/`, `Settings/` en de rekenpagina's op het nieuwe uiterlijk (geen hardgecodeerde radii of achtergronden, geen verboden termen, `SettingsView` als gepushte pagina) en pas alleen styling en teksten aan. *Klaar*: Doelen en Doel volgens 3; `keep-check.sh` PASS; `git diff -- App/Core` leeg. *Niet aanraken*: alles van 2A, 2B, 2C, `UI/`, `Navigation/`.
+Doelen als `MediaRowLabel`-lijst en Doel als album (par. 3); controleer elke pagina onder `Month/`, `Bank/`, `Planning/`, `Settings/` en de rekenpagina's op het nieuwe uiterlijk (geen hardgecodeerde radii of achtergronden, geen verboden termen, `SettingsView` als gepushte pagina) en pas alleen styling en teksten aan. *Klaar*: Doelen en Doel volgens 3; `keep-check.sh` PASS; `git diff -- App/Core` leeg. *Niet aanraken*: alles van 2A, 2B, 2C, `UI/`, `Navigation/`.
 
 ### Pakket 3 - Opruimen en documentatie (golf 3, een bouwer)
 
@@ -427,7 +444,7 @@ docs/design2/ 1 - 3
 ```
 <!-- EIGENDOM-EINDE -->
 
-`docs/design2/own-check.sh <golf> [--base <commit>]` (pakket 1 schrijft het) leest dit blok, loopt over `git diff --name-only <base>` en ongevolgde bestanden, meldt per eigenaar het aantal bestanden en elk bestand waarvan de eigenaar in die golf "-" is; `--owner <pad> <golf>` zegt wie een bestand bezit. Een golf-2-pakket mag nieuwe bestanden in zijn eigen mappen en nieuwe testbestanden in `CoreTests` met unieke naam aanmaken, nooit bestaande testbestanden van een ander wijzigen.
+`docs/design2/own-check.sh <golf> [--base <commit>]` (pakket 1 schrijft het) leest dit blok, loopt over `git diff --name-only <base>` en ongevolgde bestanden, meldt per eigenaar het aantal bestanden en elk bestand waarvan de eigenaar in die golf "-" is (een pad zonder regel telt als "-" in golf 1 en 2 en als 3 in golf 3); `--owner <pad> <golf>` zegt wie een bestand bezit. Een golf-2-pakket mag nieuwe bestanden in zijn eigen mappen en nieuwe testbestanden in `CoreTests` met unieke naam aanmaken, nooit bestaande testbestanden van een ander wijzigen.
 
 ## 5. Verificatie
 
@@ -441,11 +458,10 @@ docs/design2/ 1 - 3
 
 ### 5.2 Aanpassingen in `design-checks.sh` (pakket 1)
 
-- `Home` uit de verboden termen (B2); nieuw: letterlijke `"Overzicht"` 0 (niet-final uitgezonderd `Pages/Tabs/`).
-- `.sheet(` max 16: niet-final uitgezonderd `Pages/Tabs/`, `Saving/FavoriteCards.swift`, `Bank/UpcomingDays.swift` (oude kaarten; Home krijgt er drie, eindstand weer 16).
-- "wit als voorgrond" uitbreiden met zwart: `Color.white`, `Color.black`, `.white`, `.black` buiten `Theme.swift` verboden. "Glas op inhoud" ongewijzigd (B15).
-- Nieuw: `Tab(value: AppTab.search, role: .search` min 1; `Tab("Instellingen"` 0; `profileToolbarItem()` min 3; `Shelf(` min 5; `AlbumHeader(` min 3; `HeroCarousel(` min 1; `BackdropGradient(` alleen in `Backdrop.swift` en `Components.swift`; `scrollTargetBehavior` alleen in `Shelf.swift` en `Hero.swift`; `destination.tab` en `AppTab.(overview|month|saving|planning|settings)` 0; met `--final` ook `searchToolbarButton`, `PeriodControl`, `TabPressStyle`, `Pages/Tabs/` 0.
-- `docs/design/contract-check.sh` en `ownership-check.sh` (oud contract, oud eigendomsblok) niet meer draaien; vervangen door `docs/design2/`.
+- `Home` uit de verboden termen (B2); nieuw: de letterlijke `"Overzicht"` 0 (niet-final uitgezonderd `Pages/Tabs/`). `.sheet(` max 16 blijft, niet-final met uitzondering van `Pages/Tabs/`, `Saving/FavoriteCards.swift`, `Bank/UpcomingDays.swift` (Home krijgt er drie nieuwe, de eindstand is weer 16).
+- "Wit als voorgrond" uitbreiden met zwart: `Color.white`, `Color.black`, `.white`, `.black` buiten `Theme.swift` verboden. "Glas op inhoud" ongewijzigd (B15).
+- Nieuw: `Tab(value: AppTab.search, role: .search` min 1; `Tab("Instellingen"` 0; `profileToolbarItem()` min 3; `Shelf(` min 5; `AlbumHeader(` min 3; `HeroCarousel(` min 1; `BackdropGradient(` alleen in `Backdrop.swift` en `Components.swift`; `scrollTargetBehavior` alleen in `Shelf.swift` en `Hero.swift`; `destination.tab` en `AppTab.(overview|month|saving|planning|settings)` 0; met `--final` ook `searchToolbarButton`, `PeriodControl`, `TabPressStyle` en `Pages/Tabs/` 0.
+- `docs/design/contract-check.sh` en `ownership-check.sh` (oud contract en eigendomsblok) niet meer draaien; `docs/design2/` vervangt ze.
 
 ### 5.3 Overige controles
 
@@ -461,12 +477,12 @@ De typecontrole leest `/home/user/MyBuddy/App` en schrijft naar `/tmp/ctl-all/wo
 N=/tmp/ctl-NAAM; S=/tmp/ctl-all; mkdir -p $N
 for f in make.sh check.sh run-all.sh tests.sh strip_preview.py; do sed "s#/tmp/ctl-all#$N#g" $S/$f > $N/$f; done
 chmod +x $N/*.sh; ln -sfn $S/out $N/out; ln -sfn $S/stubs $N/stubs; ln -sfn $S/tools $N/tools
-$N/run-all.sh quick     # of zonder argument; uitvoer in $N/errors.txt
+$N/run-all.sh quick     # uitvoer in $N/errors.txt
 ```
 
-### 5.5 Handmatig, op toestel of in de CI-screenshots (hier niet uitvoerbaar)
+### 5.5 Handmatig (CI-screenshots of toestel)
 
-iPhone SE en Pro Max, iPad 13 staand en liggend, Mac 640, 900 en 1366 pt; licht en donker; Dynamic Type AX3; Verhoog contrast, Verlaag transparantie, Verlaag beweging; VoiceOver over hero, plank en albumpagina; iOS 18 en 26 (zoekveld, glas om de profielknop, krimpende tabbalk); Mac-zijbalk met zoektab; Cmd+1 t/m Cmd+3, Cmd+F, Cmd+komma; snappen en tegelbreedte (risico 3).
+iPhone SE en Pro Max, iPad 13, Mac 640, 900 en 1366 pt; licht en donker; AX3; Verhoog contrast, Verlaag transparantie, Verlaag beweging; VoiceOver over hero, plank en albumpagina; iOS 18 en 26 (zoekveld, glas om de profielknop, krimpende tabbalk); Mac-zijbalk met zoektab; Cmd+1 t/m Cmd+3, Cmd+F, Cmd+komma.
 
 ## 6. Risico's en wat niet verandert
 
@@ -480,10 +496,5 @@ iPhone SE en Pro Max, iPad 13 staand en liggend, Mac 640, 900 en 1366 pt; licht 
 | 4 | Instellingen is niet meer 1 tik vanaf elke diepte (B4). | Bewust; stip, melding, Cmd+komma, Zoeken. Een vierde tab terugzetten is een kleine wijziging in `RootView`. |
 | 5 | Mac zonder horizontaal scrollen: planken lastig met een muiswiel. | Vanaf 860 pt drie hero-kaarten naast elkaar; "Toon alles"; pijlknop per plank later. |
 | 6 | Tegel op de donkere kaart haalt 2,65:1. | Decoratie; tekst op de tegel 6,4:1; Verhoog contrast geeft een rand. |
-| 7 | Rekenwerk van Home (vermogen 12 maanden, `LedgerBook`, `PortfolioTrend`). | Deed het Overzicht al; eerst meten, dan cachen. |
-| 8 | In golf 2 staat de plumbing van de oude kaarten en van Home dubbel. | Core-aanroepen identiek (`keep-check.sh`); pakket 3 verwijdert de oude. |
-| 9 | Herschreven navigatietests dekken minder dan de oude; "Spaardoel berekenen" heeft geen Bibliotheekrij. | Elke oude test krijgt een equivalent of een reden, minimaal 1736; `PageCatalogTests` bewaakt de bereikbaarheid (Doelen, plank Doelen, Hulpmiddelen, Zoeken). |
-
-## 7. Samenvatting
-
-Drie tabs (Home, Bibliotheek, Zoeken met `Tab(role: .search)`), zijbalk op iPad en Mac; Instellingen is een gepushte pagina via een profielknop (Mac: Settings-venster). Home heeft een hero-carrousel en vijf planken, de Bibliotheek 13 rijen in drie groepen plus Recent, Zoeken tien bladertegels. Spaarpot, belegging en doel zijn albumpagina's. Nieuw ontwerpsysteem (par. 2) met berekend contrast, zonder eigen glas. Zes pakketten in drie golven; nul typefouten, minimaal 1736 tests en de CI als poorten; Core, back-up, sync en grafieken blijven ongemoeid. De samenvatting van 30 regels staat in het antwoord bij dit plan.
+| 7 | In golf 2 staat de plumbing van de oude kaarten en van Home dubbel. | Core-aanroepen identiek (`keep-check.sh`); pakket 3 verwijdert de oude. |
+| 8 | Herschreven navigatietests dekken minder dan de oude; "Spaardoel berekenen" heeft geen Bibliotheekrij. | Elke oude test krijgt een equivalent of een reden, minimaal 1736; `PageCatalogTests` bewaakt de bereikbaarheid (Doelen, plank Doelen, Hulpmiddelen, Zoeken). |
