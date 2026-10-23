@@ -149,7 +149,6 @@ struct SignedInRoot: View {
             .environment(router)
             .environment(\.syncController, sync)
             .registered(in: session, store: store, router: router, sync: sync)
-            .syncPrompts(sync)
             .task { await sync?.run() }
             .onChange(of: scenePhase) { _, phase in
                 switch phase {

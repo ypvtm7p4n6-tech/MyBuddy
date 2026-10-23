@@ -396,11 +396,3 @@ struct CashflowCheckBanner: View {
         .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
     }
 }
-
-/// TIJDELIJK (tot golf 1c): Dag voor dag is een onderdeel van Bankrekening. `DestinationView` verwijst voor `.cashflow` nog naar
-/// deze naam; hij toont meteen het onderdeel Dag voor dag van de nieuwe pagina.
-struct CashflowPage: View {
-    var body: some View {
-        BankPage(section: .days)
-    }
-}

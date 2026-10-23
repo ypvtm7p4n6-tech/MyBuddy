@@ -1,7 +1,7 @@
 import XCTest
 @testable import MyBuddyCore
 
-/// Controle van de logica achter het scherm "Salaris & inkomsten" (SavingsPages.swift).
+/// Controle van de logica achter het scherm "Salaris" (App/Pages/Month/SalaryPage.swift).
 final class SalaryScheduleEditTests: XCTestCase {
     private func ym(_ y: Int, _ m: Int) -> YearMonth { YearMonth(year: y, month: m) }
 

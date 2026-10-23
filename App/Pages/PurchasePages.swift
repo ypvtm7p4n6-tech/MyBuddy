@@ -50,13 +50,6 @@ struct PurchaseSummaryCard: View {
     }
 }
 
-/// Overgangsvorm (tot golf 1c): de oude tabroot Tools roept dit blok nog aan en krijgt nu de nieuwe kaart.
-struct PurchaseBlock: View {
-    var body: some View {
-        PurchaseSummaryCard()
-    }
-}
-
 private struct PurchaseSummaryCardContent: View {
     @Environment(AppStore.self) private var store
     @AppStorage private var manualWage: Double

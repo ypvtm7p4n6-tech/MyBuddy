@@ -114,12 +114,10 @@ struct MoneyLineRowLabel: View {
 
 /// Een regel als rij: tikken bewerkt, swipen en het contextmenu geven Bewerken en Verwijderen (`rowActions`). Een eenmalige
 /// regel verdwijnt meteen; bij een terugkerende vraagt de rij eerst voor welke maanden (een bevestiging aan de rij zelf).
-/// Met `showsMenu` staat er ook een knop met opties in de rij: voor een rij buiten een `List`, waar swipen niet werkt.
 struct MoneyLineRow: View {
     let line: MoneyLine
     let kind: FinanceData.LineKind
     let month: YearMonth
-    var showsMenu: Bool = false
     let onEdit: () -> Void
 
     @Environment(AppStore.self) private var store
@@ -127,17 +125,12 @@ struct MoneyLineRow: View {
     @State private var confirmingDelete = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            Button(action: onEdit) {
-                MoneyLineRowLabel(line: line, kind: kind, month: month)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if showsMenu {
-                optionsMenu
-            }
+        Button(action: onEdit) {
+            MoneyLineRowLabel(line: line, kind: kind, month: month)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .rowActions(edit: onEdit, delete: requestDelete)
         .confirmationDialog(RecurringText.deleteTitle, isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button(RecurringText.skipTitle) { remove(scope: .thisMonth) }
@@ -146,25 +139,6 @@ struct MoneyLineRow: View {
         } message: {
             Text(RecurringText.deleteMessage(name: line.name, month: month, current: store.now))
         }
-    }
-
-    private var optionsMenu: some View {
-        Menu {
-            Button(action: onEdit) {
-                Label("Bewerken", systemImage: "pencil")
-            }
-            Button(role: .destructive, action: requestDelete) {
-                Label("Verwijderen", systemImage: "trash")
-            }
-        } label: {
-            Label("Opties voor \(line.name)", systemImage: "ellipsis")
-                .labelStyle(.iconOnly)
-                .frame(minWidth: Theme.minTapTarget, minHeight: Theme.minTapTarget)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
     }
 
     /// Een eenmalige regel verdwijnt meteen; bij een terugkerende vraagt de app eerst voor welke maanden.
@@ -188,7 +162,7 @@ struct MoneyLineRow: View {
 
 // MARK: - Teksten bij een sectie met regels
 
-/// Titels, symbolen en uitleg van een sectie met regels, gedeeld door `MoneyLinesSection` en `MoneyLinesBlock`.
+/// Titels, symbolen en uitleg van een sectie met regels, gebruikt door `MoneyLinesSection`.
 enum MoneyLinesText {
     static func title(kind: FinanceData.LineKind, expenseKind: ExpenseKind?) -> String {
         if kind == .income { return "Overige inkomsten" }

@@ -21,13 +21,6 @@ struct BufferSummaryCard: View {
     }
 }
 
-/// Overgangsvorm (tot golf 1c): de oude tabroot Savings roept dit blok nog aan en krijgt nu de nieuwe kaart.
-struct BufferBlock: View {
-    var body: some View {
-        BufferSummaryCard()
-    }
-}
-
 private struct BufferSummaryCardContent: View {
     @Environment(AppStore.self) private var store
     @AppStorage private var storedSetup: String

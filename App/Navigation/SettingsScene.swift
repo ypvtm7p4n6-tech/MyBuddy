@@ -2,9 +2,8 @@
 import SwiftUI
 
 /// Het `Settings`-venster van de Mac (Cmd+komma, App-menu). Instellingen is daar geen tab maar een eigen venster met zes
-/// panes: Account, Rekenen, Koersen, Gegevens, Indeling en Over. De scene heeft de gegevens van de actieve sessie nodig
-/// (`ActiveSession`); `auth` en `cloud` staan op `MyBuddyApp` en komen er expliciet in.
-/// TIJDELIJK (tot golf 1c): elke pane toont nog de oude `SettingsView`; daarna `SettingsPane(page:)`.
+/// panes: Account, Rekenen, Koersen, Gegevens, Indeling en Over; elke pane toont `SettingsPane(page:)`. De scene heeft de
+/// gegevens van de actieve sessie nodig (`ActiveSession`); `auth` en `cloud` staan op `MyBuddyApp` en komen er expliciet in.
 struct SettingsScene: Scene {
     let session: ActiveSession
     let auth: AuthStore
@@ -49,10 +48,13 @@ private struct SettingsSceneContent: View {
 }
 
 /// De zes panes. De laatst gebruikte pane wordt onthouden; een diepe link (`router.go(.settings(_))`) zet
-/// `router.settingsRequest`, waarna hier de pane van die pagina opent en het verzoek wordt gewist.
+/// `router.settingsRequest`, waarna hier de pane van die pagina opent en het verzoek wordt gewist. Is de pagina een subpagina
+/// (Wachtwoord wijzigen, Account verwijderen, Back-ups van conflicten, Importoverzicht), dan krijgt de pane die subpagina als
+/// `subpageRequest` en gaat hij er zelf naartoe (`SettingsPane`).
 private struct SettingsPanes: View {
     let router: Router
     @AppStorage("settings.pane") private var paneRaw = SettingsPage.account.rawValue
+    @State private var subpageRequest: SettingsPage?
 
     private var selection: Binding<SettingsPage> {
         Binding(
@@ -64,22 +66,22 @@ private struct SettingsPanes: View {
     var body: some View {
         TabView(selection: selection) {
             Tab("Account", systemImage: "person.crop.circle", value: SettingsPage.account) {
-                SettingsView()
+                SettingsPane(page: .account, subpageRequest: $subpageRequest)
             }
             Tab("Rekenen", systemImage: "percent", value: SettingsPage.calculations) {
-                SettingsView()
+                SettingsPane(page: .calculations, subpageRequest: $subpageRequest)
             }
             Tab("Koersen", systemImage: "arrow.triangle.2.circlepath", value: SettingsPage.prices) {
-                SettingsView()
+                SettingsPane(page: .prices, subpageRequest: $subpageRequest)
             }
             Tab("Gegevens", systemImage: "externaldrive", value: SettingsPage.data) {
-                SettingsView()
+                SettingsPane(page: .data, subpageRequest: $subpageRequest)
             }
             Tab("Indeling", systemImage: "arrow.up.arrow.down", value: SettingsPage.layout) {
-                SettingsView()
+                SettingsPane(page: .layout, subpageRequest: $subpageRequest)
             }
             Tab("Over MyBuddy", systemImage: "info.circle", value: SettingsPage.about) {
-                SettingsView()
+                SettingsPane(page: .about, subpageRequest: $subpageRequest)
             }
         }
         .frame(width: 520)
@@ -90,6 +92,7 @@ private struct SettingsPanes: View {
     private func consumeRequest() {
         guard let page = router.settingsRequest else { return }
         paneRaw = page.pane.rawValue
+        subpageRequest = page.parent == nil ? nil : page
         router.settingsRequest = nil
     }
 }

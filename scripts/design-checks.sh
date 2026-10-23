@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ontwerpcontrole voor MyBuddy (docs/design/plan.md, par. 7.2).
 # Gebruik: docs/design/design-checks.sh [--final] [pad ...]     (zonder pad: heel App/)
-#   zonder --final : tijdens de bouw. Overgangsvormen (compat-laag, oude tabbestanden, compat in Router) tellen niet mee.
+#   zonder --final : tijdens de bouw. Overgangsvormen (compat-laag in 0A en F, compat in Router) tellen niet mee.
 #   met --final    : oplevering (pakket G). Geen enkele overgangsvorm mag nog bestaan.
 # Elke regel: naam | verwachting | aantal gevonden | PASS/FAIL. Exit 1 bij een FAIL.
 # Regels met "min:N" gelden alleen bij een volledige run (zonder pad): een los bestand hoeft niet alles te bevatten.
@@ -43,7 +43,8 @@ chk "caption2 (11 pt)"                     0 '\.caption2'
 chk "afgeronde cijfers (design: .rounded)" 0 'design: *\.rounded'
 chk "krimpende tekst buiten BigAmount"     0 'minimumScaleFactor' 'App/UI/Components.swift'
 chk "lichte lettergewichten"               0 'weight\(\.(light|thin|ultraLight)\)|\.fontWeight\(\.(light|thin|ultraLight)\)'
-chk "HOOFDLETTERS in de UI"                0 '\.uppercased\(\)'
+# App/Core normaliseert hier tickers en valutacodes (invoer), er staat geen UI-tekst.
+chk "HOOFDLETTERS in de UI"                0 '\.uppercased\(\)' 'App/Core/'
 chk "vaste hoogte 20-43 pt op knop/rij"    0 '\.frame\((width|height|minHeight|minWidth): *(2[0-9]|3[0-9]|4[0-3])(\.0)?\)' 'App/UI/Charts.swift|App/UI/Components.swift|App/UI/Meters.swift'
 chk "minTapTarget bestaat (iOS 44, macOS 28)" min:1 'minTapTarget'
 echo "== Kleur en glas"
@@ -59,13 +60,14 @@ chk "oude tinten (Theme.olive*, Theme.flow*)" 0 'Theme\.(olive|oliveDeep|oliveLi
 chk "Theme.buttonHeight (moet minTapTarget zijn)" 0 'Theme\.buttonHeight' '^$' 'App/UI/Theme.swift|App/UI/Components.swift'
 echo "== Navigatie en sheets"
 chk "Instellingen als sheet / showSettings" 0 'showSettings|SettingsView\(\) *\}|sheet\(.*Settings' '^$' 'App/Router.swift'
-chk "oude padnamen (homePath/savingsPath/toolsPath)" 0 'homePath|savingsPath|toolsPath' '^$' 'App/Router.swift|App/Pages/HomeView.swift|App/Pages/SavingsView.swift|App/Pages/ToolsView.swift|App/Debug/DebugLaunch.swift'
+chk "oude padnamen (homePath/savingsPath/toolsPath)" 0 'homePath|savingsPath|toolsPath' '^$' 'App/Router.swift|App/Debug/DebugLaunch.swift'
 chk "eigen tabbalk"                        0 'GlassTabBar|barBackdrop'
 chk "TabView aanwezig (app + Mac-instellingen)" min:2 'TabView *[\(\{]'
 chk "TabView niet vaker dan 3"             max:3 'TabView *[\(\{]'
 chk ".sheet( in de hele app (nu 26)"       max:16 '\.sheet\('
 chk "alert()"                              0 '\.alert\('
-chk "apparaattype als layoutkeuze"         0 'UIDevice|userInterfaceIdiom|UIScreen'
+# UIDevice in SyncController is het apparaatlabel van de synchronisatie (een naam), geen layoutkeuze.
+chk "apparaattype als layoutkeuze"         0 'UIDevice|userInterfaceIdiom|UIScreen' 'App/Cloud/SyncController\.swift:[0-9]+:.*UIDevice'
 chk "navigationBarTitleDisplayMode buiten Components" 0 'navigationBarTitleDisplayMode' 'App/UI/Components.swift'
 chk "veeg-om-te-sluiten bij wijzigingen"  min:1 'interactiveDismissDisabled'
 chk "zoeken (searchable)"                  min:1 '\.searchable\('
@@ -86,13 +88,14 @@ chk "import Charts buiten Charts.swift"    0 'import Charts' 'App/UI/Charts.swif
 chk "Chart( buiten Charts.swift"           0 '[^a-zA-Z]Chart *[\(\{]' 'App/UI/Charts.swift'
 chk "accessibilityChartDescriptor"         min:3 'accessibilityChartDescriptor'
 chk "oude grafiektypen"                    0 'TimeLineChart|FlowChart|AllocationDonut|DayBalanceChart|BufferChart|SavingsGoalChart|GoalCurveChart|ProgressBar\(|ProgressRing\(|SegmentBar\(' '^$' 'App/UI/Components.swift|App/UI/Charts.swift'
-echo "== Verhuisde of herbouwde typen (par. 6.6): oude namen mogen alleen nog in hun eigen oude bestand staan"
-chk "NoticeBanner (nu NoticeCard)"         0 'NoticeBanner\b' '^$' 'App/Pages/HomeView.swift'
-chk "GainLabel (nu GainBadge)"             0 'GainLabel\b' '^$' 'App/Pages/HomeView.swift'
-chk "Home-keuzebladen onder oude naam"     0 'PotPickerSheet|HoldingPickerSheet|PotMiniTile|EmptySlotTile|HoldingTile\b|PotsTotals\b' '^$' 'App/Pages/HomeView.swift'
-chk "MonthPickerBlock (nu MonthBar)"       0 'MonthPickerBlock' '^$' 'App/Pages/SavingsPages.swift'
+echo "== Verhuisde of herbouwde typen (par. 6.6): de oude namen bestaan niet meer"
+chk "NoticeBanner (nu NoticeCard)"         0 '\bNoticeBanner\b'
+chk "GainLabel (nu GainBadge)"             0 '\bGainLabel\b'
+chk "Home-keuzebladen onder oude naam"     0 '\b(PotPickerSheet|HoldingPickerSheet|PotMiniTile|EmptySlotTile|HoldingTile|PotsTotals)\b'
+chk "MonthPickerBlock (nu MonthBar)"       0 '\bMonthPickerBlock\b'
 echo "== Taal (termenlijst)"
-chk "Engelse tabnamen/oude termen"         0 '"(Home|Savings|Tools)"|Portefeuille|Mijn beleggingen|Salaris & inkomsten|Bankuitgaven|Saldo nu|Bankbuffer|Spaarpot Buffer|Per dag bekijken|Dag voor dag bekijken|Alle dagen bekijken|Meetpunt|vaste lasten|Buffer op bankrekening' '^$' 'App/Pages/HomeView.swift|App/Pages/SavingsView.swift|App/Pages/ToolsView.swift'
+# ImportMapping.swift herkent oude invoerwoorden (vaste lasten, ...) in bestanden van gebruikers; wat de gebruiker ziet is aangepast.
+chk "Engelse tabnamen/oude termen"         0 '"(Home|Savings|Tools)"|Portefeuille|Mijn beleggingen|Salaris & inkomsten|Bankuitgaven|Saldo nu|Bankbuffer|Spaarpot Buffer|Per dag bekijken|Dag voor dag bekijken|Alle dagen bekijken|Meetpunt|vaste lasten|Buffer op bankrekening' 'App/Core/ImportMapping\.swift'
 echo "== Instellingen en account: geen sheets (alleen bij een volledige run)"
 if [ "$FULL" = 1 ]; then
   SET=(App/Pages/Settings App/Pages/SettingsView.swift App/Auth App/Cloud App/UI/BackupUI.swift App/UI/MarketDataUI.swift)

@@ -62,7 +62,7 @@ struct ExpenseOverview: Equatable {
         CentsMath.value(cents(income) - (cents(fixed) + cents(variable) - cents(fromPots))
                         - cents(toPots) - cents(toInvestments))
     }
-    /// Aandeel van het inkomen dat naar vaste lasten gaat (0...1+); 0 zonder inkomen.
+    /// Aandeel van het inkomen dat naar vaste uitgaven gaat (0...1+); 0 zonder inkomen.
     var fixedShare: Double { income > 0 ? fixed / income : 0 }
     var variableShare: Double { income > 0 ? variable / income : 0 }
 }

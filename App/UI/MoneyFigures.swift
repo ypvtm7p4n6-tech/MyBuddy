@@ -146,25 +146,6 @@ extension PeriodSummary {
     }
 }
 
-extension FinanceData {
-    /// Salaris en overige inkomsten van de maanden samen (in hele centen opgeteld). Samen zijn ze het inkomen van de periode
-    /// (`PeriodSummary.income`): de salarisuitbetalingen van elke maand plus de extra inkomsten.
-    func incomeParts(in months: [YearMonth]) -> (salary: Double, extra: Double) {
-        let salary = CentsMath.sum(months.map { CentsMath.int(salaryAmount(in: $0)) })
-        let extra = CentsMath.sum(months.map { CentsMath.int(extraIncomeTotal(in: $0)) })
-        return (CentsMath.value(salary), CentsMath.value(extra))
-    }
-
-    /// Vaste en variabele uitgaven van de maanden samen (in hele centen opgeteld). Het zijn totalen, dus ook wat uit
-    /// spaarpotten komt: samen zijn ze `PeriodSummary.expenses`.
-    func expenseKindTotals(in months: [YearMonth]) -> (fixed: Double, variable: Double) {
-        let overviews = months.map { expenseOverview(in: $0) }
-        let fixed = CentsMath.sum(overviews.map { CentsMath.int($0.fixed) })
-        let variable = CentsMath.sum(overviews.map { CentsMath.int($0.variable) })
-        return (CentsMath.value(fixed), CentsMath.value(variable))
-    }
-}
-
 /// Labels die op meer dan één scherm hetzelfde moeten zijn (termenlijst, plan par. 2.8).
 enum MoneyLabels {
     /// Wat er van het maandinkomen nog te verdelen is, voor de huidige en de komende maanden. Nooit kaal "Over".

@@ -1,7 +1,7 @@
 import XCTest
 @testable import MyBuddyCore
 
-/// Controle van de logica achter het scherm "Regels" (SavingsPages.swift): bewaren, verwijderen en de teksten.
+/// Controle van de logica achter het scherm "Regels" (App/Pages/Month/): bewaren, verwijderen en de teksten.
 final class LineSaveTests: XCTestCase {
     private func ym(_ y: Int, _ m: Int) -> YearMonth { YearMonth(year: y, month: m) }
 

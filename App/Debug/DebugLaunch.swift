@@ -77,7 +77,7 @@ enum DebugLaunch {
     }
 
     /// De pagina bij een naam voor `-mybuddy-order`. De oude namen home, savings en tools zijn een alias voor overview,
-    /// month en planning, zodra die pagina's bestaan (anders blijft het de oude pagina).
+    /// month en planning.
     private static func blockPage(named name: String) -> BlockPage? {
         let aliases = ["home": "overview", "savings": "month", "tools": "planning"]
         if let mapped = aliases[name], let page = BlockPage(rawValue: mapped) { return page }

@@ -16,13 +16,6 @@ struct GoalsSummaryCard: View {
     }
 }
 
-/// Overgangsvorm (tot golf 1c): de oude tabroot Savings roept dit blok nog aan en krijgt nu de nieuwe kaart.
-struct GoalsHubBlock: View {
-    var body: some View {
-        GoalsSummaryCard()
-    }
-}
-
 private struct GoalsSummaryCardContent: View {
     @Environment(AppStore.self) private var store
     @AppStorage private var storedDraft: String

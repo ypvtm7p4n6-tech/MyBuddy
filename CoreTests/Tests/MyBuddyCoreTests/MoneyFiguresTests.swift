@@ -149,34 +149,15 @@ final class MoneyFiguresTests: XCTestCase {
         XCTAssertEqual(month.figures, MonthBoard(d, month: oct2026).figures)
     }
 
-    func testIncomeAndExpensePartsAddUpToThePeriod() {
-        var (d, pot) = baseData()
-        d.upsertLine(MoneyLine(name: "Tandarts", amount: 300, day: 12, potShares: [PotShare(potID: pot.id, amount: 120)]),
-                     kind: .expense, in: oct2026)
-        d.upsertLine(MoneyLine(name: "Boodschappen", amount: 400, isRecurring: true, kind: .variable), kind: .expense, in: oct2026)
-        d.materialize(upTo: oct2026.adding(2))
-        let months = oct2026.range(count: 3)
-        let period = d.periodSummary(.month, containing: oct2026, current: oct2026)
-        _ = period
-        let parts = d.incomeParts(in: months)
-        let total = PeriodSummary(months: months.map { d.summary(of: $0, current: oct2026) })
-        XCTAssertEqual(cents(parts.salary) + cents(parts.extra), cents(total.income))
-        let kinds = d.expenseKindTotals(in: months)
-        XCTAssertEqual(cents(kinds.fixed) + cents(kinds.variable), cents(total.expenses))
-        XCTAssertGreaterThan(kinds.variable, 0)
-    }
-
-    func testIncomePartsWithAnEveryFourWeeksSalary() {
+    func testSalaryOfSeveralMonthsWithAnEveryFourWeeksSalary() {
         var (d, _) = baseData()
         d.salary.setSchedule(.weeks, interval: 4, anchor: CalendarDay(year: 2026, month: 10, day: 2))
         d.materialize(upTo: oct2026.adding(3))
         let months = oct2026.range(count: 4)
-        let total = PeriodSummary(months: months.map { d.summary(of: $0, current: oct2026) })
-        let parts = d.incomeParts(in: months)
-        XCTAssertEqual(cents(parts.salary) + cents(parts.extra), cents(total.income))
+        let salary = CentsMath.sum(months.map { CentsMath.int(d.salaryAmount(in: $0)) })
         // Elke 4 weken vanaf 2 oktober: 2 okt, 30 okt, 27 nov, 25 dec en 22 jan. Oktober telt twee uitbetalingen, de andere
         // drie maanden elk één: vijf van 3000.
-        XCTAssertEqual(parts.salary, 3_000 * 5)
+        XCTAssertEqual(CentsMath.value(salary), 3_000 * 5)
     }
 
     func testSalaryNoteNamesTheDaysOfAnEveryFourWeeksSalary() {

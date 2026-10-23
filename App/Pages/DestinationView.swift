@@ -1,20 +1,21 @@
 import SwiftUI
 
-/// Koppelt elke `Destination` aan zijn pagina. Alle blokken in de app verwijzen hiernaartoe.
-/// TIJDELIJK (tot golf 1c): `.salary`, `.expenses`, `.cashflow`, `.overview` en `.settings(_)` tonen nog de oude pagina's.
+/// Koppelt elke `Destination` aan zijn pagina. Alle kaarten en rijen in de app verwijzen hiernaartoe (via de
+/// `NavigationStack` van `TabStack`). De `switch` is uitputtend en heeft bewust geen `default`: een nieuwe bestemming moet
+/// hier een pagina krijgen.
 struct DestinationView: View {
     let destination: Destination
 
     var body: some View {
         switch destination {
-        case .overview: OverviewPage()
+        case .overview: OverviewTab() // noodgreep: het Overzicht is een tabwortel en komt normaal nooit op een pad
         case .income: IncomePage()
-        case .salary: IncomePage() // het salarisschema staat nog op de pagina Inkomen
-        case .expenses: BankPage() // Uitgaven en bankrekening zijn nog één pagina
+        case .salary: SalaryPage()
+        case .expenses: ExpensesPage()
         case .distribute: DistributePage()
         case .pots: PotsPage()
         case .pot(let id): PotDetailPage(potID: id)
-        case .bank: BankPage()
+        case .bank: BankPage(section: .balance)
         case .portfolio: PortfolioPage()
         case .holding(let id): HoldingDetailPage(holdingID: id)
         case .projection: ProjectionPage()
@@ -24,8 +25,8 @@ struct DestinationView: View {
         case .buffer: BufferPage()
         case .savingsGoal: SavingsGoalPage()
         case .purchase: PurchasePage()
-        case .cashflow: CashflowPage()
-        case .settings: SettingsView()
+        case .cashflow: BankPage(section: .days)
+        case .settings(let page): SettingsDestination(page: page)
         }
     }
 }

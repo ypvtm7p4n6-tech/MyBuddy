@@ -27,8 +27,8 @@ enum ImportCategory: String, CaseIterable, Identifiable, Codable {
     var title: String {
         switch self {
         case .inkomen: return "Inkomen"
-        case .vasteLasten: return "Vaste lasten"
-        case .variabeleLasten: return "Variabele lasten"
+        case .vasteLasten: return "Vaste uitgaven"
+        case .variabeleLasten: return "Variabele uitgaven"
         case .spaarpot: return "Spaarpotten"
         case .belegging: return "Beleggingen"
         case .overslaan: return "Overslaan"
@@ -2333,13 +2333,13 @@ enum ImportTemplate {
             [.header("Categorie"), .header("Omschrijving"), .header("Bedrag per maand"), .header("Dag van de maand"), .header("Ticker (alleen beleggingen)")],
             line("Inkomsten", "Salaris", 2800, day: 25),
             line("Inkomsten", "Kinderbijslag", 250),
-            line("Vaste lasten", "Huur", 1050, day: 1),
-            line("Vaste lasten", "Zorgverzekering", 145, day: 1),
-            line("Vaste lasten", "Internet en tv", 55),
-            line("Vaste lasten", "Energie", 120),
-            line("Variabele lasten", "Boodschappen", 380),
-            line("Variabele lasten", "Uit eten", 90),
-            line("Variabele lasten", "Kleding", 60),
+            line("Vaste uitgaven", "Huur", 1050, day: 1),
+            line("Vaste uitgaven", "Zorgverzekering", 145, day: 1),
+            line("Vaste uitgaven", "Internet en tv", 55),
+            line("Vaste uitgaven", "Energie", 120),
+            line("Variabele uitgaven", "Boodschappen", 380),
+            line("Variabele uitgaven", "Uit eten", 90),
+            line("Variabele uitgaven", "Kleding", 60),
             line("Sparen", "Noodfonds", 150),
             line("Sparen", "Vakantiepot", 100),
             line("Beleggingen", "Wereld-ETF", 250, ticker: "VWCE.DE")
@@ -2350,7 +2350,7 @@ enum ImportTemplate {
         [
             [.header("Zo maak je een bestand dat MyBuddy goed leest")],
             [.text("1. Zet in de bovenste rij kolomnamen, zoals in het blad Begroting: Categorie, Omschrijving, Bedrag per maand.")],
-            [.text("2. Categorie is Inkomsten, Vaste lasten, Variabele lasten, Sparen of Beleggingen. Zonder categorie raadt MyBuddy het aan de hand van de omschrijving.")],
+            [.text("2. Categorie is Inkomsten, Vaste uitgaven, Variabele uitgaven, Sparen of Beleggingen. Zonder categorie raadt MyBuddy het aan de hand van de omschrijving.")],
             [.text("3. De kolommen Dag van de maand en Ticker mag je weglaten. Een ticker (bijvoorbeeld VWCE.DE) laat de app de koers volgen.")],
             [.text("4. Bedragen mogen getallen zijn of tekst zoals € 1.234,56. Een min-teken telt als uitgave.")],
             [.text("5. Je kunt ook een indeling per maand gebruiken, met kolommen jan t/m dec. MyBuddy neemt dan de huidige maand of het gemiddelde.")],

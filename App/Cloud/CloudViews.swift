@@ -5,7 +5,6 @@ import SwiftUI
 // - de teksten van de synchronisatie (`SyncText`) en de statusrij (`SyncStatusRow`)
 // - de melding op het Overzicht als de synchronisatie aandacht nodig heeft (`SyncAttentionBanner`)
 // - de eis aan een nieuw cloudwachtwoord (`CloudPasswordHint`)
-// - tot golf 1c: de meldingen bij het starten (`SyncPromptsHost`), die dan vervallen
 
 // MARK: - Teksten
 
@@ -155,77 +154,5 @@ struct CloudPasswordHint: View {
         .foregroundStyle(isMet ? Theme.positive : Theme.textSecondary)
         .animated(by: isMet, quick: true)
         .accessibilityElement(children: .combine)
-    }
-}
-
-// MARK: - Meldingen bij het starten (vervalt in golf 1c)
-
-/// Toont de meldingen van de synchronisatie bovenop de app. Eén melding tegelijk, want meerdere alerts op
-/// dezelfde view overschrijven elkaar. TIJDELIJK: vervangen door `SyncAttentionBanner`; verdwijnt in golf 1c, zodra
-/// `MyBuddyApp` de aanroep van `.syncPrompts(_:)` niet meer doet.
-struct SyncPromptsHost<Content: View>: View {
-    let sync: SyncController?
-    let content: Content
-
-    private enum Prompt {
-        case importLocal
-        case conflict
-    }
-
-    private var prompt: Prompt? {
-        guard let sync else { return nil }
-        if sync.importOffer != nil { return .importLocal }
-        if sync.conflict != nil && !sync.conflictPromptDeferred && !sync.isResolving { return .conflict }
-        return nil
-    }
-
-    private var title: String {
-        switch prompt {
-        case .some(.importLocal): return "Lokale gegevens uploaden?"
-        case .some(.conflict): return "Welke versie wil je houden?"
-        case .none: return ""
-        }
-    }
-
-    private var message: String {
-        switch prompt {
-        case .some(.importLocal):
-            if let offer = sync?.importOffer { return SyncText.importMessage(offer) }
-            return ""
-        case .some(.conflict):
-            if let conflict = sync?.conflict { return SyncText.conflictMessage(conflict) }
-            return ""
-        case .none:
-            return ""
-        }
-    }
-
-    private var isPresented: Binding<Bool> {
-        Binding(get: { prompt != nil }, set: { _ in })
-    }
-
-    var body: some View {
-        content.alert(title, isPresented: isPresented) {
-            switch prompt {
-            case .some(.importLocal):
-                Button("Uploaden") { sync?.answerImportOffer(accept: true) }
-                Button("Niet uploaden", role: .cancel) { sync?.answerImportOffer(accept: false) }
-            case .some(.conflict):
-                Button("Bewaar deze versie") { sync?.startResolving(.keepLocal) }
-                Button("Neem cloud-versie over") { sync?.startResolving(.takeRemote) }
-                Button("Later", role: .cancel) { sync?.deferConflictPrompt() }
-            case .none:
-                EmptyView()
-            }
-        } message: {
-            Text(message)
-        }
-    }
-}
-
-extension View {
-    /// Voegt de meldingen van de synchronisatie toe (lokale gegevens uploaden, conflict). Vervalt in golf 1c.
-    func syncPrompts(_ sync: SyncController?) -> some View {
-        SyncPromptsHost(sync: sync, content: self)
     }
 }

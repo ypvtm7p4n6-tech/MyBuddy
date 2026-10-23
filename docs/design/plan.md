@@ -1008,12 +1008,10 @@ F App/Core/
 F CoreTests/
 +F CoreTests/Tests/MyBuddyCoreTests/ChartModels.swift
 # A Tabroots
-A App/Pages/HomeView.swift
-A App/Pages/SavingsView.swift
-A App/Pages/ToolsView.swift
+# (golf 1c: HomeView.swift, SavingsView.swift en ToolsView.swift zijn verwijderd)
 +A App/Pages/Tabs/
 # B1 Maand-pagina's
-B1 App/Pages/SavingsPages.swift
+# (golf 1c: SavingsPages.swift is verwijderd)
 B1 App/UI/SavingsDisplay.swift
 B1 App/UI/MoneyFigures.swift
 +B1 App/Pages/Month/

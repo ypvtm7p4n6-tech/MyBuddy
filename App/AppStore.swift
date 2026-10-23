@@ -192,7 +192,7 @@ final class AppStore {
             let before = holding.snapshots.count
             mutate { $0.importHistory(holdingID: holdingID, prices: points.map { (date: $0.date, price: $0.close) }) }
             let added = (data.holding(holdingID)?.snapshots.count ?? before) - before
-            return added > 0 ? "\(added) meetpunten toegevoegd." : "Er waren geen oudere koersen om toe te voegen."
+            return added > 0 ? "\(added) waarde-updates toegevoegd." : "Er waren geen oudere koersen om toe te voegen."
         } catch {
             return "Historie ophalen mislukt: \(error.localizedDescription)"
         }

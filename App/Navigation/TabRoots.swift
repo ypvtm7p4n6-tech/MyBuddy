@@ -1,10 +1,8 @@
 import SwiftUI
 
-/// TIJDELIJK (golf 0a tot golf 1c): de inhoud van elke tab, zolang de nieuwe tabroots (`OverviewTab`, `MonthTab`,
-/// `SavingTab`, `PlanningTab`) van pakket A er nog niet zijn. De oude views houden hun eigen `NavigationStack`
-/// (op de oude padeigenschappen van `Router`, die doorverwijzen naar `router.paths`).
-/// In golf 1c wordt dit de definitieve vorm: `TabStack(.overview) { OverviewTab() }` enzovoort. Dit is geen eindvorm en
-/// wordt nooit opgeleverd.
+/// De inhoud van elke tab, binnen de eigen `NavigationStack` van die tab (`TabStack`). De tabroots zelf (`OverviewTab`,
+/// `MonthTab`, `SavingTab`, `PlanningTab`) zijn alleen inhoud; het pad komt uit `router.paths[tab]`.
+/// `SettingsView` (de tabroot van Instellingen) heeft bewust geen eigen `NavigationStack`: de stapel komt van `TabStack`.
 struct TabRoot: View {
     let tab: AppTab
 
@@ -15,22 +13,25 @@ struct TabRoot: View {
     var body: some View {
         switch tab {
         case .overview:
-            HomeView()
+            TabStack(.overview) {
+                OverviewTab()
+            }
         case .month:
-            SavingsView()
+            TabStack(.month) {
+                MonthTab()
+            }
         case .saving:
             TabStack(.saving) {
-                ContentUnavailableView(
-                    "Sparen",
-                    systemImage: "banknote",
-                    description: Text("Wordt gebouwd")
-                )
-                .navigationTitle("Sparen")
+                SavingTab()
             }
         case .planning:
-            ToolsView()
+            TabStack(.planning) {
+                PlanningTab()
+            }
         case .settings:
-            SettingsView()
+            TabStack(.settings) {
+                SettingsView()
+            }
         }
     }
 }

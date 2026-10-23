@@ -1,7 +1,7 @@
 import XCTest
 @testable import MyBuddyCore
 
-/// Controle van de logica achter het scherm "Verdelen" (SavingsPages.swift): inlegwijze per maand, standaard.
+/// Controle van de logica achter het scherm "Verdelen" (App/Pages/Month/DistributePage.swift): inlegwijze per maand, standaard.
 final class AllocationEditTests: XCTestCase {
     private func ym(_ y: Int, _ m: Int) -> YearMonth { YearMonth(year: y, month: m) }
     private let now = YearMonth(year: 2026, month: 10)

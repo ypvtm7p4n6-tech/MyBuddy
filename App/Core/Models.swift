@@ -108,7 +108,7 @@ extension SalarySettings {
     }
 }
 
-/// Vaste lasten (huur, verzekeringen) of variabele uitgaven (boodschappen, uit eten).
+/// Vaste uitgaven (huur, verzekeringen) of variabele uitgaven (boodschappen, uit eten).
 enum ExpenseKind: String, Codable, CaseIterable, Identifiable {
     case fixed, variable
     var id: String { rawValue }
@@ -497,7 +497,7 @@ enum HoldingKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// Meetpunt van de waarde van een belegging.
+/// Waarde-update van een belegging.
 struct ValueSnapshot: Identifiable, Codable, Equatable {
     var id = UUID()
     var date: Date
