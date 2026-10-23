@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// De commando's in de menubalk (Mac en iPad met toetsenbord): de tabs in het menu Weergave met Cmd+1 t/m Cmd+5 (op de Mac
-/// Cmd+1 t/m Cmd+4, want Instellingen is daar een eigen venster met Cmd+komma), Zoeken met Cmd+F, en in het menu Gegevens
-/// Koersen vernieuwen (Cmd+R) en Back-up maken. Alles is uitgeschakeld zolang er niemand is ingelogd.
+/// De commando's in de menubalk (Mac en iPad met toetsenbord): de drie tabs in het menu Weergave met Cmd+1 (Home), Cmd+2
+/// (Bibliotheek) en Cmd+3 (Zoeken), Zoeken met Cmd+F (selecteert de zoektab en opent het zoekveld), op iPad Instellingen met
+/// Cmd+komma (op de Mac is dat het `Settings`-venster van het App-menu), en in het menu Gegevens Koersen vernieuwen (Cmd+R) en
+/// Back-up maken. Alles is uitgeschakeld zolang er niemand is ingelogd.
 @MainActor
 struct AppCommands: Commands {
     let session: ActiveSession
@@ -13,14 +14,20 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .sidebar) {
-            tabButton(.overview, key: "1")
-            tabButton(.month, key: "2")
-            tabButton(.saving, key: "3")
-            tabButton(.planning, key: "4")
-            #if !os(macOS)
-            tabButton(.settings, key: "5")
-            #endif
+            tabButton(.home, key: "1")
+            tabButton(.library, key: "2")
+            tabButton(.search, key: "3")
         }
+        #if !os(macOS)
+        // Op iPad met toetsenbord: Cmd+komma opent Instellingen (op de Mac doet het `Settings`-venster dat).
+        CommandGroup(replacing: .appSettings) {
+            Button("Instellingen…") {
+                session.router?.open(.settingsRoot)
+            }
+            .keyboardShortcut(",", modifiers: .command)
+            .disabled(session.router == nil)
+        }
+        #endif
         CommandGroup(after: .textEditing) {
             Button("Zoeken") {
                 session.router?.requestSearch()

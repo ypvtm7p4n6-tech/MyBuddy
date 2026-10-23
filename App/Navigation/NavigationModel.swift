@@ -1,35 +1,33 @@
 import Foundation
 // Foundation-only: geen SwiftUI. In de app zit alles in één module. In het testpakket (CoreTests/Tests/MyBuddyCoreTests) staat
-// dit bestand als symlink tussen de tests; de tests staan in NavigationRulesTests.swift.
+// dit bestand als symlink tussen de tests; de tests staan in NavigationRulesTests.swift. `PageCatalog.swift` (ook Foundation-only)
+// beschrijft elke bestemming met titel, symbool, tint en groep.
 
 // MARK: - Tabs
 
-/// De tabs van de app. Op de iPhone en iPad zijn het er vijf; op de Mac staat Instellingen niet in de zijbalk maar in een
-/// eigen venster (het `Settings`-venster), dus daar zijn het er vier.
+/// De drie tabs van de app: Home, Bibliotheek en Zoeken (de zoektab staat los en rechts). Op iPhone, iPad en Mac zijn het
+/// dezelfde drie; op iPad en Mac staan ze in de zijbalk. Instellingen is geen tab: op iPhone en iPad opent de profielknop
+/// de pagina `Destination.settingsRoot`, op de Mac staat Instellingen in het `Settings`-venster.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
-    case overview, month, saving, planning, settings
+    case home, library, search
 
     var id: String { rawValue }
 
     /// Eén woord, zinshoofdletter (termenlijst).
     var title: String {
         switch self {
-        case .overview: return "Overzicht"
-        case .month: return "Maand"
-        case .saving: return "Sparen"
-        case .planning: return "Plannen"
-        case .settings: return "Instellingen"
+        case .home: return "Home"
+        case .library: return "Bibliotheek"
+        case .search: return "Zoeken"
         }
     }
 
     /// SF Symbol van de tab. De gevulde variant van een geselecteerde tab kiest het systeem zelf.
     var symbol: String {
         switch self {
-        case .overview: return "chart.pie"
-        case .month: return "calendar"
-        case .saving: return "banknote"
-        case .planning: return "flag.checkered"
-        case .settings: return "gearshape"
+        case .home: return "house"
+        case .library: return "books.vertical"
+        case .search: return "magnifyingglass"
         }
     }
 }
@@ -91,35 +89,40 @@ enum SettingsPage: String, CaseIterable, Hashable {
 
 // MARK: - Bestemmingen
 
-/// Alle pagina's die je bereikt door op een blok of rij te tikken (en die dus op de navigatiestapel van een tab komen).
+/// Alle pagina's die je bereikt door op een tegel, rij of knop te tikken (en die dus op de navigatiestapel van een tab komen).
+/// `PageCatalog` (PageCatalog.swift) is de tabel met titel, symbool, tint en groep van elke bestemming.
 enum Destination: Hashable {
-    case overview
+    /// De wortels van de tabs Home en Bibliotheek: alleen voor zoeken, sneltoetsen en diepe links.
+    case home, library
+    /// Maandoverzicht ("Waar gaat je geld heen").
+    case flow
     case income, salary, expenses, distribute, bank, cashflow
     case pots, pot(UUID), portfolio, holding(UUID)
     case goals, goal(UUID), savingsGoal, accelerators, buffer, projection, purchase
+    /// Hulpmiddelen (de lijst van vier rekenpagina's).
+    case tools
+    /// Instellingen (de lijst, Account eerst en los), een gepushte pagina op iPhone en iPad.
+    case settingsRoot
     case settings(SettingsPage)
 }
 
 extension Destination {
-    /// De tab waar deze bestemming thuishoort. Een tik op een link naar een pagina van een andere tab wisselt van tab.
-    var tab: AppTab {
+    /// Is dit de wortel van een tab? Een wortel staat nooit op een pad.
+    var isTabRoot: Bool {
         switch self {
-        case .overview:
-            return .overview
-        case .income, .salary, .expenses, .distribute, .bank, .cashflow:
-            return .month
-        case .pots, .pot, .portfolio, .holding:
-            return .saving
-        case .goals, .goal, .savingsGoal, .accelerators, .buffer, .projection, .purchase:
-            return .planning
-        case .settings:
-            return .settings
+        case .home, .library:
+            return true
+        case .flow, .income, .salary, .expenses, .distribute, .bank, .cashflow,
+             .pots, .pot, .portfolio, .holding,
+             .goals, .goal, .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+             .tools, .settingsRoot, .settings:
+            return false
         }
     }
 
     /// De bestemmingen waaronder deze pagina in een pad staat als je er rechtstreeks naartoe gaat (`NavigationRules.go`):
-    /// een spaarpot onder Spaarpotten, een belegging onder Beleggingen, een doel onder Doelen, Salaris onder Inkomen,
-    /// en de subpagina's van Account en Gegevens onder hun hoofdpagina.
+    /// een spaarpot onder Spaarpotten, een belegging onder Beleggingen, een doel onder Doelen, Salaris onder Inkomen, en een
+    /// instellingenpagina onder Instellingen (en een subpagina van Account of Gegevens ook onder haar hoofdpagina).
     var parents: [Destination] {
         switch self {
         case .pot:
@@ -131,11 +134,12 @@ extension Destination {
         case .salary:
             return [.income]
         case .settings(let page):
-            if let parent = page.parent { return [.settings(parent)] }
-            return []
-        case .overview, .income, .expenses, .distribute, .bank, .cashflow,
+            if let parent = page.parent { return [.settingsRoot, .settings(parent)] }
+            return [.settingsRoot]
+        case .home, .library, .flow, .income, .expenses, .distribute, .bank, .cashflow,
              .pots, .portfolio,
-             .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase:
+             .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+             .tools, .settingsRoot:
             return []
         }
     }
@@ -166,12 +170,41 @@ enum NavigationRules {
         normalize(path + [destination])
     }
 
-    /// Rechtstreeks naar een bestemming: de eigen tab en het pad (ouderpad plus de bestemming). Het Overzicht is een
-    /// tabwortel en heeft een leeg pad.
-    static func go(_ destination: Destination) -> (tab: AppTab, path: [Destination]) {
-        if destination == .overview {
-            return (tab: .overview, path: [])
+    /// Rechtstreeks naar een bestemming, vanaf de tab `current` met het pad `path` (zoeken, sneltoetsen, diepe links):
+    /// - `.home` en `.library` zijn tabwortels: die tab met een leeg pad.
+    /// - `.settingsRoot` en `.settings(_)` blijven op de huidige stapel: het pad krijgt de ontbrekende `.settingsRoot` en
+    ///   `.settings(hoofdpagina)` en daarna de bestemming. Staat `.settingsRoot` al in het pad, dan wordt het pad daar
+    ///   teruggebracht, zodat je niet boven op een oude instellingenpagina uitkomt.
+    /// - Al het andere opent in de Bibliotheek, met de ouders (`parents`) en de pagina zelf.
+    /// Het pad heeft nooit een herhaling.
+    static func go(_ destination: Destination, from current: AppTab, path: [Destination]) -> (tab: AppTab, path: [Destination]) {
+        switch destination {
+        case .home:
+            return (tab: .home, path: [])
+        case .library:
+            return (tab: .library, path: [])
+        case .settingsRoot, .settings:
+            return (tab: current, path: settingsPath(to: destination, from: path))
+        case .flow, .income, .salary, .expenses, .distribute, .bank, .cashflow,
+             .pots, .pot, .portfolio, .holding,
+             .goals, .goal, .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+             .tools:
+            return (tab: .library, path: normalize(destination.parents + [destination]))
         }
-        return (tab: destination.tab, path: normalize(destination.parents + [destination]))
+    }
+
+    /// Het pad naar een instellingenpagina op de stapel `path`.
+    private static func settingsPath(to destination: Destination, from path: [Destination]) -> [Destination] {
+        var result: [Destination] = path + [.settingsRoot]
+        if let rootIndex = path.firstIndex(of: .settingsRoot) {
+            result = Array(path[0...rootIndex])
+        }
+        for parent in destination.parents where parent != .settingsRoot {
+            result.append(parent)
+        }
+        if destination != .settingsRoot {
+            result.append(destination)
+        }
+        return normalize(result)
     }
 }

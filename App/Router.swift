@@ -6,18 +6,18 @@ import Observation
 @MainActor
 @Observable
 final class Router {
-    var tab: AppTab = .overview
+    var tab: AppTab = .home
     /// Het pad van elke tab. Van tab wisselen wist niets; een tik op de actieve tab brengt je terug naar de wortel.
-    var paths: [AppTab: [Destination]] = [.overview: [], .month: [], .saving: [], .planning: [], .settings: []]
+    var paths: [AppTab: [Destination]] = [.home: [], .library: [], .search: []]
     /// De pagina waarvan de blokvolgorde wordt aangepast (laat het blad "Volgorde aanpassen" zien).
     var orderPage: BlockPage?
 
-    /// De maand waar je naar kijkt op de Maand-tab en de pagina's eronder. Het Overzicht leest dit niet: dat gaat altijd over
-    /// de huidige maand.
+    /// De maand waar je naar kijkt op de maandpagina's (Inkomen, Uitgaven, Verdelen, Bankrekening, Dag voor dag, Maandoverzicht).
+    /// Home en de Bibliotheek lezen dit niet: die gaan altijd over de huidige maand (K17).
     var focusMonth: YearMonth = YearMonth.current()
     var periodMode: PeriodMode = .month
 
-    /// Het Overzicht opent zijn zoekveld zodra dit getal oploopt.
+    /// De zoektab opent zijn zoekveld zodra dit getal oploopt.
     var searchRequest = 0
     /// macOS: de wortel opent het `Settings`-venster op deze pane en het venster wist het verzoek weer.
     var settingsRequest: SettingsPage?
@@ -43,35 +43,56 @@ final class Router {
         paths[target] = []
     }
 
-    /// Opent een pagina. Hoort die bij de tab waar je nu bent, dan komt hij op het pad van die tab (staat hij er al, dan ga je
-    /// terug naar die plek); anders ga je naar de tab van de pagina (`go`).
+    /// Opent een pagina op de stapel waar je nu bent (B5): geen tabwissel. Staat de pagina al in het pad, dan ga je terug naar
+    /// die plek; dezelfde pagina mag wel op het pad van een andere tab staan. Een tabwortel gaat via `go`. Op de Mac is
+    /// Instellingen een eigen venster: daar wordt het een verzoek aan de wortel om dat venster te openen (`go`).
     func open(_ destination: Destination) {
-        if destination.tab == tab {
-            paths[tab] = NavigationRules.push(destination, onto: paths[tab] ?? [])
-        } else {
+        if destination.isTabRoot || opensMacSettings(destination) {
             go(destination)
-        }
-    }
-
-    /// Gaat rechtstreeks naar een pagina: de eigen tab van de pagina, met als pad het ouderpad plus de pagina (een spaarpot
-    /// onder Spaarpotten). Gebruik dit voor zoeken, sneltoetsen, meldingen en links naar een andere tab.
-    /// Op de Mac is Instellingen een eigen venster: daar wordt het een verzoek aan de wortel om dat venster te openen.
-    func go(_ destination: Destination) {
-        #if os(macOS)
-        if case .settings(let page) = destination {
-            settingsRequest = page
             return
         }
+        paths[tab] = NavigationRules.push(destination, onto: paths[tab] ?? [])
+    }
+
+    /// Gaat rechtstreeks naar een pagina (zoeken, sneltoetsen, meldingen, diepe links): een tabwortel selecteert die tab, een
+    /// instellingenpagina blijft op de huidige stapel, al het andere opent in de Bibliotheek met het ouderpad (een spaarpot
+    /// onder Spaarpotten). Op de Mac zet Instellingen een verzoek voor het `Settings`-venster (`.settingsRoot` wordt Account).
+    func go(_ destination: Destination) {
+        #if os(macOS)
+        switch destination {
+        case .settingsRoot:
+            settingsRequest = .account
+            return
+        case .settings(let page):
+            settingsRequest = page
+            return
+        default:
+            break
+        }
         #endif
-        let target = NavigationRules.go(destination)
+        let target = NavigationRules.go(destination, from: tab, path: paths[tab] ?? [])
         paths[target.tab] = target.path
         tab = target.tab
     }
 
-    /// Gaat naar het Overzicht en laat het zoekveld openen.
+    /// Selecteert de zoektab en laat het zoekveld openen.
     func requestSearch() {
-        go(.overview)
+        select(.search)
         searchRequest += 1
+    }
+
+    /// Is dit op de Mac een pagina van Instellingen? (Daar bestaat geen pad voor: het `Settings`-venster opent.)
+    private func opensMacSettings(_ destination: Destination) -> Bool {
+        #if os(macOS)
+        switch destination {
+        case .settingsRoot, .settings:
+            return true
+        default:
+            return false
+        }
+        #else
+        return false
+        #endif
     }
 
     // MARK: Periode
@@ -86,34 +107,10 @@ final class Router {
         focusMonth = current
     }
 
-    /// Zet de Maand-tab op de huidige maand en de periode "Maand". Een kaart op het Overzicht gaat altijd over deze maand;
-    /// zonder dit kon de pagina nog op een andere maand of periode staan en een ander getal tonen.
+    /// Zet de maandpagina's op de huidige maand en de periode "Maand". Een tegel op Home of een rij in de Bibliotheek gaat altijd
+    /// over deze maand; zonder dit kon de pagina nog op een andere maand of periode staan en een ander getal tonen.
     func showCurrentMonth(_ current: YearMonth) {
         focusMonth = current
         periodMode = .month
-    }
-
-    // MARK: Overgangsvorm (tot pakket G)
-
-    /// De oude paden van de drie oude tabroots verwijzen door naar `paths`.
-    var homePath: [Destination] {
-        get { paths[.overview] ?? [] }
-        set { paths[.overview] = NavigationRules.normalize(newValue) }
-    }
-
-    var savingsPath: [Destination] {
-        get { paths[.month] ?? [] }
-        set { paths[.month] = NavigationRules.normalize(newValue) }
-    }
-
-    var toolsPath: [Destination] {
-        get { paths[.planning] ?? [] }
-        set { paths[.planning] = NavigationRules.normalize(newValue) }
-    }
-
-    /// Instellingen is geen blad meer. Het oude tandwiel in `PageScaffold` gaat nu naar Account.
-    var showSettings: Bool {
-        get { false }
-        set { if newValue { go(.settings(.account)) } }
     }
 }

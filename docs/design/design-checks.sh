@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Ontwerpcontrole voor MyBuddy (docs/design/plan.md, par. 7.2).
-# Gebruik: docs/design/design-checks.sh [--final] [pad ...]     (zonder pad: heel App/)
-#   zonder --final : tijdens de bouw. Overgangsvormen (compat-laag in 0A en F, compat in Router) tellen niet mee.
-#   met --final    : oplevering (pakket G). Geen enkele overgangsvorm mag nog bestaan.
+# Ontwerpcontrole voor MyBuddy (docs/design/plan.md, par. 7.2, aangevuld met par. 5.2 van docs/design2/plan.md).
+# Gebruik: docs/design/design-checks.sh [--final] [pad ...]     (zonder pad: heel App/)   (scripts/design-checks.sh is een kopie)
+#   zonder --final : tijdens de bouw. Overgangsvormen (compat-laag, de oude tabroots in Pages/Tabs, de oude kaarten) tellen niet mee.
+#   met --final    : oplevering (pakket 3 van ontwerp 2). Geen enkele overgangsvorm mag nog bestaan.
 # Elke regel: naam | verwachting | aantal gevonden | PASS/FAIL. Exit 1 bij een FAIL.
 # Regels met "min:N" gelden alleen bij een volledige run (zonder pad): een los bestand hoeft niet alles te bevatten.
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo /home/user/MyBuddy)" || exit 2
@@ -51,7 +51,8 @@ echo "== Kleur en glas"
 chk "Color(hex: buiten Theme"              0 'Color\(hex:' 'App/UI/Theme.swift'
 chk "Color(red:/UIColor( buiten Theme"     0 'Color\(red:|UIColor\(|NSColor\(' 'App/UI/Theme.swift'
 chk ".secondary als tekst/pictogramkleur"  0 'foregroundStyle\(\.secondary\)|Color\.secondary|foregroundColor\(\.secondary\)'
-chk "wit als voorgrond"                    0 'foregroundStyle\(\.white\)|foregroundStyle\(Color\.white\)|foregroundColor\(\.white\)'
+# Ontwerp 2: wit en zwart zijn tokens (Theme.onTile, Theme.heroPanelFill); `\b` laat `.whitespaces` ongemoeid.
+chk "wit/zwart als kleur (.white/.black/Color.white)" 0 '(Color)?\.(white|black)\b' 'App/UI/Theme\.swift'
 chk "glas op inhoud (glassCard/Surface/Effect)" 0 'glassCard\(|glassSurface\(|\.glassEffect\(' 'App/UI/Glass.swift' 'App/UI/Charts.swift'
 chk "oude glasblokken (GlassBlock/LinkedBlock)" 0 'GlassBlock\(|LinkedBlock\(' '^$' 'App/UI/Components.swift'
 chk "oude chips (ChipButton/Link/Grid/Label)"   0 'Chip(Button|Link|Grid|Label)\(' '^$' 'App/UI/Components.swift'
@@ -64,7 +65,8 @@ chk "oude padnamen (homePath/savingsPath/toolsPath)" 0 'homePath|savingsPath|too
 chk "eigen tabbalk"                        0 'GlassTabBar|barBackdrop'
 chk "TabView aanwezig (app + Mac-instellingen)" min:2 'TabView *[\(\{]'
 chk "TabView niet vaker dan 3"             max:3 'TabView *[\(\{]'
-chk ".sheet( in de hele app (nu 26)"       max:16 '\.sheet\('
+# Home krijgt er drie nieuwe; de oude kaarten (nog in gebruik tot pakket 3) tellen niet-final niet mee. De eindstand is weer 16.
+chk ".sheet( in de hele app (nu 26)"       max:16 '\.sheet\(' '^$' 'App/Pages/Tabs/|App/Pages/Saving/FavoriteCards\.swift|App/Pages/Bank/UpcomingDays\.swift'
 chk "alert()"                              0 '\.alert\('
 # UIDevice in SyncController is het apparaatlabel van de synchronisatie (een naam), geen layoutkeuze.
 chk "apparaattype als layoutkeuze"         0 'UIDevice|userInterfaceIdiom|UIScreen' 'App/Cloud/SyncController\.swift:[0-9]+:.*UIDevice'
@@ -72,6 +74,24 @@ chk "navigationBarTitleDisplayMode buiten Components" 0 'navigationBarTitleDispl
 chk "veeg-om-te-sluiten bij wijzigingen"  min:1 'interactiveDismissDisabled'
 chk "zoeken (searchable)"                  min:1 '\.searchable\('
 chk "Settings-scene (macOS)"               min:1 '^[[:space:]]*Settings[[:space:]]*\{'
+echo "== Ontwerp 2: schil, planken en kleurverloop"
+chk "zoektab (Tab(value: AppTab.search, role: .search)" min:1 'Tab\(value: AppTab\.search, role: \.search'
+chk "geen tab Instellingen"                0 'Tab\("Instellingen"'
+chk "profielknop op de tabwortels"         min:3 'profileToolbarItem\(\)'
+chk "planken (Shelf)"                      min:5 '[^A-Za-z]Shelf\('
+chk "albumkoppen (AlbumHeader)"            min:3 'AlbumHeader\('
+chk "hero-carrousel (HeroCarousel)"        min:1 'HeroCarousel\('
+# De galerij en de previews (alleen debug) tonen het kleurverloop los van een pagina.
+chk "BackdropGradient( alleen in Backdrop/Components" 0 'BackdropGradient\(' 'App/UI/Backdrop\.swift|App/UI/Components\.swift|App/UI/TileGallery\.swift|App/UI/DesignPreviews\.swift'
+chk "scrollTargetBehavior alleen in Shelf/Hero" 0 'scrollTargetBehavior' 'App/UI/Shelf\.swift|App/UI/Hero\.swift'
+chk "Destination.tab en de oude AppTab-cases" 0 'destination\.tab\b|AppTab\.(overview|month|saving|planning|settings)\b'
+# Alleen met --final: de oude tabroots, de oude zoekknop en de tijdelijke namen van de schil zijn weg.
+chk "oude zoekknop, PeriodControl, TabPressStyle (final)" 0 'searchToolbarButton|PeriodControl|TabPressStyle' '^$' 'App/Pages/Tabs/|App/UI/Components\.swift'
+chk "tijdelijke tabnamen (LegacyTabNames)" 0 'static var (overview|month|saving|planning): AppTab' '^$' 'App/Navigation/LegacyTabNames\.swift'
+if [ "$FINAL" = 1 ]; then
+  n=$(find App/Pages/Tabs -name '*.swift' 2>/dev/null | wc -l | tr -d ' ')
+  ok=0; [ "$n" -eq 0 ] && ok=1; report "Pages/Tabs bestaat niet meer (final)" 0 "$n" "$ok"
+fi
 echo "== Toegankelijkheid en beweging"
 chk "animation(Theme.motion buiten Components" 0 '\.animation\(Theme\.(motion|quickMotion)' 'App/UI/Components.swift|App/UI/Motion.swift'
 chk "Reduce Motion gelezen"                min:1 'accessibilityReduceMotion'
@@ -95,7 +115,10 @@ chk "Home-keuzebladen onder oude naam"     0 '\b(PotPickerSheet|HoldingPickerShe
 chk "MonthPickerBlock (nu MonthBar)"       0 '\bMonthPickerBlock\b'
 echo "== Taal (termenlijst)"
 # ImportMapping.swift herkent oude invoerwoorden (vaste lasten, ...) in bestanden van gebruikers; wat de gebruiker ziet is aangepast.
-chk "Engelse tabnamen/oude termen"         0 '"(Home|Savings|Tools)"|Portefeuille|Mijn beleggingen|Salaris & inkomsten|Bankuitgaven|Saldo nu|Bankbuffer|Spaarpot Buffer|Per dag bekijken|Dag voor dag bekijken|Alle dagen bekijken|Meetpunt|vaste lasten|Buffer op bankrekening' 'App/Core/ImportMapping\.swift'
+# Ontwerp 2: "Home" is de tabnaam (B2) en dus toegestaan; het woord "Overzicht" als pagina- of tabnaam vervalt (`Importoverzicht` mag).
+chk "Engelse tabnamen/oude termen"         0 '"(Savings|Tools)"|Portefeuille|Mijn beleggingen|Salaris & inkomsten|Bankuitgaven|Saldo nu|Bankbuffer|Spaarpot Buffer|Per dag bekijken|Dag voor dag bekijken|Alle dagen bekijken|Meetpunt|vaste lasten|Buffer op bankrekening' 'App/Core/ImportMapping\.swift'
+# De tests in CoreTests controleren juist dat het woord er niet in zit, dus daar staat de letterlijke tekst.
+chk "het woord Overzicht als titel (B2)"   0 '"Overzicht"' 'CoreTests/' 'App/Pages/Tabs/'
 echo "== Instellingen en account: geen sheets (alleen bij een volledige run)"
 if [ "$FULL" = 1 ]; then
   SET=(App/Pages/Settings App/Pages/SettingsView.swift App/Auth App/Cloud App/UI/BackupUI.swift App/UI/MarketDataUI.swift)

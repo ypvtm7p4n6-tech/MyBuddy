@@ -1,8 +1,8 @@
 import XCTest
 import Foundation
 
-// Tests van de navigatieregels (App/Navigation/NavigationModel.swift, Foundation-only): tabs, bestemmingen, het afknippen
-// van een pad bij een herhaalde bestemming (K16) en `go` met het ouderpad (par. 2.6 van docs/design/plan.md).
+// Tests van de navigatieregels (App/Navigation/NavigationModel.swift, Foundation-only): de drie tabs, de bestemmingen met hun
+// ouders, het afknippen van een pad bij een herhaalde bestemming (K16) en `go` (B5 en par. 1.2 van docs/design2/plan.md).
 
 /// Hulp voor de tests van navigatie en zoeken: alle bestemmingen, en een uitputtende `switch` die bij een nieuwe case een
 /// compileerfout geeft zodat de lijst en de verwachtingen worden bijgewerkt.
@@ -13,10 +13,11 @@ enum NavigationTestSupport {
     /// Een voorbeeld van elke case van `Destination` (en elke pagina van Instellingen).
     static func allDestinations() -> [Destination] {
         var list: [Destination] = [
-            .overview,
+            .home, .library, .flow,
             .income, .salary, .expenses, .distribute, .bank, .cashflow,
             .pots, .pot(idA), .portfolio, .holding(idB),
-            .goals, .goal(idA), .savingsGoal, .accelerators, .buffer, .projection, .purchase
+            .goals, .goal(idA), .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+            .tools, .settingsRoot
         ]
         for page in SettingsPage.allCases { list.append(.settings(page)) }
         return list
@@ -25,38 +26,48 @@ enum NavigationTestSupport {
     /// Het volgnummer van een case. De `switch` heeft geen `default`: een nieuwe case compileert pas als hij hier staat.
     static func ordinal(_ destination: Destination) -> Int {
         switch destination {
-        case .overview: return 0
-        case .income: return 1
-        case .salary: return 2
-        case .expenses: return 3
-        case .distribute: return 4
-        case .bank: return 5
-        case .cashflow: return 6
-        case .pots: return 7
-        case .pot: return 8
-        case .portfolio: return 9
-        case .holding: return 10
-        case .goals: return 11
-        case .goal: return 12
-        case .savingsGoal: return 13
-        case .accelerators: return 14
-        case .buffer: return 15
-        case .projection: return 16
-        case .purchase: return 17
-        case .settings: return 18
+        case .home: return 0
+        case .library: return 1
+        case .flow: return 2
+        case .income: return 3
+        case .salary: return 4
+        case .expenses: return 5
+        case .distribute: return 6
+        case .bank: return 7
+        case .cashflow: return 8
+        case .pots: return 9
+        case .pot: return 10
+        case .portfolio: return 11
+        case .holding: return 12
+        case .goals: return 13
+        case .goal: return 14
+        case .savingsGoal: return 15
+        case .accelerators: return 16
+        case .buffer: return 17
+        case .projection: return 18
+        case .purchase: return 19
+        case .tools: return 20
+        case .settingsRoot: return 21
+        case .settings: return 22
         }
     }
 
-    static let caseCount = 19
+    static let caseCount = 23
 
-    /// De tab die par. 2.6 voor elke bestemming noemt, los van de implementatie.
-    static func expectedTab(_ destination: Destination) -> AppTab {
+    /// De ouders die par. 1.2 van docs/design2/plan.md voor elke bestemming noemt, los van de implementatie.
+    static func expectedParents(_ destination: Destination) -> [Destination] {
         switch destination {
-        case .overview: return .overview
-        case .income, .salary, .expenses, .distribute, .bank, .cashflow: return .month
-        case .pots, .pot, .portfolio, .holding: return .saving
-        case .goals, .goal, .savingsGoal, .accelerators, .buffer, .projection, .purchase: return .planning
-        case .settings: return .settings
+        case .pot: return [.pots]
+        case .holding: return [.portfolio]
+        case .goal: return [.goals]
+        case .salary: return [.income]
+        case .settings(let page):
+            if let parent = page.parent { return [.settingsRoot, .settings(parent)] }
+            return [.settingsRoot]
+        case .home, .library, .flow, .income, .expenses, .distribute, .bank, .cashflow,
+             .pots, .portfolio, .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+             .tools, .settingsRoot:
+            return []
         }
     }
 }
@@ -67,14 +78,21 @@ final class NavigationRulesTests: XCTestCase {
 
     // MARK: Tabs
 
-    func testTabsHaveFixedOrderTitlesAndSymbols() {
-        XCTAssertEqual(AppTab.allCases, [.overview, .month, .saving, .planning, .settings])
-        XCTAssertEqual(AppTab.allCases.map { $0.title }, ["Overzicht", "Maand", "Sparen", "Plannen", "Instellingen"])
-        XCTAssertEqual(AppTab.allCases.map { $0.rawValue }, ["overview", "month", "saving", "planning", "settings"])
+    func testTabsAreHomeLibraryAndSearchWithTitlesAndSymbols() {
+        XCTAssertEqual(AppTab.allCases, [.home, .library, .search])
+        XCTAssertEqual(AppTab.allCases.map { $0.title }, ["Home", "Bibliotheek", "Zoeken"])
+        XCTAssertEqual(AppTab.allCases.map { $0.rawValue }, ["home", "library", "search"])
+        XCTAssertEqual(AppTab.allCases.map { $0.symbol }, ["house", "books.vertical", "magnifyingglass"])
         let symbols = AppTab.allCases.map { $0.symbol }
         XCTAssertEqual(Set(symbols).count, symbols.count, "elke tab heeft een eigen symbool")
-        XCTAssertTrue(symbols.allSatisfy { !$0.isEmpty })
-        XCTAssertEqual(AppTab.settings.id, "settings")
+        XCTAssertEqual(AppTab.search.id, "search")
+    }
+
+    func testThereIsNoSettingsTabAndNoOverviewWord() {
+        XCTAssertNil(AppTab(rawValue: "settings"))
+        XCTAssertNil(AppTab(rawValue: "overview"))
+        XCTAssertFalse(AppTab.allCases.map { $0.title }.contains("Overzicht"))
+        XCTAssertFalse(AppTab.allCases.map { $0.title }.contains("Instellingen"))
     }
 
     // MARK: Bestemmingen
@@ -84,15 +102,26 @@ final class NavigationRulesTests: XCTestCase {
         XCTAssertEqual(ordinals, Set(0..<NavigationTestSupport.caseCount))
     }
 
-    func testDestinationTabIsTotalAndMatchesTheTable() {
+    func testDestinationParentsAreTotalAndMatchTheTable() {
         for destination in NavigationTestSupport.allDestinations() {
-            XCTAssertEqual(destination.tab, NavigationTestSupport.expectedTab(destination), "\(destination)")
+            XCTAssertEqual(destination.parents, NavigationTestSupport.expectedParents(destination), "\(destination)")
         }
     }
 
-    func testEveryTabHasAtLeastOneDestination() {
-        let tabs = Set(NavigationTestSupport.allDestinations().map { $0.tab })
-        XCTAssertEqual(tabs, Set(AppTab.allCases))
+    func testOnlyHomeAndLibraryAreTabRoots() {
+        for destination in NavigationTestSupport.allDestinations() {
+            let expected = destination == .home || destination == .library
+            XCTAssertEqual(destination.isTabRoot, expected, "\(destination)")
+        }
+    }
+
+    func testAParentIsNeverARootOrItself() {
+        for destination in NavigationTestSupport.allDestinations() {
+            for parent in destination.parents {
+                XCTAssertNotEqual(parent, destination)
+                XCTAssertFalse(parent.isTabRoot, "\(destination) staat onder een wortel")
+            }
+        }
     }
 
     // MARK: Instellingenpagina's
@@ -136,6 +165,7 @@ final class NavigationRulesTests: XCTestCase {
         XCTAssertEqual(NavigationRules.normalize([.pots, .pot(a), .cashflow, .pot(a), .bank]), [.pots, .pot(a)])
         XCTAssertEqual(NavigationRules.normalize([.bank, .bank]), [.bank])
         XCTAssertEqual(NavigationRules.normalize([.income, .salary, .income]), [.income])
+        XCTAssertEqual(NavigationRules.normalize([.settingsRoot, .settings(.data), .settingsRoot]), [.settingsRoot])
     }
 
     func testNormalizeTreatsDifferentIDsAsDifferentDestinations() {
@@ -169,51 +199,120 @@ final class NavigationRulesTests: XCTestCase {
         XCTAssertEqual(NavigationRules.push(.bank, onto: [.bank]), [.bank])
     }
 
+    func testAPageMayStandOnTwoStacksBecausePushIgnoresTheOtherTab() {
+        // B5: dezelfde pagina mag op het pad van Home en op dat van de Bibliotheek staan (elk pad is een eigen stapel).
+        let home = NavigationRules.push(.pots, onto: [])
+        let library = NavigationRules.push(.pots, onto: [.flow])
+        XCTAssertEqual(home, [.pots])
+        XCTAssertEqual(library, [.flow, .pots])
+    }
+
     // MARK: go
 
-    func testGoGivesTheOwnTabAndAPathEndingInTheDestinationForEveryDestination() {
+    func testGoNeverLeavesARepeatAndEndsInTheDestinationForEveryPage() {
         for destination in NavigationTestSupport.allDestinations() {
-            let result = NavigationRules.go(destination)
-            XCTAssertEqual(result.tab, destination.tab, "\(destination)")
-            if destination == .overview {
-                XCTAssertTrue(result.path.isEmpty, "het Overzicht is een tabwortel")
-            } else {
-                XCTAssertEqual(result.path.last, destination, "\(destination)")
+            for current in AppTab.allCases {
+                let result = NavigationRules.go(destination, from: current, path: [])
+                XCTAssertEqual(Set(result.path).count, result.path.count, "geen herhaling in \(result.path)")
+                XCTAssertEqual(NavigationRules.normalize(result.path), result.path)
+                if destination.isTabRoot {
+                    XCTAssertTrue(result.path.isEmpty, "\(destination) is een tabwortel")
+                } else {
+                    XCTAssertEqual(result.path.last, destination, "\(destination)")
+                    XCTAssertEqual(Array(result.path.dropLast()), destination.parents, "\(destination)")
+                }
             }
-            XCTAssertEqual(Set(result.path).count, result.path.count, "geen herhaling in \(result.path)")
-            XCTAssertEqual(NavigationRules.normalize(result.path), result.path)
+        }
+    }
+
+    func testGoToARootSelectsThatTabWithAnEmptyPath() {
+        let home = NavigationRules.go(.home, from: .library, path: [.pots])
+        XCTAssertEqual(home.tab, .home)
+        XCTAssertEqual(home.path, [])
+        let library = NavigationRules.go(.library, from: .home, path: [.tools])
+        XCTAssertEqual(library.tab, .library)
+        XCTAssertEqual(library.path, [])
+    }
+
+    func testGoOpensEveryPageInTheLibraryWithItsParents() {
+        let pages: [Destination] = [.flow, .income, .expenses, .distribute, .bank, .cashflow, .pots, .portfolio,
+                                    .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase, .tools]
+        for destination in pages {
+            for current in AppTab.allCases {
+                let result = NavigationRules.go(destination, from: current, path: [.bank, .income])
+                XCTAssertEqual(result.tab, .library, "\(destination) vanaf \(current)")
+                XCTAssertEqual(result.path, [destination], "een bestaand pad wordt vervangen")
+            }
         }
     }
 
     func testGoBuildsTheParentPath() {
-        XCTAssertEqual(NavigationRules.go(.pot(a)).path, [.pots, .pot(a)])
-        XCTAssertEqual(NavigationRules.go(.pot(a)).tab, .saving)
-        XCTAssertEqual(NavigationRules.go(.holding(b)).path, [.portfolio, .holding(b)])
-        XCTAssertEqual(NavigationRules.go(.holding(b)).tab, .saving)
-        XCTAssertEqual(NavigationRules.go(.goal(a)).path, [.goals, .goal(a)])
-        XCTAssertEqual(NavigationRules.go(.goal(a)).tab, .planning)
-        XCTAssertEqual(NavigationRules.go(.salary).path, [.income, .salary])
-        XCTAssertEqual(NavigationRules.go(.salary).tab, .month)
-        XCTAssertEqual(NavigationRules.go(.settings(.password)).path, [.settings(.account), .settings(.password)])
-        XCTAssertEqual(NavigationRules.go(.settings(.deleteAccount)).path, [.settings(.account), .settings(.deleteAccount)])
-        XCTAssertEqual(NavigationRules.go(.settings(.conflictBackups)).path, [.settings(.account), .settings(.conflictBackups)])
-        XCTAssertEqual(NavigationRules.go(.settings(.importReview)).path, [.settings(.data), .settings(.importReview)])
-        XCTAssertEqual(NavigationRules.go(.settings(.importReview)).tab, .settings)
+        XCTAssertEqual(NavigationRules.go(.pot(a), from: .home, path: []).path, [.pots, .pot(a)])
+        XCTAssertEqual(NavigationRules.go(.pot(a), from: .home, path: []).tab, .library)
+        XCTAssertEqual(NavigationRules.go(.holding(b), from: .search, path: []).path, [.portfolio, .holding(b)])
+        XCTAssertEqual(NavigationRules.go(.holding(b), from: .search, path: []).tab, .library)
+        XCTAssertEqual(NavigationRules.go(.goal(a), from: .library, path: []).path, [.goals, .goal(a)])
+        XCTAssertEqual(NavigationRules.go(.salary, from: .home, path: []).path, [.income, .salary])
+        XCTAssertEqual(NavigationRules.go(.salary, from: .home, path: []).tab, .library)
     }
 
     func testGoToAPageWithoutAParentIsJustThatPage() {
-        XCTAssertEqual(NavigationRules.go(.cashflow).path, [.cashflow])
-        XCTAssertEqual(NavigationRules.go(.cashflow).tab, .month)
-        XCTAssertEqual(NavigationRules.go(.income).path, [.income])
-        XCTAssertEqual(NavigationRules.go(.buffer).path, [.buffer])
-        XCTAssertEqual(NavigationRules.go(.buffer).tab, .planning)
-        XCTAssertEqual(NavigationRules.go(.settings(.account)).path, [.settings(.account)])
-        XCTAssertEqual(NavigationRules.go(.settings(.prices)).path, [.settings(.prices)])
+        XCTAssertEqual(NavigationRules.go(.cashflow, from: .home, path: []).path, [.cashflow])
+        XCTAssertEqual(NavigationRules.go(.income, from: .home, path: []).path, [.income])
+        XCTAssertEqual(NavigationRules.go(.buffer, from: .home, path: []).path, [.buffer])
+        XCTAssertEqual(NavigationRules.go(.flow, from: .home, path: []).path, [.flow])
+        XCTAssertEqual(NavigationRules.go(.tools, from: .library, path: []).path, [.tools])
     }
 
-    func testGoToTheOverviewIsTheEmptyPathOfTheOverviewTab() {
-        let result = NavigationRules.go(.overview)
-        XCTAssertEqual(result.tab, .overview)
-        XCTAssertEqual(result.path, [])
+    func testGoToSettingsStaysOnTheCurrentStackAndAddsTheMissingParents() {
+        // Zonder pad: Instellingen, dan de hoofdpagina, dan de pagina.
+        XCTAssertEqual(NavigationRules.go(.settingsRoot, from: .home, path: []).path, [.settingsRoot])
+        XCTAssertEqual(NavigationRules.go(.settingsRoot, from: .home, path: []).tab, .home)
+        XCTAssertEqual(NavigationRules.go(.settings(.account), from: .library, path: []).path,
+                       [.settingsRoot, .settings(.account)])
+        XCTAssertEqual(NavigationRules.go(.settings(.account), from: .library, path: []).tab, .library)
+        XCTAssertEqual(NavigationRules.go(.settings(.password), from: .search, path: []).path,
+                       [.settingsRoot, .settings(.account), .settings(.password)])
+        XCTAssertEqual(NavigationRules.go(.settings(.password), from: .search, path: []).tab, .search)
+        XCTAssertEqual(NavigationRules.go(.settings(.importReview), from: .home, path: []).path,
+                       [.settingsRoot, .settings(.data), .settings(.importReview)])
+        XCTAssertEqual(NavigationRules.go(.settings(.prices), from: .home, path: []).path, [.settingsRoot, .settings(.prices)])
+    }
+
+    func testGoToSettingsKeepsTheExistingPathBelowInstellingen() {
+        // Het pad blijft staan: terug brengt je naar waar je was.
+        let result = NavigationRules.go(.settings(.data), from: .library, path: [.pots, .pot(a)])
+        XCTAssertEqual(result.tab, .library)
+        XCTAssertEqual(result.path, [.pots, .pot(a), .settingsRoot, .settings(.data)])
+    }
+
+    func testGoToSettingsWhenInstellingenIsAlreadyOpenCutsBackToIt() {
+        let open: [Destination] = [.pots, .settingsRoot, .settings(.data), .settings(.importReview)]
+        let toAccount = NavigationRules.go(.settings(.account), from: .home, path: open)
+        XCTAssertEqual(toAccount.path, [.pots, .settingsRoot, .settings(.account)])
+        let toRoot = NavigationRules.go(.settingsRoot, from: .home, path: open)
+        XCTAssertEqual(toRoot.path, [.pots, .settingsRoot])
+        let same = NavigationRules.go(.settings(.importReview), from: .home, path: open)
+        XCTAssertEqual(same.path, open)
+        let sub = NavigationRules.go(.settings(.password), from: .home, path: [.settingsRoot, .settings(.account)])
+        XCTAssertEqual(sub.path, [.settingsRoot, .settings(.account), .settings(.password)])
+    }
+
+    func testGoToSettingsNeverLeavesARepeat() {
+        let paths: [[Destination]] = [
+            [], [.settingsRoot], [.settingsRoot, .settings(.account)], [.pots, .settingsRoot, .settings(.data)],
+            [.settingsRoot, .settings(.account), .settings(.password)]
+        ]
+        for path in paths {
+            for page in SettingsPage.allCases {
+                for current in AppTab.allCases {
+                    let result = NavigationRules.go(.settings(page), from: current, path: path)
+                    XCTAssertEqual(result.tab, current)
+                    XCTAssertEqual(Set(result.path).count, result.path.count, "\(result.path)")
+                    XCTAssertEqual(result.path.last, .settings(page))
+                    XCTAssertTrue(result.path.contains(.settingsRoot))
+                }
+            }
+        }
     }
 }

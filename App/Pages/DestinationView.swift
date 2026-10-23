@@ -1,14 +1,29 @@
 import SwiftUI
 
-/// Koppelt elke `Destination` aan zijn pagina. Alle kaarten en rijen in de app verwijzen hiernaartoe (via de
+/// Koppelt elke `Destination` aan zijn pagina. Alle tegels, rijen en pillen in de app verwijzen hiernaartoe (via de
 /// `NavigationStack` van `TabStack`). De `switch` is uitputtend en heeft bewust geen `default`: een nieuwe bestemming moet
-/// hier een pagina krijgen.
+/// hier een pagina krijgen. Elke pagina krijgt de tint van zijn kleurverloop (`\.backdropHue`): die van de catalogus
+/// (`PageCatalog`), saliegrijs voor Instellingen; een albumpagina (spaarpot, belegging, doel) zet zijn eigen tint.
 struct DestinationView: View {
     let destination: Destination
 
     var body: some View {
+        page
+            .environment(\.backdropHue, hue)
+    }
+
+    /// De tint van het kleurverloop achter deze pagina.
+    private var hue: TileHue {
+        if case .settings = destination { return .sage }
+        return PageCatalog.info(destination)?.hue ?? .olive
+    }
+
+    @ViewBuilder
+    private var page: some View {
         switch destination {
-        case .overview: OverviewTab() // noodgreep: het Overzicht is een tabwortel en komt normaal nooit op een pad
+        case .home: HomeTab() // noodgreep: een tabwortel komt normaal nooit op een pad
+        case .library: LibraryTab() // idem
+        case .flow: FlowPage()
         case .income: IncomePage()
         case .salary: SalaryPage()
         case .expenses: ExpensesPage()
@@ -26,6 +41,8 @@ struct DestinationView: View {
         case .savingsGoal: SavingsGoalPage()
         case .purchase: PurchasePage()
         case .cashflow: BankPage(section: .days)
+        case .tools: ToolsPage()
+        case .settingsRoot: SettingsView()
         case .settings(let page): SettingsDestination(page: page)
         }
     }

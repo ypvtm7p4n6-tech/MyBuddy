@@ -1,27 +1,12 @@
 import SwiftUI
 
-// De volgorde van de blokken op een pagina (par. 2.7 van docs/design/plan.md). De gebruiker kiest de volgorde zelf: via het
-// menu in de werkbalk ("Volgorde aanpassen…"), via Instellingen, Indeling en via lang indrukken op een blok. Een opgeslagen
-// volgorde onder de oude sleutels (`home`, `savings`, `tools`) wordt bij het lezen omgezet (`BlockOrderMigration`). De pagina's
-// en hun blokken (`BlockPage`, `BlockInfo`) staan zonder SwiftUI in `BlockOrderMigration.swift`, zodat ze getest worden.
+// De volgorde van de blokken op een pagina (par. 2.7 van docs/design/plan.md en B16 van docs/design2/plan.md). De gebruiker kiest
+// de volgorde zelf: via Instellingen, Indeling en via lang indrukken op een plankkop op Home. Een opgeslagen volgorde onder de
+// oude sleutels (`home`, `savings`, `tools`) wordt bij het lezen omgezet (`BlockOrderMigration`). De pagina's en hun blokken
+// (`BlockPage`, `BlockInfo`) en het uitrekenen van de volgorde (`AppSettings.orderedBlocks`) staan zonder SwiftUI in
+// `BlockOrderMigration.swift`, zodat ze getest worden.
 
-// MARK: - Opslaan en uitrekenen
-
-extension AppSettings {
-    /// De blokken van een pagina in de volgorde van de gebruiker. Een opgeslagen volgorde onder de oude sleutels wordt eerst
-    /// omgezet (`BlockOrderMigration`, alleen lezen). Onbekende of dubbele id's worden overgeslagen en blokken die nog niet
-    /// in de opgeslagen lijst staan (nieuwe blokken) komen achteraan, in de standaardvolgorde.
-    func orderedBlocks(for page: BlockPage) -> [BlockInfo] {
-        let defaults = page.blocks
-        let stored: [String: [String]] = page.isLegacy ? blockOrder : BlockOrderMigration.migrate(blockOrder)
-        let ids = BlockOrderMigration.order(stored: stored[page.key], defaults: defaults.map { $0.id })
-        return ids.compactMap { id in defaults.first(where: { $0.id == id }) }
-    }
-
-    func blockIDs(for page: BlockPage) -> [String] {
-        orderedBlocks(for: page).map(\.id)
-    }
-}
+// MARK: - Opslaan
 
 @MainActor
 extension AppStore {

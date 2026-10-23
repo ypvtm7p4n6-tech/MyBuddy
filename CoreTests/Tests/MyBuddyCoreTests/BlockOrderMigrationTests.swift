@@ -1,8 +1,10 @@
 import XCTest
 import Foundation
+@testable import MyBuddyCore
 
 // Tests van de migratie van de blokvolgorde (App/UI/BlockOrderMigration.swift, Foundation-only): de zeven rijen van par. 2.7 van
-// docs/design/plan.md, behoud van de onderlinge volgorde, idempotentie, onbekende ids en een lege invoer.
+// docs/design/plan.md, behoud van de onderlinge volgorde, idempotentie, onbekende ids en een lege invoer; de blokken van Home
+// (B16 van docs/design2/plan.md) en het laden van een opgeslagen volgorde uit elke eerdere ronde.
 
 final class BlockOrderMigrationTests: XCTestCase {
 
@@ -161,36 +163,39 @@ final class BlockOrderMigrationTests: XCTestCase {
         XCTAssertEqual(saving, ["pots", "portfolio"])
     }
 
-    // MARK: De pagina's en hun blok-id's (par. 2.7; de tabroots van pakket A en de kaarten koppelen hieraan)
+    // MARK: De pagina's en hun blok-id's (B16 van docs/design2/plan.md)
 
-    func testBlockIDsPerPageMatchThePlan() {
-        XCTAssertEqual(BlockPage.overview.blocks.map { $0.id }, ["wealth", "pots", "invest", "upcoming"])
+    func testHomeHasFiveShelvesInTheDefaultOrder() {
+        XCTAssertEqual(BlockPage.overview.blocks.map { $0.id }, ["upcoming", "pots", "invest", "goals", "tools"])
+        XCTAssertEqual(BlockPage.overview.blocks.map { $0.title },
+                       ["Komende dagen", "Spaarpotten", "Beleggingen", "Doelen", "Hulpmiddelen"])
+        XCTAssertEqual(BlockPage.overview.blocks.map { $0.symbol },
+                       ["calendar.badge.clock", "tray.full", "chart.line.uptrend.xyaxis", "flag.checkered", "wrench.and.screwdriver"])
+    }
+
+    func testOldPagesKeepTheirBlocksUntilTheyAreRemoved() {
         XCTAssertEqual(BlockPage.month.blocks.map { $0.id }, ["flow", "income", "expenses", "distribute", "bank", "days"])
         XCTAssertEqual(BlockPage.saving.blocks.map { $0.id }, ["pots", "portfolio"])
         XCTAssertEqual(BlockPage.planning.blocks.map { $0.id }, ["goals", "buffer", "accelerators", "projection", "purchase"])
-    }
-
-    func testBlockTitlesAndSymbolsMatchThePlan() {
-        let overview = BlockPage.overview.blocks
-        XCTAssertEqual(overview.map { $0.title }, ["Vermogen", "Spaarpotten", "Beleggingen", "Komende dagen"])
-        XCTAssertEqual(overview.map { $0.symbol }, ["chart.pie", "tray.full", "chart.line.uptrend.xyaxis", "calendar.badge.clock"])
         let month = BlockPage.month.blocks
         XCTAssertEqual(month.map { $0.title }, ["Waar gaat je geld heen", "Inkomen", "Uitgaven", "Verdelen", "Bankrekening", "Dag voor dag"])
         XCTAssertEqual(month.map { $0.symbol }, ["chart.bar.xaxis", "eurosign.circle", "creditcard", "square.split.2x2",
                                                   "building.columns", "list.bullet.rectangle"])
-        let saving = BlockPage.saving.blocks
-        XCTAssertEqual(saving.map { $0.title }, ["Spaarpotten", "Beleggingen"])
-        XCTAssertEqual(saving.map { $0.symbol }, ["tray.full", "chart.line.uptrend.xyaxis"])
         let planning = BlockPage.planning.blocks
         XCTAssertEqual(planning.map { $0.title }, ["Doelen", "Noodbuffer", "Versnellers", "Toekomstschatting", "Aankoopcheck"])
         XCTAssertEqual(planning.map { $0.symbol }, ["flag.checkered", "shield.lefthalf.filled", "bolt", "calendar.badge.clock", "cart"])
     }
 
-    func testBlockPageTitlesFollowTheTabNames() {
-        XCTAssertEqual(BlockPage.overview.title, "Overzicht")
+    func testBlockPageTitlesUseTheNewNames() {
+        XCTAssertEqual(BlockPage.overview.title, "Home")
+        XCTAssertEqual(BlockPage.home.title, "Home")
         XCTAssertEqual(BlockPage.month.title, "Maand")
         XCTAssertEqual(BlockPage.saving.title, "Sparen")
         XCTAssertEqual(BlockPage.planning.title, "Plannen")
+        for page in [BlockPage.overview, .month, .saving, .planning, .home, .savings, .tools] {
+            XCTAssertNotEqual(page.title, "Overzicht", "het woord Overzicht vervalt (B2)")
+            XCTAssertFalse(page.blocks.contains { $0.title == "Overzicht" }, "\(page.key)")
+        }
     }
 
     func testOnlyPagesWithThreeOrMoreBlocksAllowOrdering() {
@@ -200,10 +205,11 @@ final class BlockOrderMigrationTests: XCTestCase {
         XCTAssertTrue(BlockPage.planning.allowsOrdering)
     }
 
-    func testAllCasesAreTheFourNewPagesInTabOrder() {
-        XCTAssertEqual(BlockPage.allCases, [.overview, .month, .saving, .planning])
-        XCTAssertEqual(BlockPage.allCases.map { $0.key }, ["overview", "month", "saving", "planning"])
+    func testOnlyHomeIsAListedPage() {
+        XCTAssertEqual(BlockPage.allCases, [.overview])
+        XCTAssertEqual(BlockPage.allCases.map { $0.key }, ["overview"])
         XCTAssertTrue(BlockPage.allCases.allSatisfy { !$0.isLegacy })
+        XCTAssertTrue(BlockPage.allCases.allSatisfy { $0.allowsOrdering })
     }
 
     func testLegacyPagesKeepTheirOldKeysAndBlocks() {
@@ -226,7 +232,7 @@ final class BlockOrderMigrationTests: XCTestCase {
             XCTAssertEqual(Set(ids).count, ids.count, "dubbele blok-id's op \(page.key)")
             XCTAssertFalse(page.blocks.contains { $0.title.isEmpty || $0.symbol.isEmpty })
         }
-        // Elk oud blok-id dat de migratie kent, wijst naar een bestaand blok van een nieuwe pagina (geen verloren blokken).
+        // Elk oud blok-id dat de migratie kent, wijst naar een bestaand blok van een pagina (geen verloren blokken).
         for old in [BlockPage.home, .savings, .tools] {
             let migrated = BlockOrderMigration.migrate([old.key: old.blocks.map { $0.id }])
             let moved = migrated.values.flatMap { $0 }.count
@@ -237,5 +243,61 @@ final class BlockOrderMigrationTests: XCTestCase {
                 XCTAssertTrue(ids.allSatisfy { known.contains($0) }, "onbekend blok in \(key): \(ids)")
             }
         }
+    }
+
+    // MARK: Een opgeslagen volgorde laadt gewoon (B16, par. 5.3)
+
+    /// Decodeert de instellingen zoals ze op schijf staan: alleen de sleutel `blockOrder`, de rest krijgt zijn standaard.
+    private func settings(blockOrder: [String: [String]]) throws -> AppSettings {
+        let data = try JSONEncoder().encode(["blockOrder": blockOrder])
+        return try JSONDecoder().decode(AppSettings.self, from: data)
+    }
+
+    func testAStoredOrderWithWealthStillLoadsAndWealthIsSkipped() throws {
+        // Uit de vorige ronde: Overzicht met `wealth`, `upcoming`, `pots` en `invest` in een eigen volgorde.
+        let loaded = try settings(blockOrder: ["overview": ["upcoming", "wealth", "invest", "pots"]])
+        XCTAssertEqual(loaded.blockIDs(for: .overview), ["upcoming", "invest", "pots", "goals", "tools"])
+        XCTAssertEqual(loaded.orderedBlocks(for: .overview).map { $0.title },
+                       ["Komende dagen", "Beleggingen", "Spaarpotten", "Doelen", "Hulpmiddelen"])
+    }
+
+    func testAnOldBlockOrderWithEveryKeyLoadsOnHome() throws {
+        let stored: [String: [String]] = [
+            "home": ["invest", "overview", "pots"],
+            "savings": ["goals", "buffer", "bank", "pots", "income", "portfolio", "period", "distribute"],
+            "tools": ["purchase", "projection", "accelerators"],
+            "overview": ["upcoming", "wealth", "pots", "invest"],
+            "month": ["days", "flow"]
+        ]
+        let loaded = try settings(blockOrder: stored)
+        // Een nieuwe sleutel wint van een oude: Home volgt `overview`; `wealth` valt weg, de nieuwe planken komen achteraan.
+        XCTAssertEqual(loaded.blockIDs(for: .overview), ["upcoming", "pots", "invest", "goals", "tools"])
+        // De oude sleutels zelf blijven ongemoeid in de gegevens.
+        XCTAssertEqual(loaded.blockOrder, stored)
+        // De oude pagina's lezen nog steeds hun eigen volgorde (tot ze verdwijnen).
+        XCTAssertEqual(loaded.blockIDs(for: .month), ["days", "flow", "income", "expenses", "distribute", "bank"])
+    }
+
+    func testAnOldHomeKeyGivesTheOrderOfPotsAndInvestOnHome() throws {
+        // Alleen de oudste sleutel: `invest` stond voor `pots`.
+        let loaded = try settings(blockOrder: ["home": ["invest", "pots"]])
+        XCTAssertEqual(loaded.blockIDs(for: .overview), ["invest", "pots", "upcoming", "goals", "tools"])
+        XCTAssertEqual(loaded.blockOrder, ["home": ["invest", "pots"]], "lezen schrijft niets terug")
+    }
+
+    func testNoStoredOrderGivesTheDefaultShelves() throws {
+        let loaded = try settings(blockOrder: [:])
+        XCTAssertEqual(loaded.blockIDs(for: .overview), ["upcoming", "pots", "invest", "goals", "tools"])
+        XCTAssertEqual(AppSettings().blockIDs(for: .overview), ["upcoming", "pots", "invest", "goals", "tools"])
+    }
+
+    func testUnknownIdsInAStoredOrderAreIgnored() throws {
+        let loaded = try settings(blockOrder: ["overview": ["bestaat-niet", "tools", "tools", "wealth", "goals"]])
+        XCTAssertEqual(loaded.blockIDs(for: .overview), ["tools", "goals", "upcoming", "pots", "invest"])
+    }
+
+    func testOrderedBlocksOfALegacyPageReadTheLegacyKeyDirectly() throws {
+        let loaded = try settings(blockOrder: ["home": ["invest", "pots", "overview"]])
+        XCTAssertEqual(loaded.blockIDs(for: .home), ["invest", "pots", "overview"])
     }
 }

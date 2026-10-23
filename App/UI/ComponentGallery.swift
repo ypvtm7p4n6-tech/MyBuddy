@@ -3,7 +3,9 @@ import SwiftUI
 
 // Alle onderdelen van het ontwerpsysteem op een pagina, voor de Xcode-canvas (alleen in een debug-build). De previews staan
 // in licht, donker en bij grote tekst (`.accessibility3`); "Verhoog contrast" laat zich niet in code instellen: zet het in
-// de canvas aan bij Environment Overrides (daar krijgt een kaart zijn rand en worden de kleuren sterker).
+// de canvas aan bij Environment Overrides (daar krijgt een kaart zijn rand en worden de kleuren sterker). De tegels, planken,
+// hero, bladertegels, pillen en tinten van ontwerp 2 staan in `TileGallery` (onderaan deze pagina); de rijen en de albumkop in
+// `ComponentListGallery`. Aparte previews van die onderdelen staan in `DesignPreviews.swift`.
 
 /// Een kleurvlak met naam, voor het overzicht van de tokens.
 private struct Swatch: View {
@@ -30,15 +32,10 @@ struct ComponentGallery: View {
     @State private var showsSheet = false
 
     var body: some View {
-        PageScaffold(title: "Componenten", large: true) {
-            VStack(spacing: Theme.pageSpacing) {
-                colorsCard
-                numbersCard
-                metersCard
-                buttonsCard
-                linkCard
-                hintsCard
-                periodCard
+        PageScaffold(title: "Componenten", large: true, fullBleed: true) {
+            VStack(alignment: .leading, spacing: Theme.sectionSpacing) {
+                cards
+                TileGallery()
             }
         }
         .sheet(isPresented: $showsSheet) {
@@ -47,6 +44,20 @@ struct ComponentGallery: View {
                 ChoiceRow(title: "Keuze", detail: "Een uitleg bij de keuze", isSelected: true, action: {})
             }
         }
+    }
+
+    /// De kaarten van het oorspronkelijke ontwerpsysteem, met de paginamarge (de pagina is hier `fullBleed`).
+    private var cards: some View {
+        VStack(spacing: Theme.pageSpacing) {
+            colorsCard
+            numbersCard
+            metersCard
+            buttonsCard
+            linkCard
+            hintsCard
+            periodCard
+        }
+        .padding(.horizontal, CGFloat(ShelfMetrics.margin(compact: true)))
     }
 
     private var colorsCard: some View {
@@ -162,6 +173,42 @@ struct ComponentListGallery: View {
                 SectionHeader("Rijen", domain: .money)
             }
             Section {
+                AlbumHeader(symbol: "airplane", hue: .terracotta, title: "Vakantie", subtitle: "Spaarpot, doel € 5.000,00",
+                            figureLabel: "Saldo vandaag", figure: 1_250, progress: 0.25,
+                            facts: ["Rente 2,0% per jaar", "Inleg € 100,00 per maand"]) {
+                    PillRow(alignment: .center) {
+                        PillButton("Storten", symbol: "plus", style: .prominent, action: {})
+                        PillButton("Opnemen", symbol: "minus", action: {})
+                    }
+                }
+                .albumHeaderRow()
+            }
+            Section {
+                AlbumHeader(symbol: "chart.line.uptrend.xyaxis", hue: .slate, title: "Wereldfonds", subtitle: "ETF, VWCE.DE",
+                            figureLabel: "Waarde", figure: 12_480, facts: ["Belegd sinds maart 2024"],
+                            pills: {
+                    PillRow(alignment: .center) {
+                        PillButton("Waarde bijwerken", style: .prominent, action: {})
+                        PillButton("Bewerken", action: {})
+                    }
+                }, extra: {
+                    Label("Winst € 1.480,00 (+13,5%)", systemImage: "arrow.up.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.positive)
+                })
+                .albumHeaderRow()
+            }
+            Section {
+                MediaRow(symbol: "tray.full", hue: .teal, title: "Spaarpotten", subtitle: "3 potten", value: "€ 6.240,00",
+                         destination: .pots)
+                MediaRow(symbol: "flag.checkered", hue: .mustard, title: "Doelen", subtitle: "2 van 3 haalbaar",
+                         progress: 0.4, destination: .goals)
+                MediaRow(symbol: "building.columns", hue: .terracotta, title: "Bankrekening",
+                         value: "-€ 120,00", valueColor: Theme.negative, destination: .bank, showsCurrentMonth: true)
+            } header: {
+                SectionHeader("Bibliotheek")
+            }
+            Section {
                 NavigationRow(title: "Account", symbol: "person.crop.circle", domain: .settings,
                               value: "Aan", subtitle: "Gesynchroniseerd om 14:02", destination: .settings(.account))
                 NavigationRow(title: "Rekenen", symbol: "percent", domain: .settings, destination: .settings(.calculations))
@@ -172,9 +219,9 @@ struct ComponentListGallery: View {
     }
 }
 
-/// Maakt een winkel met voorbeelddata en een router voor de previews.
+/// Maakt een winkel met voorbeelddata en een router voor de previews (ook die van `DesignPreviews.swift`).
 @MainActor
-private struct GalleryHost<Content: View>: View {
+struct GalleryHost<Content: View>: View {
     @State private var store: AppStore
     @State private var router = Router()
     private let content: Content

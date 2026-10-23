@@ -1,14 +1,14 @@
 import SwiftUI
 
 /// De schil van de app: een native tabbalk met een eigen navigatiepad per tab (`Router.paths`).
-/// iPhone: tabbalk onderin (op iOS 26 als glas boven de inhoud). iPad: balk bovenin die een zijbalk kan worden.
-/// Mac: zijbalk met vier items; Instellingen is daar het `Settings`-venster (zie `SettingsScene`).
-/// Op iPhone en iPad is Instellingen de vijfde tab, met een badge zolang de synchronisatie aandacht vraagt.
-/// De titels en symbolen van de tabs zijn gelijk aan `AppTab.title` en `AppTab.symbol`.
+/// Drie tabs op iPhone, iPad en Mac: Home, Bibliotheek en Zoeken (de zoektab staat los). iPhone: tabbalk onderin (op iOS 26 als
+/// glas boven de inhoud, krimpt bij omlaag scrollen). iPad en Mac: de tabbalk wordt een zijbalk met dezelfde drie items.
+/// Instellingen is geen tab: de profielknop op de tabwortels opent de pagina Instellingen (iPhone en iPad), op de Mac staat
+/// Instellingen in het `Settings`-venster (zie `SettingsScene`). De titels en symbolen van de tabs zijn gelijk aan
+/// `AppTab.title` en `AppTab.symbol`.
 struct RootView: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
-    @Environment(\.syncController) private var sync
     @Environment(\.scenePhase) private var scenePhase
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
@@ -27,7 +27,7 @@ struct RootView: View {
                     Task { await store.refreshPrices() }
                 }
             }
-            // Begint er een nieuwe maand terwijl de app openstaat, dan schuift de Maand-tab mee, maar alleen
+            // Begint er een nieuwe maand terwijl de app openstaat, dan schuiven de maandpagina's mee, maar alleen
             // als je niet zelf naar een andere maand was gebladerd.
             .onChange(of: store.now) { old, new in
                 if router.focusMonth == old { router.resetFocus(to: new) }
@@ -60,62 +60,30 @@ struct RootView: View {
         )
     }
 
-    /// Instellingen vraagt aandacht: er is een synchronisatieconflict, of een aanbod om lokale gegevens te uploaden.
-    private var needsAttention: Bool {
-        sync?.importOffer != nil || sync?.conflict != nil
-    }
-
     private var tabs: some View {
         withMinimizingTabBar(tabView)
     }
 
-    #if os(macOS)
     private var tabView: some View {
         TabView(selection: selection) {
-            Tab("Overzicht", systemImage: "chart.pie", value: AppTab.overview) {
-                TabRoot(.overview)
+            Tab(LocalizedStringKey(AppTab.home.title), systemImage: AppTab.home.symbol, value: AppTab.home) {
+                TabRoot(.home)
             }
-            Tab("Maand", systemImage: "calendar", value: AppTab.month) {
-                TabRoot(.month)
+            Tab(LocalizedStringKey(AppTab.library.title), systemImage: AppTab.library.symbol, value: AppTab.library) {
+                TabRoot(.library)
             }
-            Tab("Sparen", systemImage: "banknote", value: AppTab.saving) {
-                TabRoot(.saving)
-            }
-            Tab("Plannen", systemImage: "flag.checkered", value: AppTab.planning) {
-                TabRoot(.planning)
+            Tab(value: AppTab.search, role: .search) {
+                TabRoot(.search)
             }
         }
         .tabViewStyle(.sidebarAdaptable)
     }
-    #else
-    private var tabView: some View {
-        TabView(selection: selection) {
-            Tab("Overzicht", systemImage: "chart.pie", value: AppTab.overview) {
-                TabRoot(.overview)
-            }
-            Tab("Maand", systemImage: "calendar", value: AppTab.month) {
-                TabRoot(.month)
-            }
-            Tab("Sparen", systemImage: "banknote", value: AppTab.saving) {
-                TabRoot(.saving)
-            }
-            Tab("Plannen", systemImage: "flag.checkered", value: AppTab.planning) {
-                TabRoot(.planning)
-            }
-            Tab("Instellingen", systemImage: "gearshape", value: AppTab.settings) {
-                TabRoot(.settings)
-            }
-            .badge(needsAttention ? 1 : 0)
-        }
-        .tabViewStyle(.sidebarAdaptable)
-    }
-    #endif
 
     /// Op iOS 26 schuift de tabbalk weg als je omlaag scrolt (op de Mac niet: die waarde bestaat daar niet). Eerdere versies laten alles zoals het is.
     @ViewBuilder
     private func withMinimizingTabBar<Content: View>(_ content: Content) -> some View {
         #if os(iOS)
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, macOS 26.0, *) {
             content.tabBarMinimizeBehavior(.onScrollDown)
         } else {
             content

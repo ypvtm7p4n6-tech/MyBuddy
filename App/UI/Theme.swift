@@ -6,7 +6,8 @@ import AppKit
 #endif
 
 // Het ontwerpsysteem op een plek: kleuren, maten en lettertokens. Dit is het enige bestand met `Color(hex:)`.
-// De waarden komen uit docs/design/plan.md par. 4.1 en 4.2; het contrast is berekend tegen de kaartkleur
+// De waarden komen uit docs/design/plan.md par. 4.1 en 4.2 en uit docs/design2/plan.md par. 2.1 (de acht tegelkleuren, het
+// canvas en de bijschriftkleur staan in `TilePalette`, Foundation-only en getest); het contrast is berekend tegen de kaartkleur
 // (licht wit, donker #1C1C1E) en tegen het canvas. Elke hoog-contrastvariant is strikt sterker dan de gewone kleur
 // (donkerder in licht, lichter in donker).
 
@@ -65,7 +66,7 @@ enum AppDomain: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .overview: return "Overzicht"
+        case .overview: return "Home"
         case .money: return "Inkomen en uitgaven"
         case .saving: return "Sparen"
         case .investing: return "Beleggen"
@@ -100,6 +101,69 @@ enum AppDomain: String, CaseIterable, Identifiable {
     }
 }
 
+extension AppDomain {
+    /// De tegelkleur van dit onderdeel (tabel 2.1 van docs/design2/plan.md): olijf, terracotta, saliegroenblauw, leiblauw,
+    /// mosterd, pruim en saliegrijs.
+    var hue: TileHue {
+        switch self {
+        case .overview: return .olive
+        case .money: return .terracotta
+        case .saving: return .teal
+        case .investing: return .slate
+        case .goals: return .mustard
+        case .tools: return .plum
+        case .settings: return .sage
+        }
+    }
+}
+
+// MARK: - Tegelkleuren
+
+extension TileHue {
+    /// De bovenkleur van het verloop. Niet afhankelijk van licht of donker (witte tekst staat er altijd op); bij Verhoog
+    /// contrast de donkerdere variant.
+    var top: Color {
+        let colors = TilePalette.colors(self)
+        return Color(light: Color(hex: colors.top), dark: Color(hex: colors.top),
+                     lightContrast: Color(hex: colors.topHC), darkContrast: Color(hex: colors.topHC))
+    }
+
+    /// De onderkleur van het verloop (zie `top`).
+    var bottom: Color {
+        let colors = TilePalette.colors(self)
+        return Color(light: Color(hex: colors.bottom), dark: Color(hex: colors.bottom),
+                     lightContrast: Color(hex: colors.bottomHC), darkContrast: Color(hex: colors.bottomHC))
+    }
+
+    /// Het tegelverloop: van linksboven naar rechtsonder, zonder schaduw of glans (elke overlay verlaagt het contrast).
+    var gradient: LinearGradient {
+        LinearGradient(colors: [top, bottom], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+}
+
+private struct BackdropHueKey: EnvironmentKey {
+    static let defaultValue: TileHue = .olive
+}
+
+private struct TileHueKey: EnvironmentKey {
+    static let defaultValue: TileHue = .olive
+}
+
+extension EnvironmentValues {
+    /// De tint van het kleurverloop achter de pagina (`BackdropGradient`). `DestinationView` zet hem per pagina, een
+    /// albumpagina zet hem op de kleur van de pot, belegging of het doel.
+    var backdropHue: TileHue {
+        get { self[BackdropHueKey.self] }
+        set { self[BackdropHueKey.self] = newValue }
+    }
+
+    /// De tint van de tegel waar je in zit: `GradientSurface` zet hem, `PillStyle.onTile` leest hem.
+    var tileHue: TileHue {
+        get { self[TileHueKey.self] }
+        set { self[TileHueKey.self] = newValue }
+    }
+}
+
 // MARK: - Thema
 
 /// Eén plek voor vormen en kleuren, zodat alle schermen dezelfde taal spreken.
@@ -107,7 +171,7 @@ enum Theme {
     // MARK: Oppervlakken
 
     /// De achtergrond van een pagina: een vlak, een lichte olijftint in licht en bijna zwart olijfgroen in donker.
-    static let canvas = Color(light: Color(hex: 0xEEF1E2), dark: Color(hex: 0x0E1209))
+    static let canvas = Color(light: Color(hex: TilePalette.canvasLight), dark: Color(hex: TilePalette.canvasDark))
 
     /// Een kaart of lijstrij: de systeemkleur voor gegroepeerde inhoud (op macOS de kleur van een bedieningsvlak).
     #if os(macOS)
@@ -123,14 +187,27 @@ enum Theme {
     // MARK: Tekst en accent
 
     /// Uitleg en bijschriften. Vervangt `.secondary` (dat te weinig contrast gaf).
-    static let textSecondary = Color(light: Color(hex: 0x566049), dark: Color(hex: 0xB3BAA3),
-                                     lightContrast: Color(hex: 0x3A4230), darkContrast: Color(hex: 0xD3D9C4))
+    static let textSecondary = Color(light: Color(hex: TilePalette.textSecondaryLight), dark: Color(hex: TilePalette.textSecondaryDark),
+                                     lightContrast: Color(hex: TilePalette.textSecondaryLightHC),
+                                     darkContrast: Color(hex: TilePalette.textSecondaryDarkHC))
     /// Tint, knoptekst en interactieve pictogrammen.
     static let accent = Color(light: Color(hex: 0x3F5220), dark: Color(hex: 0xA9C06B),
                               lightContrast: Color(hex: 0x2C3A14), darkContrast: Color(hex: 0xC4D68C))
     /// De vulling van een gevulde knop; de tekst erop is `onAccent`.
     static let accentFill = Color(light: Color(hex: 0x3F5220), dark: Color(hex: 0xA9C06B))
     static let onAccent = Color(light: Color(hex: 0xFFFFFF), dark: Color(hex: 0x10140B))
+
+    // MARK: Tekst op een tegel of hero-kaart (het tegelverloop is altijd donker, dus de tekst altijd wit)
+
+    /// Tekst en symbolen op een tegel: wit (minimaal 6,37:1 op de bovenkleur, 9,5:1 bij Verhoog contrast).
+    static let onTile = Color(hex: TilePalette.onTile)
+    /// Bijschriften op een tegel: wit op 82% (minimaal 4,88:1), bij Verhoog contrast op 92%.
+    static let onTileSecondary = Color(light: Color(hex: TilePalette.onTile, opacity: TilePalette.onTileSecondaryAlpha),
+                                       dark: Color(hex: TilePalette.onTile, opacity: TilePalette.onTileSecondaryAlpha),
+                                       lightContrast: Color(hex: TilePalette.onTile, opacity: TilePalette.onTileSecondaryAlphaHC),
+                                       darkContrast: Color(hex: TilePalette.onTile, opacity: TilePalette.onTileSecondaryAlphaHC))
+    /// Het donkere paneel voor een grafiek in een hero-kaart of tegel (zwart op 22%, `heroPanel()`).
+    static let heroPanelFill = Color(hex: 0x000000, opacity: 0.22)
 
     // MARK: Betekenis (altijd met een teken, symbool of woord erbij)
 
@@ -171,6 +248,11 @@ enum Theme {
         palette[((index % palette.count) + palette.count) % palette.count]
     }
 
+    /// De tegelkleur bij een `colorIndex` van een spaarpot of beleggingssoort (dezelfde index als `color(_:)`).
+    static func hue(_ paletteIndex: Int) -> TileHue {
+        TileHue.forIndex(paletteIndex)
+    }
+
     static let potSymbols = [
         "banknote", "shield.lefthalf.filled", "airplane", "laptopcomputer", "house.fill", "car.fill",
         "gift.fill", "graduationcap.fill", "heart.fill", "pawprint.fill", "bicycle", "camera.fill",
@@ -187,11 +269,22 @@ enum Theme {
     // MARK: Maten
 
     /// Buitenste radius van een kaart.
-    static let cardRadius: CGFloat = 24
+    static let cardRadius: CGFloat = 20
+    /// Radius van een hero-kaart.
+    static let heroRadius: CGFloat = 28
     /// Ruimte tussen de rand van een kaart en zijn inhoud.
     static let cardInset: CGFloat = 16
-    /// Een tegel in een kaart is concentrisch met de kaart: binnenste radius = buitenste radius min de tussenruimte (8).
-    static var tileRadius: CGFloat { cardRadius - cardInset }
+    /// Radius van een binnentegel in een kaart (`tile()`, `GradientSurface` zonder eigen radius).
+    static let tileRadius: CGFloat = 12
+    /// Radius van een tegel op een plank, een brede kaart en een bladertegel.
+    static let posterRadius: CGFloat = 16
+    /// Radius van het artwork in een lijstrij (44 punten) en van het kopartwork van een albumpagina.
+    static let rowArtworkRadius: CGFloat = 8
+    static let headerArtworkRadius: CGFloat = 24
+    /// Breedste inhoud van Home (hero en planken).
+    static let shelfMaxWidth: CGFloat = 1120
+    /// Hoogte van het kleurverloop achter een pagina.
+    static let backdropHeight: CGFloat = 420
     static let pageSpacing: CGFloat = 16
     static let sectionSpacing: CGFloat = 24
     static let rowSpacing: CGFloat = 12

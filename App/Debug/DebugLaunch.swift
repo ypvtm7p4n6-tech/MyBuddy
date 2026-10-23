@@ -3,14 +3,16 @@ import Foundation
 
 /// Alleen voor ontwikkelaars (debug-builds): start de app met voorbeelddata en opent direct een pagina,
 /// zodat CI screenshots kan maken. Voorbeelden:
-/// `-mybuddy-demo -mybuddy-tab month -mybuddy-open income`
-/// `-mybuddy-demo -mybuddy-open pot0` (gaat rechtstreeks naar de pagina, met de goede tab en het ouderpad)
-/// `-mybuddy-demo -mybuddy-tab planning -mybuddy-open purchase`
-/// `-mybuddy-demo -mybuddy-order month` (opent het blad "Volgorde aanpassen")
-/// `-mybuddy-demo -mybuddy-settings` (tab Instellingen; op de Mac het Settings-venster)
+/// `-mybuddy-demo -mybuddy-tab library -mybuddy-open income`
+/// `-mybuddy-demo -mybuddy-open pot0` (gaat rechtstreeks naar de pagina, in de Bibliotheek met het ouderpad)
+/// `-mybuddy-demo -mybuddy-open flow` (Maandoverzicht), `-mybuddy-open tools` (Hulpmiddelen)
+/// `-mybuddy-demo -mybuddy-hero 1` (Home opent op hero-kaart 0, 1 of 2: Nog te verdelen, Vermogen, Saldo vandaag)
+/// `-mybuddy-demo -mybuddy-order home` (opent het blad "Volgorde aanpassen" van Home)
+/// `-mybuddy-demo -mybuddy-settings` (pusht Instellingen op de huidige stapel; op de Mac het Settings-venster)
 /// `-mybuddy-demo -mybuddy-demo-holding only-invested` (een belegging zonder waarde-updates, zie `DemoHoldingScenario`)
 /// `-mybuddy-demo -mybuddy-scroll-to <sectiekop>` (een lijstpagina scrolt naar die sectie)
-/// Tabs: overview, month, saving, planning, settings; de oude namen home, savings en tools werken nog.
+/// Tabs: home, library, search. De oude namen werken nog als alias: overview wordt home; month, saving, planning, savings en
+/// tools worden library; settings is geen tab meer (gebruik `-mybuddy-settings`).
 /// Pagina's: zie `destination(named:store:)`.
 enum DebugLaunch {
     private static var arguments: [String] { ProcessInfo.processInfo.arguments }
@@ -26,6 +28,12 @@ enum DebugLaunch {
     /// De kop van de sectie waar een lijstpagina naartoe scrolt (`-mybuddy-scroll-to`). `ListScaffold` leest dit.
     static var scrollTarget: String? { value(for: "-mybuddy-scroll-to") }
 
+    /// De hero-kaart waar Home op opent (`-mybuddy-hero 0|1|2`), of nil. Home (`HomeTab`) leest dit voor zijn eerste selectie.
+    static var heroIndex: Int? {
+        guard let raw = value(for: "-mybuddy-hero"), let index = Int(raw), (0...2).contains(index) else { return nil }
+        return index
+    }
+
     /// Het scenario voor een belegging zonder waarde-updates (`-mybuddy-demo-holding`), of nil.
     static var demoHolding: DemoHoldingScenario? {
         guard let raw = value(for: "-mybuddy-demo-holding") else { return nil }
@@ -37,13 +45,13 @@ enum DebugLaunch {
         return arguments[i + 1]
     }
 
-    /// De tab bij een naam op de opdrachtregel: de nieuwe namen en de oude (home, savings, tools).
+    /// De tab bij een naam op de opdrachtregel: de drie tabs en de oude namen als alias (overview is home; month, saving, planning,
+    /// savings en tools zijn de Bibliotheek).
     static func tab(named name: String) -> AppTab? {
         if let tab = AppTab(rawValue: name) { return tab }
         switch name {
-        case "home": return .overview
-        case "savings": return .month
-        case "tools": return .planning
+        case "overview": return .home
+        case "month", "saving", "planning", "savings", "tools": return .library
         default: return nil
         }
     }
@@ -60,24 +68,21 @@ enum DebugLaunch {
         let chosenTab: AppTab? = value(for: "-mybuddy-tab").flatMap { DebugLaunch.tab(named: $0) }
         let chosenPage: Destination? = value(for: "-mybuddy-open").flatMap { DebugLaunch.destination(named: $0, store: store) }
         if let chosenTab {
-            // Met een tab erbij: de pagina komt op het pad van die tab (zoals voor de herbouw).
+            // Met een tab erbij: de pagina komt op het pad van die tab (de eerste pagina op een lege stapel).
             router.select(chosenTab)
-            if let chosenPage { router.paths[chosenTab] = [chosenPage] }
+            if let chosenPage { router.open(chosenPage) }
         } else if let chosenPage {
-            // Zonder tab: rechtstreeks naar de pagina, op de goede tab en met het ouderpad.
+            // Zonder tab: rechtstreeks naar de pagina, in de Bibliotheek en met het ouderpad.
             router.go(chosenPage)
         }
         if arguments.contains("-mybuddy-settings") {
-            #if os(macOS)
-            router.go(.settings(.account)) // opent het Settings-venster
-            #else
-            router.select(.settings)
-            #endif
+            // iPhone en iPad: Instellingen op de stapel van de huidige tab; Mac: het Settings-venster.
+            router.go(.settingsRoot)
         }
     }
 
     /// De pagina bij een naam voor `-mybuddy-order`. De oude namen home, savings en tools zijn een alias voor overview,
-    /// month en planning.
+    /// month en planning (alleen Home heeft nog een volgorde om aan te passen).
     private static func blockPage(named name: String) -> BlockPage? {
         let aliases = ["home": "overview", "savings": "month", "tools": "planning"]
         if let mapped = aliases[name], let page = BlockPage(rawValue: mapped) { return page }
@@ -88,7 +93,11 @@ enum DebugLaunch {
     private static func destination(named name: String, store: AppStore) -> Destination? {
         let d = store.data
         switch name {
-        case "overview": return .overview
+        case "overview", "home": return .home
+        case "library": return .library
+        case "flow": return .flow
+        case "tools": return .tools
+        case "settings": return .settingsRoot
         case "income": return .income
         case "salary": return .salary
         case "expenses": return .expenses

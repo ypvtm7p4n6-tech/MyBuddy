@@ -1,19 +1,24 @@
 import SwiftUI
 
 // De bouwstenen van het ontwerpsysteem (par. 4.3 t/m 4.5 van docs/design/plan.md): pagina's, kaarten, cijfers, knoppen en
-// de maandkiezer. Geen glas in de inhoud: een kaart is `Theme.card` op het vlakke `Theme.canvas`. Glas komt van het systeem
-// (tabbalk, werkbalk, bladen). Onderaan staat de overgangslaag met de oude namen (tot pakket G).
+// de maandkiezer. Geen glas in de inhoud: een kaart is `Theme.card` op het kleurverloop van `BackdropGradient`. Glas komt van
+// het systeem (tabbalk, werkbalk, bladen). Onderaan staat de overgangslaag met de oude namen (tot pakket 3). De tegels,
+// planken, rijen en pillen van ontwerp 2 staan in Tiles.swift, Shelf.swift, Hero.swift, Rows.swift, Album.swift en Pills.swift.
 
 // MARK: - Pagina's
 
-/// Een pagina van kaarten (tabroot of rekenpagina): een `ScrollView` op het canvas. `large` geeft de grote titel (alleen op
-/// een tabroot), anders staat de titel klein in de balk. De inhoud scrolt onder de werkbalk door.
+/// Een pagina van kaarten (tabroot of rekenpagina): een `ScrollView` op het kleurverloop van `BackdropGradient` (de tint komt
+/// uit `\.backdropHue`). `large` geeft de grote titel (alleen op een tabroot), anders staat de titel klein in de balk. De
+/// inhoud scrolt onder de werkbalk door. Met `fullBleed` (Home) heeft de inhoud geen horizontale marge en is hij hoogstens
+/// `Theme.shelfMaxWidth` breed: hero en planken regelen hun eigen marge.
 struct PageScaffold<Content: View>: View {
     let title: String
     var large: Bool = false
-    /// Verouderd: Instellingen is een tab (iOS) of een venster (Mac). Doet niets en verdwijnt in pakket G.
+    /// Verouderd: Instellingen is een pagina achter de profielknop. Doet niets en verdwijnt in pakket 3.
     var showsSettings: Bool = false
+    var fullBleed: Bool = false
     @ViewBuilder var content: Content
+    @Environment(\.backdropHue) private var backdropHue
 
     /// `.large` bestaat alleen op iOS en iPadOS; op de Mac is de titel altijd inline.
     private var titleMode: ToolbarTitleDisplayMode {
@@ -26,30 +31,40 @@ struct PageScaffold<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            content
-                .scenePadding(.horizontal)
+            margined
                 .padding(.top, 8)
                 .padding(.bottom, 28)
-                .frame(maxWidth: Theme.pageMaxWidth)
+                .frame(maxWidth: fullBleed ? Theme.shelfMaxWidth : Theme.pageMaxWidth)
                 .frame(maxWidth: .infinity)
                 #if DEBUG
                 .offset(y: -DebugLaunch.scrollOffset)
                 #endif
         }
         .scrollDismissesKeyboard(.interactively)
-        .background { Theme.canvas.ignoresSafeArea() }
+        .background { BackdropGradient(hue: backdropHue) }
         .navigationTitle(title)
         .toolbarTitleDisplayMode(titleMode)
+    }
+
+    /// De inhoud met de paginamarge van het systeem, of zonder bij `fullBleed`.
+    @ViewBuilder
+    private var margined: some View {
+        if fullBleed {
+            content
+        } else {
+            content.scenePadding(.horizontal)
+        }
     }
 }
 
 /// Een pagina van rijen (`List`) met swipe-acties: Inkomen, Uitgaven, Spaarpotten, Beleggingen, Doelen en Instellingen.
-/// De lijst staat op het canvas en is niet breder dan `Theme.readableWidth`. In een debug-build scrolt hij naar de sectie
+/// De lijst staat op het kleurverloop van `BackdropGradient` en is niet breder dan `Theme.readableWidth`. In een debug-build scrolt hij naar de sectie
 /// uit `-mybuddy-scroll-to` (de koptekst van een `SectionHeader`).
 struct ListScaffold<Content: View>: View {
     let title: String
     var large: Bool = false
     @ViewBuilder var content: Content
+    @Environment(\.backdropHue) private var backdropHue
 
     /// `.large` bestaat alleen op iOS en iPadOS; op de Mac is de titel altijd inline.
     private var titleMode: ToolbarTitleDisplayMode {
@@ -74,7 +89,7 @@ struct ListScaffold<Content: View>: View {
             .scrollDismissesKeyboard(.interactively)
             .frame(maxWidth: Theme.readableWidth)
             .frame(maxWidth: .infinity)
-            .background { Theme.canvas.ignoresSafeArea() }
+            .background { BackdropGradient(hue: backdropHue) }
             .navigationTitle(title)
             .toolbarTitleDisplayMode(titleMode)
             #if DEBUG
@@ -161,12 +176,11 @@ private struct PressedStyle: ButtonStyle {
     }
 }
 
-/// De gedeelde link naar een bestemming (K16). Hoort de bestemming bij de tab waar je nu bent, dan is het een
-/// `NavigationLink(value:)` (het pad loopt door `NavigationRules.normalize`). Hoort hij bij een andere tab, dan wisselt de
-/// knop van tab met `router.open` (dat naar `go` doorverwijst), zodat een pagina nooit onder twee tabs staat.
-/// Met `showsCurrentMonth` zet een tik eerst de Maand-tab op de huidige maand. De sluiting krijgt `true` als het een knop is
-/// (dan tekent het systeem geen pijltje en moet het label dat zelf doen).
-private struct DestinationLink<Inner: View>: View {
+/// De gedeelde link naar een bestemming (K16, B5). Een pagina opent op de stapel waar je bent: een `NavigationLink(value:)`, dus
+/// het pad loopt door `NavigationRules.normalize` en een pagina staat nooit twee keer in een pad. Met `showsCurrentMonth` zet
+/// een tik eerst de maandpagina's op de huidige maand (`router.showCurrentMonth`) en opent daarna via `router.open`. De
+/// sluiting krijgt `true` als het een knop is (dan tekent het systeem geen pijltje en moet het label dat zelf doen).
+struct DestinationLink<Inner: View>: View {
     let destination: Destination
     let showsCurrentMonth: Bool
     let label: (Bool) -> Inner
@@ -180,9 +194,9 @@ private struct DestinationLink<Inner: View>: View {
     }
 
     var body: some View {
-        if showsCurrentMonth || destination.tab != router.tab {
+        if showsCurrentMonth {
             Button {
-                if showsCurrentMonth { router.showCurrentMonth(store.now) }
+                router.showCurrentMonth(store.now)
                 router.open(destination)
             } label: {
                 label(true)
@@ -517,6 +531,7 @@ struct ActionButton: View {
                     .foregroundStyle(Theme.onAccent)
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
             .tint(Theme.accentFill)
             .controlSize(actionControlSize)
         } else {
@@ -524,6 +539,7 @@ struct ActionButton: View {
                 ActionLabel(title: title, symbol: symbol)
             }
             .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
             .tint(role == .destructive ? Theme.negative : Theme.accent)
             .controlSize(actionControlSize)
         }
@@ -569,6 +585,7 @@ struct ActionLink: View {
                     .foregroundStyle(Theme.onAccent)
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
             .tint(Theme.accentFill)
             .controlSize(actionControlSize)
         } else {
@@ -576,6 +593,7 @@ struct ActionLink: View {
                 ActionLabel(title: title, symbol: symbol)
             }
             .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
             .tint(Theme.accent)
             .controlSize(actionControlSize)
         }

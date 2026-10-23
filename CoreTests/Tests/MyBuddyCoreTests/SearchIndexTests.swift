@@ -3,7 +3,7 @@ import Foundation
 @testable import MyBuddyCore
 
 // Tests van het zoeken in MyBuddy (App/Navigation/SearchIndex.swift, Foundation-only), uitputtend over de bestemmingen
-// en de pagina's van Instellingen (par. 2.9 van docs/design/plan.md).
+// en de pagina's van Instellingen (par. 2.9 van docs/design/plan.md), de groepen en de tinten (par. 2.3 van docs/design2/plan.md).
 
 final class SearchIndexTests: XCTestCase {
     private let october = YearMonth(year: 2026, month: 10)
@@ -20,9 +20,10 @@ final class SearchIndexTests: XCTestCase {
     /// (die komen uit de gegevens van de gebruiker). Geen `default`: een nieuwe case moet hier worden ingedeeld.
     private func requiresPageEntry(_ destination: Destination) -> Bool {
         switch destination {
-        case .overview, .income, .salary, .expenses, .distribute, .bank, .cashflow,
+        case .home, .library, .flow, .income, .salary, .expenses, .distribute, .bank, .cashflow,
              .pots, .portfolio,
-             .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase:
+             .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+             .tools, .settingsRoot:
             return true
         case .pot, .holding, .goal:
             return false
@@ -47,7 +48,8 @@ final class SearchIndexTests: XCTestCase {
     func testPageEntryCountMatchesPageDestinations() {
         let required = NavigationTestSupport.allDestinations().filter { requiresPageEntry($0) }
         XCTAssertEqual(SearchIndex.pages.count, required.count)
-        XCTAssertEqual(SearchIndex.pages.count, 25)
+        XCTAssertEqual(SearchIndex.pages.count, 29)
+        XCTAssertEqual(SearchIndex.pages.count, PageCatalog.all.count + SettingsPage.allCases.count)
         // Elke bestemming heeft precies een regel.
         XCTAssertEqual(Set(SearchIndex.pages.map { $0.destination }).count, SearchIndex.pages.count)
     }
@@ -137,7 +139,7 @@ final class SearchIndexTests: XCTestCase {
         let data = emptyData()
         let found = destinations(SearchIndex.results(for: "nog verdelen", in: data))
         XCTAssertTrue(found.contains(.distribute))
-        XCTAssertTrue(found.contains(.overview))
+        XCTAssertTrue(found.contains(.home))
         XCTAssertFalse(found.contains(.pots))
         XCTAssertTrue(SearchIndex.results(for: "nog bankrekening", in: data).isEmpty)
     }
@@ -240,5 +242,146 @@ final class SearchIndexTests: XCTestCase {
         let results = SearchIndex.results(for: "doel", in: emptyData())
         XCTAssertTrue(destinations(results).contains(.goals))
         XCTAssertTrue(destinations(results).contains(.savingsGoal))
+    }
+
+    // MARK: De catalogus als bron
+
+    func testEveryCatalogPageIsFoundByItsTitleWithItsOwnSymbolAndHue() {
+        for info in PageCatalog.all {
+            let entry = SearchIndex.pages.first { $0.destination == info.destination }
+            XCTAssertNotNil(entry, "\(info.title) staat niet in het zoeken")
+            XCTAssertEqual(entry?.title, info.title)
+            XCTAssertEqual(entry?.symbol, info.symbol)
+            XCTAssertEqual(entry?.hue, info.hue)
+            XCTAssertEqual(entry?.terms, info.terms)
+            XCTAssertEqual(entry?.id, info.id)
+            let found = SearchIndex.results(for: info.title, in: emptyData())
+            XCTAssertTrue(found.contains { $0.destination == info.destination }, "\(info.title) is niet te vinden")
+        }
+    }
+
+    func testTheNewPagesAreFoundByTheirTerms() {
+        let data = emptyData()
+        func found(_ query: String) -> [Destination] { destinations(SearchIndex.results(for: query, in: data)) }
+        XCTAssertEqual(found("Maandoverzicht").first, .flow)
+        XCTAssertTrue(found("Waar gaat je geld heen").contains(.flow))
+        XCTAssertTrue(found("Half jaar").contains(.flow))
+        XCTAssertEqual(found("Hulpmiddelen").first, .tools)
+        XCTAssertTrue(found("Calculators").contains(.tools))
+        XCTAssertTrue(found("Rekenhulp").contains(.tools))
+        XCTAssertEqual(found("Home").first, .home)
+        XCTAssertEqual(found("Bibliotheek").first, .library)
+        XCTAssertEqual(found("Instellingen").first, .settingsRoot)
+    }
+
+    func testTheOldTabNameDoesNotComeBack() {
+        let titles = SearchIndex.pages.map { $0.title }
+        XCTAssertFalse(titles.contains("Overzicht"))
+        XCTAssertTrue(SearchIndex.results(for: "Overzicht", in: emptyData()).allSatisfy { $0.title != "Overzicht" })
+    }
+
+    // MARK: Groepen
+
+    func testSearchGroupsHaveTheTitlesOfThePlan() {
+        XCTAssertEqual(SearchGroup.allCases, [.pages, .pots, .holdings, .goals, .lines, .settings])
+        XCTAssertEqual(SearchGroup.allCases.map { $0.title },
+                       ["Pagina's", "Spaarpotten", "Beleggingen", "Doelen", "Inkomen en uitgaven", "Instellingen"])
+        XCTAssertEqual(Set(SearchGroup.allCases.map { $0.id }).count, 6)
+    }
+
+    func testEveryPageEntryIsInAPagesOrSettingsGroup() {
+        for entry in SearchIndex.pages {
+            switch entry.destination {
+            case .settingsRoot, .settings:
+                XCTAssertEqual(entry.group, .settings, "\(entry.id)")
+            default:
+                XCTAssertEqual(entry.group, .pages, "\(entry.id)")
+            }
+        }
+    }
+
+    private func richData() -> (data: FinanceData, pot: Pot, holding: Holding, goal: LifeGoal) {
+        var data = emptyData()
+        var pot = Pot(name: "Vakantiepot", startMonth: october)
+        pot.colorIndex = 3
+        var holding = Holding(name: "Wereldfonds", startMonth: october)
+        holding.kind = .crypto
+        let goal = LifeGoal(name: "Pensioen 2050", kind: .retirement)
+        data.pots.append(pot)
+        data.holdings.append(holding)
+        data.goals.append(goal)
+        var plan = MonthPlan()
+        plan.extraIncome = [MoneyLine(name: "Bijbaan", amount: 150)]
+        plan.expenses = [MoneyLine(name: "Sportschool", amount: 30)]
+        data.months[october.key] = plan
+        return (data, pot, holding, goal)
+    }
+
+    func testResultsFallInTheRightGroups() {
+        let rich = richData()
+        func group(_ query: String, _ destination: Destination) -> SearchGroup? {
+            SearchIndex.results(for: query, in: rich.data).first { $0.destination == destination }?.group
+        }
+        XCTAssertEqual(group("vakantiepot", .pot(rich.pot.id)), .pots)
+        XCTAssertEqual(group("wereldfonds", .holding(rich.holding.id)), .holdings)
+        XCTAssertEqual(group("pensioen 2050", .goal(rich.goal.id)), .goals)
+        XCTAssertEqual(group("bijbaan", .income), .lines)
+        XCTAssertEqual(group("sportschool", .expenses), .lines)
+        // De pagina's Inkomen en Uitgaven blijven pagina's, ook al hebben de regels dezelfde bestemming.
+        XCTAssertEqual(group("inkomen", .income), .pages)
+        XCTAssertEqual(group("uitgaven", .expenses), .pages)
+        XCTAssertEqual(group("wachtwoord", .settings(.password)), .settings)
+        XCTAssertEqual(group("instellingen", .settingsRoot), .settings)
+    }
+
+    func testResultsHaveTheHueOfTheirSource() {
+        let rich = richData()
+        func hue(_ query: String, _ destination: Destination) -> TileHue? {
+            SearchIndex.results(for: query, in: rich.data).first { $0.destination == destination }?.hue
+        }
+        XCTAssertEqual(hue("vakantiepot", .pot(rich.pot.id)), TileHue.forIndex(3))
+        XCTAssertEqual(hue("wereldfonds", .holding(rich.holding.id)), TileHue.forIndex(HoldingKind.crypto.colorIndex))
+        XCTAssertEqual(hue("pensioen 2050", .goal(rich.goal.id)), .mustard)
+        XCTAssertEqual(hue("bijbaan", .income), .terracotta)
+        XCTAssertEqual(hue("wachtwoord", .settings(.password)), .sage)
+        XCTAssertEqual(hue("spaarpotten", .pots), .teal)
+    }
+
+    func testGroupedKeepsGroupOrderAndRelevanceAndOnlyListsGroupsWithResults() {
+        let rich = richData()
+        let groups = SearchIndex.grouped(for: "pot", in: rich.data)
+        XCTAssertFalse(groups.isEmpty)
+        let order = groups.map { $0.group.rawValue }
+        XCTAssertEqual(order, order.sorted(), "groepen staan in de volgorde van SearchGroup")
+        XCTAssertEqual(Set(order).count, order.count, "elke groep hoogstens een keer")
+        for item in groups {
+            XCTAssertFalse(item.entries.isEmpty, "alleen groepen met resultaat")
+            XCTAssertTrue(item.entries.allSatisfy { $0.group == item.group })
+        }
+        // Samen zijn het precies de resultaten van results(for:).
+        let flat = groups.flatMap { $0.entries.map { $0.id } }
+        XCTAssertEqual(Set(flat), Set(SearchIndex.results(for: "pot", in: rich.data).map { $0.id }))
+        XCTAssertEqual(flat.count, SearchIndex.results(for: "pot", in: rich.data).count)
+        // Binnen de groep Spaarpotten staat de pot na de pagina? De pagina zit in Pagina's, de pot in Spaarpotten.
+        XCTAssertEqual(groups.first?.group, .pages)
+        XCTAssertTrue(groups.contains { $0.group == .pots })
+    }
+
+    func testGroupedForABlankQueryOrNoMatchIsEmpty() {
+        XCTAssertTrue(SearchIndex.grouped(for: "", in: emptyData()).isEmpty)
+        XCTAssertTrue(SearchIndex.grouped(for: "   ", in: emptyData()).isEmpty)
+        XCTAssertTrue(SearchIndex.grouped(for: "zzzzqq", in: emptyData()).isEmpty)
+    }
+
+    func testGroupedWithOnlyPagesHasOneOrTwoGroups() {
+        let groups = SearchIndex.grouped(for: "rente", in: emptyData())
+        // "Rente" staat bij Spaarpotten (pagina) en Rekenen (Instellingen).
+        XCTAssertEqual(groups.map { $0.group }, [.pages, .settings])
+    }
+
+    func testEveryBrowseTileCanBeFoundAsAPageOrSettings() {
+        for destination in PageCatalog.browse {
+            XCTAssertTrue(SearchIndex.pages.contains { $0.destination == destination }, "\(destination)")
+        }
     }
 }

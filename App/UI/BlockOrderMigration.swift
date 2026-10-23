@@ -1,7 +1,11 @@
 import Foundation
 // Foundation-only: geen SwiftUI. In de app zit alles in één module. In het testpakket (CoreTests/Tests/MyBuddyCoreTests) staat
 // dit bestand als symlink tussen de tests; de tests staan in BlockOrderMigrationTests.swift. Het bevat de migratie van de
-// opgeslagen volgorde, het uitrekenen van de volgorde (`order`) en de pagina's met hun blokken (`BlockPage`, `BlockInfo`).
+// opgeslagen volgorde, het uitrekenen van de volgorde (`order`, `AppSettings.orderedBlocks`) en de pagina's met hun blokken
+// (`BlockPage`, `BlockInfo`).
+#if canImport(MyBuddyCore)
+@testable import MyBuddyCore
+#endif
 
 /// Zet een opgeslagen blokvolgorde van de oude pagina's (`home`, `savings`, `tools`) om naar de nieuwe pagina's (`overview`,
 /// `month`, `saving`, `planning`), met behoud van de onderlinge volgorde (par. 2.7 van docs/design/plan.md).
@@ -112,21 +116,25 @@ struct BlockInfo: Identifiable, Equatable {
 }
 
 /// De pagina's waarvan je de volgorde van de blokken zelf kunt kiezen. De blok-id's staan ook in `docs/v3-spec.md`.
-/// De kern van een pagina (de hero op het Overzicht, de `MonthBar` op Maand) is geen blok en staat vast bovenaan.
+/// Sinds ontwerp 2 is dat alleen Home: de planken Komende dagen, Spaarpotten, Beleggingen, Doelen en Hulpmiddelen. De hero
+/// (Nog te verdelen, Vermogen, Saldo vandaag) is geen blok en staat vast bovenaan; `wealth` is hero 2, dus een opgeslagen
+/// volgorde met `wealth` laadt gewoon (een onbekend id wordt overgeslagen). De sleutels `month`, `saving`, `planning`,
+/// `home`, `savings` en `tools` blijven ongemoeid in de opgeslagen gegevens.
 enum BlockPage: String, CaseIterable, Identifiable {
-    case overview, month, saving, planning
-    // Overgangsvorm tot pakket G: de blokken van de drie oude tabroots.
+    case overview
+    // Overgangsvorm tot pakket 3: de blokken van de oude tabroots Maand, Sparen en Plannen en van de drie oudste pagina's.
+    case month, saving, planning
     case home, savings, tools
 
-    /// Alleen de vier pagina's van nu; de overgangsvormen doen niet mee in een lijst van alle pagina's.
-    static var allCases: [BlockPage] { [.overview, .month, .saving, .planning] }
+    /// Alleen Home; de overgangsvormen doen niet mee in een lijst van alle pagina's.
+    static var allCases: [BlockPage] { [.overview] }
 
     var id: String { rawValue }
 
     /// Sleutel in `AppSettings.blockOrder`.
     var key: String { rawValue }
 
-    /// Is dit een van de oude pagina's (tot pakket G)?
+    /// Is dit een van de oude pagina's (tot pakket 3)?
     var isLegacy: Bool {
         switch self {
         case .home, .savings, .tools: return true
@@ -136,7 +144,7 @@ enum BlockPage: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .overview, .home: return "Overzicht"
+        case .overview, .home: return "Home"
         case .month, .savings: return "Maand"
         case .saving: return "Sparen"
         case .planning, .tools: return "Plannen"
@@ -151,10 +159,11 @@ enum BlockPage: String, CaseIterable, Identifiable {
         switch self {
         case .overview:
             return [
-                BlockInfo(id: "wealth", title: "Vermogen", symbol: "chart.pie"),
+                BlockInfo(id: "upcoming", title: "Komende dagen", symbol: "calendar.badge.clock"),
                 BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full"),
                 BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis"),
-                BlockInfo(id: "upcoming", title: "Komende dagen", symbol: "calendar.badge.clock")
+                BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered"),
+                BlockInfo(id: "tools", title: "Hulpmiddelen", symbol: "wrench.and.screwdriver")
             ]
         case .month:
             return [
@@ -180,13 +189,13 @@ enum BlockPage: String, CaseIterable, Identifiable {
             ]
         case .home:
             return [
-                BlockInfo(id: "overview", title: "Overzicht", symbol: "chart.bar.xaxis"),
+                BlockInfo(id: "overview", title: "Maandoverzicht", symbol: "chart.bar.xaxis"),
                 BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full.fill"),
                 BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis")
             ]
         case .savings:
             return [
-                BlockInfo(id: "period", title: "Overzicht", symbol: "chart.bar.xaxis"),
+                BlockInfo(id: "period", title: "Maandoverzicht", symbol: "chart.bar.xaxis"),
                 BlockInfo(id: "income", title: "Inkomen", symbol: "eurosign.circle.fill"),
                 BlockInfo(id: "bank", title: "Bankrekening", symbol: "building.columns.fill"),
                 BlockInfo(id: "distribute", title: "Verdelen", symbol: "square.split.2x2.fill"),
@@ -202,5 +211,23 @@ enum BlockPage: String, CaseIterable, Identifiable {
                 BlockInfo(id: "purchase", title: "Aankoopcheck", symbol: "cart")
             ]
         }
+    }
+}
+
+// MARK: - De volgorde van een pagina uit de instellingen
+
+extension AppSettings {
+    /// De blokken van een pagina in de volgorde van de gebruiker. Een opgeslagen volgorde onder de oude sleutels wordt eerst
+    /// omgezet (`BlockOrderMigration`, alleen lezen). Onbekende of dubbele id's worden overgeslagen en blokken die nog niet
+    /// in de opgeslagen lijst staan (nieuwe blokken) komen achteraan, in de standaardvolgorde.
+    func orderedBlocks(for page: BlockPage) -> [BlockInfo] {
+        let defaults = page.blocks
+        let stored: [String: [String]] = page.isLegacy ? blockOrder : BlockOrderMigration.migrate(blockOrder)
+        let ids = BlockOrderMigration.order(stored: stored[page.key], defaults: defaults.map { $0.id })
+        return ids.compactMap { id in defaults.first(where: { $0.id == id }) }
+    }
+
+    func blockIDs(for page: BlockPage) -> [String] {
+        orderedBlocks(for: page).map { $0.id }
     }
 }

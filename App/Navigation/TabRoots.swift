@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// De inhoud van elke tab, binnen de eigen `NavigationStack` van die tab (`TabStack`). De tabroots zelf (`OverviewTab`,
-/// `MonthTab`, `SavingTab`, `PlanningTab`) zijn alleen inhoud; het pad komt uit `router.paths[tab]`.
-/// `SettingsView` (de tabroot van Instellingen) heeft bewust geen eigen `NavigationStack`: de stapel komt van `TabStack`.
+/// De inhoud van elke tab, binnen de eigen `NavigationStack` van die tab (`TabStack`). De tabroots zelf (`HomeTab`, `LibraryTab`,
+/// `SearchTab`) zijn alleen inhoud; het pad komt uit `router.paths[tab]`. Elke wortel heeft de profielknop rechtsboven
+/// (`profileToolbarItem()`), die de pagina Instellingen op de stapel van de tab zet.
 struct TabRoot: View {
     let tab: AppTab
 
@@ -12,25 +12,17 @@ struct TabRoot: View {
 
     var body: some View {
         switch tab {
-        case .overview:
-            TabStack(.overview) {
-                OverviewTab()
+        case .home:
+            TabStack(.home) {
+                HomeTab()
             }
-        case .month:
-            TabStack(.month) {
-                MonthTab()
+        case .library:
+            TabStack(.library) {
+                LibraryTab()
             }
-        case .saving:
-            TabStack(.saving) {
-                SavingTab()
-            }
-        case .planning:
-            TabStack(.planning) {
-                PlanningTab()
-            }
-        case .settings:
-            TabStack(.settings) {
-                SettingsView()
+        case .search:
+            TabStack(.search) {
+                SearchTab()
             }
         }
     }
