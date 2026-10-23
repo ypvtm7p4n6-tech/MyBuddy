@@ -15,7 +15,14 @@ struct PageScaffold<Content: View>: View {
     var showsSettings: Bool = false
     @ViewBuilder var content: Content
 
-    private var titleMode: ToolbarTitleDisplayMode { large ? .large : .inline }
+    /// `.large` bestaat alleen op iOS en iPadOS; op de Mac is de titel altijd inline.
+    private var titleMode: ToolbarTitleDisplayMode {
+        #if os(iOS)
+        return large ? .large : .inline
+        #else
+        return .inline
+        #endif
+    }
 
     var body: some View {
         ScrollView {
@@ -44,7 +51,14 @@ struct ListScaffold<Content: View>: View {
     var large: Bool = false
     @ViewBuilder var content: Content
 
-    private var titleMode: ToolbarTitleDisplayMode { large ? .large : .inline }
+    /// `.large` bestaat alleen op iOS en iPadOS; op de Mac is de titel altijd inline.
+    private var titleMode: ToolbarTitleDisplayMode {
+        #if os(iOS)
+        return large ? .large : .inline
+        #else
+        return .inline
+        #endif
+    }
 
     var body: some View {
         ScrollViewReader { proxy in

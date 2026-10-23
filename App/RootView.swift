@@ -111,14 +111,19 @@ struct RootView: View {
     }
     #endif
 
-    /// Op iOS 26 en macOS 26 schuift de tabbalk weg als je omlaag scrolt. Eerdere versies laten alles zoals het is.
+    /// Op iOS 26 schuift de tabbalk weg als je omlaag scrolt (op de Mac niet: die waarde bestaat daar niet). Eerdere versies laten alles zoals het is.
     @ViewBuilder
     private func withMinimizingTabBar<Content: View>(_ content: Content) -> some View {
-        if #available(iOS 26.0, macOS 26.0, *) {
+        #if os(iOS)
+        if #available(iOS 26.0, *) {
             content.tabBarMinimizeBehavior(.onScrollDown)
         } else {
             content
         }
+        #else
+        // `.onScrollDown` bestaat alleen op iOS en iPadOS.
+        content
+        #endif
     }
 
     // MARK: Klok
