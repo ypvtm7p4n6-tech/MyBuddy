@@ -727,4 +727,24 @@ enum UpcomingDaysWindow {
         let window = range(today: today)
         return book.days(from: window.from, to: window.to).filter { !$0.events.isEmpty }
     }
+
+    /// Hoeveel dagen vooruit "Volgende betaling" zoekt: vandaag plus 60 dagen.
+    static let nextPaymentHorizon = 60
+
+    /// De eerstvolgende geplande betaling van je bankrekening, voor de hero "Saldo vandaag" van Home: de eerste gebeurtenis
+    /// van het soort uitgave die geld van de bank haalt (`bankAmount` onder nul) en na vandaag valt (`isPlanned`: alles op de
+    /// dag van vandaag geldt als al gebeurd), binnen `nextPaymentHorizon` dagen. Een uitgave die alleen uit een spaarpot komt
+    /// raakt de bank niet (`bankAmount` is 0) en telt niet; inkomsten en inleg ook niet. nil als er niets gepland is. Het
+    /// resultaat komt uit dezelfde dagboekhouding als "Komende dagen" en Dag voor dag.
+    static func nextPayment(in book: LedgerBook, today: Date) -> (day: DayTotals, event: DayEvent)? {
+        let cal = YearMonth.calendar
+        let start = cal.startOfDay(for: today)
+        let end = cal.date(byAdding: .day, value: nextPaymentHorizon, to: start) ?? start
+        for day in book.days(from: start, to: end) {
+            for event in day.events where event.kind == .expense && event.bankAmount < 0 && event.isPlanned {
+                return (day, event)
+            }
+        }
+        return nil
+    }
 }

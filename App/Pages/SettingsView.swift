@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// De tabroot van Instellingen: een korte lijst van vier groepen en zes rijen, elke rij met een korte waarde eronder en een
-/// pijltje naar een eigen pagina. Account staat bovenaan en los van de rest. Geen sheet en geen "Klaar"-knop: de stapel komt
-/// van `TabStack` (iOS) en op de Mac staat Instellingen in het `Settings`-venster (`SettingsPane`).
+/// De pagina Instellingen (`Destination.settingsRoot`): een korte lijst van vier groepen en zes rijen, elke rij met een korte
+/// waarde eronder en een pijltje naar een eigen pagina. Account staat bovenaan en los van de rest. Het is een gepushte
+/// pagina op de stapel van de tab waar je bent (de profielknop rechtsboven op Home, Bibliotheek en Zoeken), met een
+/// terugknop: nooit een sheet en geen "Klaar"-knop. Op de Mac staat Instellingen in het `Settings`-venster (`SettingsPane`).
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
     @Environment(AuthStore.self) private var auth
@@ -26,7 +27,7 @@ struct SettingsView: View {
                             title: accountTitle,
                             subtitle: accountStatus.text,
                             symbol: "person.crop.circle",
-                            badgeSize: 40,
+                            showsAvatar: true,
                             needsAttention: accountStatus.needsAttention)
         }
     }

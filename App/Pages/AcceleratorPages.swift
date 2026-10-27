@@ -590,9 +590,9 @@ struct AcceleratorsPage: View {
     }
 }
 
-// MARK: - Kaart op het tabblad Plannen
+// MARK: - De oude kaart Versnellers (tot de opruiming van pakket 3)
 
-/// De kaart Versnellers op het tabblad Plannen: de drie belangrijkste versnellers voor je eerste doel. Een tik opent de pagina.
+/// De oude kaart Versnellers van het tabblad Plannen: de drie belangrijkste versnellers voor je eerste doel. Een tik opent de pagina.
 struct AcceleratorsSummaryCard: View {
     @Environment(AppStore.self) private var store
 

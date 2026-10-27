@@ -36,7 +36,7 @@ extension PurchaseNoteKind {
     }
 }
 
-// MARK: - De kaart Aankoopcheck op het tabblad Plannen
+// MARK: - De oude kaart Aankoopcheck (tot de opruiming van pakket 3)
 
 /// Korte uitleg en je uurloon. Toont nooit wat iets kost. Een tik opent de pagina.
 struct PurchaseSummaryCard: View {
@@ -154,7 +154,7 @@ struct PurchaseCategoryTile: View {
         }
         .frame(maxWidth: .infinity, minHeight: 76)
         .padding(.horizontal, 6)
-        .background(selected ? Theme.accent.opacity(0.26) : Color.primary.opacity(0.07), in: shape)
+        .background(selected ? Theme.accent.opacity(0.26) : Theme.tileFill, in: shape)
         .overlay { shape.strokeBorder(selected ? Theme.accent : Color.clear, lineWidth: 1.5) }
         .contentShape(shape)
         .animated(by: selected, quick: true)

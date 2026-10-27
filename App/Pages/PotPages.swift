@@ -1,8 +1,9 @@
 import SwiftUI
 
-// Alle spaarpotten (lijstpagina). De pagina van één spaarpot staat in Saving/PotDetailPage.swift, de bladen in Saving/PotSheets.swift
-// en de kaarten voor het Overzicht en Sparen in Saving/FavoriteCards.swift. De teksten en cijfers rond rente (zonder SwiftUI:
-// `PotFormat`, `PotInterestStats`, `PotHistoryContext`) staan in App/UI/PotDisplay.swift, zodat de tests in CoreTests ze meecompileren.
+// Alle spaarpotten (lijstpagina): een rij per pot met een tegel in de kleur van de pot. De pagina van één spaarpot (de albumpagina)
+// staat in Saving/PotDetailPage.swift, de bladen in Saving/PotSheets.swift en de kaarten voor Home in Saving/FavoriteCards.swift.
+// De teksten en cijfers rond rente (zonder SwiftUI: `PotFormat`, `PotInterestStats`, `PotHistoryContext`) staan in
+// App/UI/PotDisplay.swift, zodat de tests in CoreTests ze meecompileren.
 
 /// Klein label "2% rente" voor potten met rente.
 struct PotInterestBadge: View {
@@ -148,7 +149,7 @@ struct PotsPage: View {
     private var moreMenu: some View {
         Menu {
             Button { sheet = .pickFavorites } label: {
-                Label("Kies potten voor het Overzicht…", systemImage: "slider.horizontal.3")
+                Label("Kies potten voor Home…", systemImage: "slider.horizontal.3")
             }
         } label: {
             Label("Meer", systemImage: "ellipsis")
@@ -175,7 +176,7 @@ struct PotsSummarySection: View {
         let now = store.now
         let today = store.today
         let monthName = Fmt.monthNames[now.month - 1]
-        // Het saldo van vandaag (de tegels, het Overzicht en de pagina van een pot tonen hetzelfde) en wat het aan het eind van de
+        // Het saldo van vandaag (de tegels, Home en de pagina van een pot tonen hetzelfde) en wat het aan het eind van de
         // maand wordt: dezelfde som als "Spaarpotten" in het Vermogen.
         let saved = d.totalSaved(current: now, today: today)
         let endOfMonth = d.totalSaved(asOf: now.date(day: now.dayCount))
@@ -230,8 +231,9 @@ struct PotsGoalProgress: View {
 
 // MARK: - Een rij in de lijst
 
-/// Een spaarpot in de lijst: naam, saldo, voortgang naar het doel (of "Geen doel ingesteld") en de inleg. Swipe en contextmenu geven
-/// Bewerken en Verwijderen; Verwijderen vraagt dezelfde bevestiging als op de pagina van de pot.
+/// Een spaarpot in de lijst: een tegel in de kleur van de pot, de naam, het saldo van vandaag, de voortgang naar het doel (of "Geen
+/// doel ingesteld") en de inleg. Een tik opent de albumpagina van de pot. Swipe en contextmenu geven Bewerken en Verwijderen;
+/// Verwijderen vraagt dezelfde bevestiging als op de pagina van de pot.
 struct PotRow: View {
     let pot: Pot
     let onEdit: () -> Void
@@ -245,55 +247,18 @@ struct PotRow: View {
     }
 
     var body: some View {
-        SavingLink(.pot(pot.id)) { rowLabel }
-            .rowActions(edit: { onEdit() }, delete: { requestDelete() })
-            .modifier(PotDeleteDialog(pot: pot, isPresented: $confirmDelete, effect: deleteEffect))
-    }
-
-    @ViewBuilder
-    private var rowLabel: some View {
         let d = store.data
         let now = store.now
         let today = store.today
         let balance = d.potBalanceNow(pot.id, current: now, today: today)
         let progress = d.potProgress(pot.id, current: now, today: today)
-        let color = Theme.color(pot.colorIndex)
-        HStack(alignment: .top, spacing: 12) {
-            SymbolBadge(symbol: pot.symbol, color: color, size: 44)
-            VStack(alignment: .leading, spacing: 6) {
-                AmountRow(title: pot.name, value: Fmt.euro(balance), bold: true)
-                if let progress, let goal = pot.goalAmount, goal > 0 {
-                    ProgressMeter(value: progress, tint: color, style: .bar(), label: "Voortgang \(pot.name)",
-                                  valueText: PotFormat.progressSpeech(balance: balance, goal: goal, progress: progress))
-                }
-                Text(detailLine(progress: progress))
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textSecondary)
-                if let line = ContributionInfo.listLine(d, id: pot.id, month: now) {
-                    Text(line)
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
-            SavingChevron()
-                .padding(.top, 4)
-        }
-        .foregroundStyle(Color.primary)
-    }
-
-    /// "Doel € 2.400 · 43%", of "Geen doel ingesteld", met de rente erachter als die er is.
-    private func detailLine(progress: Double?) -> String {
-        var parts: [String] = []
-        if let progress, let goal = pot.goalAmount, goal > 0 {
-            parts.append("Doel \(Fmt.euro(goal))")
-            parts.append(Fmt.percent(progress, digits: 0))
-        } else {
-            parts.append("Geen doel ingesteld")
-        }
-        if InterestRules.isActive(pot) {
-            parts.append("\(Fmt.percent(pot.interestRate, digits: 2)) rente")
-        }
-        return parts.joined(separator: " · ")
+        let rate: Double? = InterestRules.isActive(pot) ? pot.interestRate : nil
+        let subtitle = SavingAlbumText.potListSubtitle(goal: pot.goalAmount, progress: progress, interestRate: rate,
+                                                       contributionLine: ContributionInfo.listLine(d, id: pot.id, month: now))
+        MediaRow(symbol: pot.symbol, hue: Theme.hue(pot.colorIndex), title: pot.name, subtitle: subtitle,
+                 value: Fmt.euro(balance), progress: progress, destination: .pot(pot.id))
+            .rowActions(edit: { onEdit() }, delete: { requestDelete() })
+            .modifier(PotDeleteDialog(pot: pot, isPresented: $confirmDelete, effect: deleteEffect))
     }
 
     private func requestDelete() {

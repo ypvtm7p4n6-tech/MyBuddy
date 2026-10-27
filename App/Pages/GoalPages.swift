@@ -1,6 +1,9 @@
 import SwiftUI
 
-// MARK: - De kaart Doelen op het tabblad Plannen
+// MARK: - De oude kaart Doelen
+
+// De samenvattingskaart van het oude tabblad Plannen. Hij blijft staan tot de opruiming van pakket 3: Home toont doelen als
+// tegels op een plank en de Bibliotheek als rij. Nieuwe code gebruikt hem niet.
 
 /// Eén kaart voor alles wat met doelen te maken heeft: de eerste twee levensdoelen (pensioen, vakantie, parttime, eigen doel)
 /// met voortgang en haalbaarheid, en altijd de rij "Spaardoel berekenen" (met een samenvatting zodra je iets berekend hebt).
@@ -197,8 +200,9 @@ private struct GoalSheetItem: Identifiable {
     var id: UUID { goal.id }
 }
 
-/// Al je doelen als lijst. Een rij opent het doel; vegen (of het contextmenu) bewerkt of verwijdert het. Nieuw doel, Spaardoel
-/// berekenen en Noodbuffer staan achter de plus in de werkbalk.
+/// Al je doelen als lijst in de stijl van de Bibliotheek: een rij met een mosterdkleurige tegel, de naam, de haalbaarheid, het
+/// percentage en de voortgang. Een rij opent het doel (een albumpagina); vegen (of het contextmenu) bewerkt of verwijdert het.
+/// Eronder staan de rijen Spaardoel berekenen en Noodbuffer. Een nieuw doel staat achter de plus in de werkbalk.
 struct GoalsPage: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
@@ -211,6 +215,7 @@ struct GoalsPage: View {
                 emptySections
             } else {
                 goalsSection(d)
+                calculatorSection
             }
         }
         .toolbar {
@@ -238,8 +243,16 @@ struct GoalsPage: View {
                             onEdit: { sheetItem = GoalSheetItem(goal: goal, isNew: false) },
                             onDelete: { deleteGoal(goal.id) })
             }
-        } header: {
-            SectionHeader("Doelen", domain: .goals)
+        }
+    }
+
+    /// De twee rekenhulpen bij doelen: altijd bereikbaar, ook als je al doelen hebt.
+    private var calculatorSection: some View {
+        Section {
+            MediaRow(symbol: "function", hue: .mustard, title: "Spaardoel berekenen",
+                     subtitle: "Hoeveel per maand, of wanneer ben je klaar?", destination: .savingsGoal)
+            MediaRow(symbol: "shield.lefthalf.filled", hue: .mustard, title: "Noodbuffer",
+                     subtitle: "Hoeveel geld houd je achter de hand?", destination: .buffer)
         }
     }
 
@@ -249,24 +262,15 @@ struct GoalsPage: View {
         Section {
             EmptyHint(symbol: "flag.checkered", title: "Wat wil je bereiken?",
                       message: "Met pensioen, een vakantie, parttime werken of iets eigens. De app rekent uit wat je nodig hebt en hoe lang het duurt.")
-        } header: {
-            SectionHeader("Doelen", domain: .goals)
         }
         Section {
             ForEach(GoalKind.allCases) { kind in
-                Button {
-                    startGoal(kind)
-                } label: {
-                    Label(kind.title, systemImage: kind.symbol)
-                }
+                GoalKindRow(kind: kind) { startGoal(kind) }
             }
-            NavigationRow(title: "Spaardoel berekenen", symbol: "function", domain: .tools,
-                          subtitle: "Hoeveel per maand, of wanneer ben je klaar?", destination: .savingsGoal)
-            NavigationRow(title: "Noodbuffer", symbol: "shield.lefthalf.filled", domain: .goals,
-                          subtitle: "Hoeveel geld houd je achter de hand?", destination: .buffer)
         } header: {
-            SectionHeader("Nieuw doel", symbol: "plus.circle")
+            SectionHeader("Nieuw doel")
         }
+        calculatorSection
     }
 
     /// Het menu achter de plus: een nieuw doel per soort, dan de twee rekenhulpen.
@@ -304,7 +308,23 @@ struct GoalsPage: View {
     }
 }
 
-/// Eén doel in de lijst: symbool, naam, voortgang en haalbaarheid. De bevestiging van het verwijderen hangt aan de rij zelf.
+/// Een soort doel in de lege staat: de tegel en de naam van de soort. Een tik begint een nieuw doel van die soort.
+private struct GoalKindRow: View {
+    let kind: GoalKind
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            MediaRowLabel(symbol: kind.symbol, hue: .mustard, title: kind.title)
+        }
+        #if os(macOS)
+        .buttonStyle(.plain)
+        #endif
+    }
+}
+
+/// Eén doel in de lijst: tegel, naam, haalbaarheid, percentage en voortgang (`MediaRowLabel`). De bevestiging van het
+/// verwijderen hangt aan de rij zelf.
 private struct GoalListRow: View {
     let goal: LifeGoal
     let analysis: GoalAnalysis
@@ -320,7 +340,11 @@ private struct GoalListRow: View {
         Button {
             router.open(.goal(goal.id))
         } label: {
-            rowContent
+            MediaRowLabel(symbol: goal.kind.symbol, hue: .mustard, title: goal.name,
+                          subtitle: analysis.outlook.label,
+                          value: hasTarget ? percentText : nil,
+                          progress: hasTarget ? analysis.progress : nil,
+                          showsChevron: true)
         }
         #if os(macOS)
         .buttonStyle(.plain)
@@ -334,55 +358,22 @@ private struct GoalListRow: View {
             Button("Verwijder \(goal.name)", role: .destructive) { onDelete() }
         }
     }
-
-    private var rowContent: some View {
-        HStack(spacing: 12) {
-            SymbolBadge(symbol: goal.kind.symbol, color: AppDomain.goals.color, size: 36)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(goal.name)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                Text(goal.kind.title)
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textSecondary)
-                ProgressMeter(value: hasTarget ? analysis.progress : nil, tint: Theme.accent, style: .bar(height: 8),
-                              label: "Voortgang \(goal.name)", valueText: percentText)
-                if hasTarget {
-                    Text("\(Fmt.euro(analysis.inputs.start)) van \(Fmt.euro(analysis.inputs.target))")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                Text(analysis.outlook.label)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(analysis.outlook.color)
-            }
-            Spacer(minLength: 8)
-            if hasTarget {
-                Text(percentText)
-                    .font(.body.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
-            }
-            Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .accessibilityHidden(true)
-        }
-        .frame(minHeight: Theme.minTapTarget)
-        .contentShape(Rectangle())
-    }
 }
 
 // MARK: - Eén doel
 
-/// Een rekenpagina: het doeltype met voortgang, hoe het is berekend, de versnellers en wat is toegepast. "Bewerken" staat in de
-/// werkbalk; verwijderen onderaan, met een bevestiging aan de knop zelf.
+/// Een albumpagina: bovenaan de kop (`AlbumHeader`) met een tegel in de kleur van het doel, het benodigde bedrag, de voortgang
+/// en de pillen Bewerken en Versnellers; daaronder de haalbaarheid, hoe het is berekend, de versnellers en wat is toegepast.
+/// "Bewerken" staat ook in de werkbalk; verwijderen onderaan, met een bevestiging aan de knop zelf.
 struct GoalDetailPage: View {
     let goalID: UUID
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var showEdit = false
     @State private var confirmDelete = false
+
+    /// Het anker voor de pil Versnellers: de sectie met de versnellers van dit doel.
+    private static let acceleratorsAnchor = "goal-accelerators"
 
     var body: some View {
         if let goal = store.data.goal(goalID) {
@@ -391,6 +382,7 @@ struct GoalDetailPage: View {
             PageScaffold(title: "Doel") {
                 EmptyHint(symbol: "questionmark.folder", title: "Dit doel bestaat niet meer")
             }
+            .environment(\.backdropHue, .mustard)
         }
     }
 
@@ -399,15 +391,18 @@ struct GoalDetailPage: View {
         let d = store.data
         let a = d.analyze(goal, current: store.now, today: store.today)
 
-        PageScaffold(title: goal.name) {
-            VStack(spacing: Theme.pageSpacing) {
-                typeCard(goal, a)
-                calculationCard(goal, a, data: d)
-                AcceleratorsSection(goal: goal)
-                deleteButton(goal)
+        // Zonder eigen marge: de kop heeft zijn eigen marge, de kaarten krijgen die van de pagina.
+        PageScaffold(title: goal.name, fullBleed: true) {
+            ScrollViewReader { proxy in
+                VStack(spacing: Theme.pageSpacing) {
+                    albumHeader(goal, a, proxy: proxy)
+                    cards(goal, a, data: d)
+                        .scenePadding(.horizontal)
+                }
+                .frame(maxWidth: Theme.readableWidth)
             }
-            .frame(maxWidth: Theme.readableWidth)
         }
+        .environment(\.backdropHue, .mustard)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Bewerken") { showEdit = true }
@@ -418,9 +413,36 @@ struct GoalDetailPage: View {
 
     // MARK: Blokken
 
-    private func typeCard(_ goal: LifeGoal, _ a: GoalAnalysis) -> some View {
-        Card(title: goal.kind.title, symbol: goal.kind.symbol, domain: .goals) {
-            GoalProgressHeader(analysis: a)
+    private func albumHeader(_ goal: LifeGoal, _ a: GoalAnalysis, proxy: ScrollViewProxy) -> some View {
+        let hasTarget = a.outlook != .notSet
+        let capped = min(a.progress, 9.99)
+        var facts: [String] = []
+        if hasTarget {
+            facts.append("\(Fmt.percent(capped, digits: 0)) bereikt")
+        }
+        facts.append("Nu \(Fmt.euro(a.inputs.start))")
+        return AlbumHeader(symbol: goal.kind.symbol, hue: .mustard, title: goal.name, subtitle: goal.kind.title,
+                           figureLabel: "Benodigd", figure: a.inputs.target,
+                           progress: hasTarget ? capped : nil, progressLabel: "Voortgang van dit doel",
+                           facts: facts) {
+            PillButton("Bewerken", symbol: "pencil", style: .prominent) { showEdit = true }
+            PillButton("Versnellers", symbol: "bolt") { scrollToAccelerators(proxy) }
+        }
+    }
+
+    /// De kaarten onder de kop: wat de kop niet zegt (wanneer je het haalt), hoe het is berekend, de versnellers en verwijderen.
+    private func cards(_ goal: LifeGoal, _ a: GoalAnalysis, data d: FinanceData) -> some View {
+        VStack(spacing: Theme.pageSpacing) {
+            reachCard(goal, a)
+            calculationCard(goal, a, data: d)
+            AcceleratorsSection(goal: goal)
+                .id(Self.acceleratorsAnchor)
+            deleteButton(goal)
+        }
+    }
+
+    private func reachCard(_ goal: LifeGoal, _ a: GoalAnalysis) -> some View {
+        Card(title: "Haalbaarheid", symbol: "flag.checkered", domain: .goals) {
             reachText(goal, a)
             deadlineText(goal, a)
         }
@@ -455,6 +477,11 @@ struct GoalDetailPage: View {
                 dismiss()
             }
         }
+    }
+
+    /// Scrolt naar de versnellers van dit doel, zonder animatie (dus ook goed bij Verlaag beweging).
+    private func scrollToAccelerators(_ proxy: ScrollViewProxy) {
+        proxy.scrollTo(Self.acceleratorsAnchor, anchor: .top)
     }
 
     // MARK: Teksten
@@ -544,57 +571,6 @@ struct GoalDetailPage: View {
             return "Je mist \(average)\(Fmt.euro(gap)) per maand als je \(Fmt.input(goal.hoursTo)) uur werkt. Zonder einddatum heb je \(Fmt.euro(a.inputs.target)) nodig (\(formula))."
         case .vacation, .custom:
             return "Het doelbedrag is \(Fmt.euro(goal.targetAmount))."
-        }
-    }
-}
-
-/// De ring met het percentage en daarnaast het benodigde bedrag. Bij grote tekst staan ze onder elkaar. Zonder doelbedrag is er
-/// geen ring: een ring zonder doel zou "klaar" of "niets" zeggen.
-private struct GoalProgressHeader: View {
-    let analysis: GoalAnalysis
-    @Environment(\.dynamicTypeSize) private var typeSize
-
-    private var hasTarget: Bool { analysis.outlook != .notSet }
-    private var percentText: String { Fmt.percent(min(analysis.progress, 9.99), digits: 0) }
-
-    var body: some View {
-        let layout: AnyLayout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: 18))
-        layout {
-            if hasTarget {
-                ring
-            }
-            amounts
-            if !typeSize.isAccessibilitySize {
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    private var ring: some View {
-        ZStack {
-            ProgressMeter(value: analysis.progress, tint: Theme.accent, style: .ring(lineWidth: 10),
-                          label: "Voortgang van dit doel", valueText: percentText)
-                .frame(width: 96, height: 96)
-            Text(percentText)
-                .font(.headline)
-                .contentTransition(.numericText())
-                .accessibilityHidden(true)
-        }
-    }
-
-    private var amounts: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Benodigd")
-                .font(.footnote)
-                .foregroundStyle(Theme.textSecondary)
-                .accessibilityHidden(true)
-            BigAmount(value: analysis.inputs.target, font: Theme.titleAmount, label: "Benodigd")
-            Text("Nu \(Fmt.euro(analysis.inputs.start))")
-                .font(.subheadline)
-                .foregroundStyle(Theme.textSecondary)
-                .contentTransition(.numericText())
         }
     }
 }

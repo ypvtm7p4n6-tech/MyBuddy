@@ -671,6 +671,95 @@ final class CashflowDisplayTests: XCTestCase {
         XCTAssertEqual(cal.dateComponents([.month, .day], from: lateWindow.to), DateComponents(month: 11, day: 10))
     }
 
+    // MARK: Volgende betaling (hero "Saldo vandaag" van Home)
+
+    /// Gegevens met alleen de uitgaven en inkomsten die de test noemt, startmaand oktober 2026, geen salaris en geen potten.
+    private func plainData(expenses: [(YearMonth, MoneyLine)] = [], income: [(YearMonth, MoneyLine)] = []) -> FinanceData {
+        var d = FinanceData(startMonth: oct2026)
+        var keys: [String] = []
+        for (month, _) in expenses + income where !keys.contains(month.key) { keys.append(month.key) }
+        for key in keys { d.months[key] = MonthPlan() }
+        for (month, line) in expenses { d.months[month.key]?.expenses.append(line) }
+        for (month, line) in income { d.months[month.key]?.extraIncome.append(line) }
+        return d
+    }
+
+    private func oneOff(_ name: String, _ amount: Double, day: Int) -> MoneyLine {
+        MoneyLine(name: name, amount: amount, isRecurring: false, day: day)
+    }
+
+    func testNextPaymentIsNilWithoutAnyPlannedPayment() {
+        let today = engTime(oct2026, 14, hour: 15)
+        let empty = plainData()
+        XCTAssertNil(UpcomingDaysWindow.nextPayment(in: LedgerBook(empty, today: today), today: today))
+        // Een betaling van vandaag of eerder is al gebeurd en telt niet als volgende.
+        let past = plainData(expenses: [(oct2026, oneOff("Gisteren", 20, day: 13)), (oct2026, oneOff("Vandaag", 30, day: 14))])
+        XCTAssertNil(UpcomingDaysWindow.nextPayment(in: LedgerBook(past, today: today), today: today))
+    }
+
+    func testNextPaymentFindsTomorrowAndTheFirstOfSeveral() throws {
+        let today = engTime(oct2026, 14, hour: 15)
+        let d = plainData(expenses: [(oct2026, oneOff("Later", 80, day: 20)), (oct2026, oneOff("Morgen", 15, day: 15)),
+                                     (oct2026, oneOff("Ook morgen", 5, day: 15))])
+        let book = LedgerBook(d, today: today)
+        let next = try XCTUnwrap(UpcomingDaysWindow.nextPayment(in: book, today: today))
+        XCTAssertEqual(next.day.day, 15, "de dag van morgen")
+        XCTAssertEqual(next.event.day, 15)
+        XCTAssertEqual(next.event.kind, .expense)
+        XCTAssertLessThan(next.event.bankAmount, 0)
+        XCTAssertTrue(next.event.isPlanned)
+        XCTAssertTrue(["Morgen", "Ook morgen"].contains(next.event.title), next.event.title)
+        // De dag en de gebeurtenis komen uit hetzelfde dagboek als "Komende dagen".
+        XCTAssertEqual(next.day, book.day(next.event.date))
+        XCTAssertTrue(next.day.events.contains(next.event))
+    }
+
+    func testNextPaymentSkipsIncomeAndTransfers() throws {
+        let today = engTime(oct2026, 14, hour: 15)
+        // Alleen inkomsten: geen betaling.
+        let income = plainData(income: [(oct2026, oneOff("Cadeau", 100, day: 16))])
+        XCTAssertNil(UpcomingDaysWindow.nextPayment(in: LedgerBook(income, today: today), today: today))
+        // Inkomsten en inleg komen eerder, maar de eerste uitgave van de bank wint.
+        var d = plainData(expenses: [(oct2026, oneOff("Verzekering", 45, day: 22))], income: [(oct2026, oneOff("Cadeau", 100, day: 16))])
+        let pot = Pot(name: "Vakantie", goalAmount: nil, monthlyContribution: 50, startMonth: oct2026)
+        d.addPot(pot, openingBalance: 0, now: day(oct2026, 2))
+        let book = LedgerBook(d, today: today)
+        let next = try XCTUnwrap(UpcomingDaysWindow.nextPayment(in: book, today: today))
+        XCTAssertEqual(next.event.title, "Verzekering")
+        XCTAssertEqual(next.day.day, 22)
+        XCTAssertEqual(next.event.bankAmount, -45, accuracy: 0.001)
+        // Een uitgave die helemaal uit een spaarpot komt haalt niets van de bank en telt niet.
+        var fromPot = plainData(expenses: [(oct2026, oneOff("Uit de pot", 60, day: 16))])
+        let source = Pot(name: "Reis", goalAmount: nil, monthlyContribution: 0, startMonth: oct2026)
+        fromPot.addPot(source, openingBalance: 500, now: day(oct2026, 2))
+        var line = fromPot.months[oct2026.key]?.expenses.first
+        line?.potShares = [PotShare(potID: source.id, amount: 60)]
+        if let line { fromPot.months[oct2026.key]?.expenses = [line] }
+        XCTAssertNil(UpcomingDaysWindow.nextPayment(in: LedgerBook(fromPot, today: today), today: today))
+    }
+
+    func testNextPaymentHorizonIsSixtyDays() throws {
+        let today = engTime(oct2026, 14, hour: 15)
+        XCTAssertEqual(UpcomingDaysWindow.nextPaymentHorizon, 60)
+        let dec2026 = YearMonth(year: 2026, month: 12)
+        // 14 oktober + 60 dagen = 13 december: de grens zelf telt nog mee, een dag later niet.
+        let onTheEdge = plainData(expenses: [(dec2026, oneOff("Grens", 10, day: 13))])
+        let found = try XCTUnwrap(UpcomingDaysWindow.nextPayment(in: LedgerBook(onTheEdge, today: today), today: today))
+        XCTAssertEqual(found.event.title, "Grens")
+        XCTAssertEqual(cal.dateComponents([.month, .day], from: found.day.date), DateComponents(month: 12, day: 13))
+        let beyond = plainData(expenses: [(dec2026, oneOff("Te ver", 10, day: 14))])
+        XCTAssertNil(UpcomingDaysWindow.nextPayment(in: LedgerBook(beyond, today: today), today: today))
+    }
+
+    func testNextPaymentLooksAcrossTheMonthEnd() throws {
+        let today = engTime(oct2026, 30, hour: 9)
+        let nov2026 = YearMonth(year: 2026, month: 11)
+        let d = plainData(expenses: [(nov2026, oneOff("Huur", 800, day: 1))])
+        let next = try XCTUnwrap(UpcomingDaysWindow.nextPayment(in: LedgerBook(d, today: today), today: today))
+        XCTAssertEqual(next.event.title, "Huur")
+        XCTAssertEqual(cal.dateComponents([.month, .day], from: next.day.date), DateComponents(month: 11, day: 1))
+    }
+
     func testLowPointNoteForAMonthUsesTheLedger() {
         var (d, today) = sampleData()
         let book = LedgerBook(d, today: today)

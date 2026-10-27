@@ -9,9 +9,9 @@ private struct OpenSettingsPageKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// Opent een subpagina van Instellingen op de stapel waar de pagina nu in staat. Zonder waarde (de tab Instellingen op iOS)
-    /// loopt het via de router (`router.open`); in een pane van het `Settings`-venster op de Mac zet `SettingsPane` hier het
-    /// pad van de pane, want daar heeft elke pane een eigen stapel.
+    /// Opent een subpagina van Instellingen op de stapel waar de pagina nu in staat. Zonder waarde (de gepushte pagina
+    /// Instellingen op iPhone en iPad) loopt het via de router (`router.open`); in een pane van het `Settings`-venster op de
+    /// Mac zet `SettingsPane` hier het pad van de pane, want daar heeft elke pane een eigen stapel.
     var openSettingsPage: ((SettingsPage) -> Void)? {
         get { self[OpenSettingsPageKey.self] }
         set { self[OpenSettingsPageKey.self] = newValue }
@@ -20,15 +20,16 @@ extension EnvironmentValues {
 
 // MARK: - Rij naar een instellingenpagina
 
-/// Een rij in een lijst die naar een instellingenpagina leidt: pictogram, titel, een korte waarde eronder en een pijltje.
-/// Zonder `title` en `symbol` zijn dat die van de pagina (`SettingsPage.title` en `.symbol`). De rij is een knop die de pagina
-/// opent via `openSettingsPage` of, zonder die, via de router.
+/// Een rij in een lijst die naar een instellingenpagina leidt: een saliegrijze tegel, de titel, een korte waarde eronder en een
+/// pijltje. Zonder `title` en `symbol` zijn dat die van de pagina (`SettingsPage.title` en `.symbol`). De rij is een knop die de
+/// pagina opent via `openSettingsPage` of, zonder die, via de router. De rij Account heeft een rond pictogram (een avatar, met
+/// `showsAvatar`) en een rij die gegevens weggooit een rood rond pictogram.
 struct SettingsLinkRow: View {
     let page: SettingsPage
     var title: String? = nil
     var subtitle: String? = nil
     var symbol: String? = nil
-    var badgeSize: CGFloat = 32
+    var showsAvatar: Bool = false
     var needsAttention: Bool = false
     var isDestructive: Bool = false
     @Environment(Router.self) private var router
@@ -37,7 +38,7 @@ struct SettingsLinkRow: View {
     var body: some View {
         Button(action: openTarget) {
             HStack(spacing: 12) {
-                SymbolBadge(symbol: symbol ?? page.symbol, color: badgeColor, size: badgeSize)
+                badge
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title ?? page.title)
                         .font(.body)
@@ -56,12 +57,20 @@ struct SettingsLinkRow: View {
         .accessibilityAddTraits(.isLink)
     }
 
-    private var titleColor: Color {
-        isDestructive ? Theme.negative : Color.primary
+    /// Het pictogram vóór de titel: een tegel, behalve bij de avatar van Account en bij een rij die iets weggooit.
+    @ViewBuilder
+    private var badge: some View {
+        if isDestructive {
+            SymbolBadge(symbol: symbol ?? page.symbol, color: Theme.negative, size: 32)
+        } else if showsAvatar {
+            SymbolBadge(symbol: symbol ?? page.symbol, color: AppDomain.settings.color, size: 40)
+        } else {
+            ArtworkTile(symbol: symbol ?? page.symbol, hue: .sage, size: .row)
+        }
     }
 
-    private var badgeColor: Color {
-        isDestructive ? Theme.negative : AppDomain.settings.color
+    private var titleColor: Color {
+        isDestructive ? Theme.negative : Color.primary
     }
 
     @ViewBuilder

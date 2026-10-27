@@ -1,8 +1,10 @@
 import SwiftUI
 
-// Alle beleggingen (lijstpagina): Samenvatting, Groei, Verdeling en de beleggingen zelf. De pagina van één belegging staat in
-// Saving/HoldingDetailPage.swift, de bladen in Saving/HoldingSheets.swift en de kaarten in Saving/FavoriteCards.swift. De cijfers
-// bovenaan (`PortfolioFigures`) en de teksten van het formulier (`HoldingForm`) staan zonder SwiftUI in App/UI/PotDisplay.swift.
+// Alle beleggingen (lijstpagina): Samenvatting, Groei, Verdeling en de beleggingen zelf, een rij per belegging met een tegel in de
+// kleur van de soort (Saving/HoldingRow.swift). De pagina van één belegging (de albumpagina) staat in
+// Saving/HoldingDetailPage.swift, de bladen in Saving/HoldingSheets.swift en de kaarten voor Home in Saving/FavoriteCards.swift.
+// De cijfers bovenaan (`PortfolioFigures`) en de teksten van het formulier (`HoldingForm`) staan zonder SwiftUI in
+// App/UI/PotDisplay.swift.
 
 // MARK: - Winst of verlies
 
@@ -169,7 +171,7 @@ struct PortfolioPage: View {
         }
     }
 
-    /// "Koersen vernieuwen" (alleen met een gevolgde belegging, ook met trekken om te verversen) en "Kies beleggingen voor het Overzicht…".
+    /// "Koersen vernieuwen" (alleen met een gevolgde belegging, ook met trekken om te verversen) en "Kies beleggingen voor Home…".
     private var moreMenu: some View {
         Menu {
             if store.hasTrackedHoldings {
@@ -181,7 +183,7 @@ struct PortfolioPage: View {
                 .disabled(store.isRefreshingPrices)
             }
             Button { sheet = .pickFavorites } label: {
-                Label("Kies beleggingen voor het Overzicht…", systemImage: "slider.horizontal.3")
+                Label("Kies beleggingen voor Home…", systemImage: "slider.horizontal.3")
             }
         } label: {
             Label("Meer", systemImage: "ellipsis")
@@ -213,9 +215,9 @@ struct PortfolioPage: View {
         case .retry:
             break
         case .enterBankBalance:
-            router.go(.bank)
+            router.open(.bank)
         case .openSalary:
-            router.go(.salary)
+            router.open(.salary)
         }
     }
 }
@@ -242,7 +244,7 @@ struct PortfolioSummarySection: View {
                         StatTile(title: "Winst", value: Fmt.euro(figures.gain),
                                  color: figures.gain >= 0 ? Theme.positive : Theme.negative)
                     }
-                    // Wat je verdeling deze maand naar beleggingen stuurt: dezelfde som als "Belegd" op de Maand-tab en bij Verdelen.
+                    // Wat je verdeling deze maand naar beleggingen stuurt: dezelfde som als "Belegd" bij het Maandoverzicht en bij Verdelen.
                     StatTile(title: "Inleg deze maand", value: Fmt.euro(d.investedTotal(in: now)))
                 }
                 Text("De waarde is je laatste waarde-update plus de inleg die al is overgeschreven, zoals bij je bankrekening en spaarpotten. Een inleg die nog moet komen telt mee vanaf de overschrijfdag; \"Inleg deze maand\" is de hele maand.")
@@ -370,94 +372,5 @@ struct PortfolioKindsSection: View {
         } header: {
             SectionHeader("Verdeling", symbol: "chart.pie", domain: .investing)
         }
-    }
-}
-
-// MARK: - Een rij in de lijst
-
-/// Een belegging in de lijst: naam, ticker en koers of soort, de inleg als die een percentage is, de waarde en de winst als
-/// percentage (of "Geschat"). Swipe en contextmenu geven Bewerken en Verwijderen.
-struct HoldingRow: View {
-    let holding: Holding
-    let onEdit: () -> Void
-    @Environment(AppStore.self) private var store
-    @State private var confirmDelete = false
-
-    init(holding: Holding, onEdit: @escaping () -> Void) {
-        self.holding = holding
-        self.onEdit = onEdit
-    }
-
-    var body: some View {
-        SavingLink(.holding(holding.id)) { rowLabel }
-            .rowActions(edit: { onEdit() }, delete: { confirmDelete = true })
-            .modifier(HoldingDeleteDialog(holding: holding, isPresented: $confirmDelete))
-    }
-
-    @ViewBuilder
-    private var rowLabel: some View {
-        let state = store.data.holdingStateNow(holding, current: store.now, today: store.today)
-        let figures = HoldingFigures(state)
-        HStack(alignment: .top, spacing: 12) {
-            SymbolBadge(symbol: holding.kind.symbol, color: Theme.color(holding.kind.colorIndex), size: 40)
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 8) {
-                    texts
-                    Spacer(minLength: 6)
-                    amounts(figures)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    texts
-                    amounts(figures)
-                }
-            }
-            SavingChevron()
-                .padding(.top, 4)
-        }
-        .foregroundStyle(Color.primary)
-    }
-
-    private var texts: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(holding.name)
-                .font(.body.weight(.semibold))
-            Text(subtitle)
-                .font(.footnote)
-                .foregroundStyle(Theme.textSecondary)
-            // Een inleg als percentage van je inkomen: wat het deze maand is (zoals bij een spaarpot).
-            if let line = ContributionInfo.listLine(store.data, id: holding.id, month: store.now) {
-                Text(line)
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-        }
-    }
-
-    private func amounts(_ figures: HoldingFigures) -> some View {
-        VStack(alignment: .trailing, spacing: 2) {
-            Text(Fmt.euro(figures.value))
-                .font(.body.weight(.semibold))
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .animated(by: figures.value)
-            if figures.isEstimated {
-                Text("Geschat")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textSecondary)
-            } else if let fraction = figures.gainFraction {
-                Text((fraction >= 0 ? "+" : "−") + Fmt.percent(abs(fraction)))
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(fraction >= 0 ? Theme.positive : Theme.negative)
-            }
-        }
-    }
-
-    private var subtitle: String {
-        if holding.hasTicker, let ticker = holding.ticker {
-            // De koers is een eenheidsprijs: met centen (een koers van 0,52 is geen "€ 1").
-            if let price = holding.lastPrice { return "\(ticker) · \(Fmt.euroExact(price))" }
-            return ticker
-        }
-        return holding.kind.title
     }
 }

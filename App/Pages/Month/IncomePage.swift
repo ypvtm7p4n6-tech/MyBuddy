@@ -15,6 +15,7 @@ struct IncomePage: View {
         ListScaffold(title: "Inkomen") {
             Section {
                 MonthBar()
+                    .bankBareRow()
             }
             IncomeSummarySection(month: month)
             IncomeSalarySection(month: month)

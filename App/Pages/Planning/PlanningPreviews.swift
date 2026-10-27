@@ -12,9 +12,12 @@ private struct PlanningPreviewHost<Content: View>: View {
     @State private var auth = AuthStore()
     private let content: Content
 
-    init(@ViewBuilder content: (AppStore) -> Content) {
+    /// Met `withSampleData: false` is de winkel leeg (de lege staat van een pagina).
+    init(withSampleData: Bool = true, @ViewBuilder content: (AppStore) -> Content) {
         let sampleStore = AppStore(storage: nil)
-        sampleStore.loadSampleData()
+        if withSampleData {
+            sampleStore.loadSampleData()
+        }
         _store = State(initialValue: sampleStore)
         self.content = content(sampleStore)
     }
@@ -29,7 +32,7 @@ private struct PlanningPreviewHost<Content: View>: View {
     }
 }
 
-/// De vijf kaarten van het tabblad Plannen onder elkaar.
+/// De vijf oude kaarten van het tabblad Plannen onder elkaar (tot de opruiming van pakket 3).
 private struct PlanningCardsPreview: View {
     var body: some View {
         PageScaffold(title: "Plannen", large: true) {
@@ -63,13 +66,36 @@ private struct PlanningCardsPreview: View {
     PlanningPreviewHost { _ in GoalsPage() }
 }
 
+#Preview("Doelen, donker") {
+    PlanningPreviewHost { _ in GoalsPage() }
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Doelen, grote tekst") {
+    PlanningPreviewHost { _ in GoalsPage() }
+        .dynamicTypeSize(.accessibility3)
+}
+
+#Preview("Doelen, leeg") {
+    PlanningPreviewHost(withSampleData: false) { _ in GoalsPage() }
+}
+
 #Preview("Doel") {
     PlanningPreviewHost { store in GoalDetailPage(goalID: store.data.goals.first?.id ?? UUID()) }
+}
+
+#Preview("Doel, donker") {
+    PlanningPreviewHost { store in GoalDetailPage(goalID: store.data.goals.first?.id ?? UUID()) }
+        .preferredColorScheme(.dark)
 }
 
 #Preview("Doel, grote tekst") {
     PlanningPreviewHost { store in GoalDetailPage(goalID: store.data.goals.first?.id ?? UUID()) }
         .dynamicTypeSize(.accessibility3)
+}
+
+#Preview("Doel bestaat niet meer") {
+    PlanningPreviewHost(withSampleData: false) { _ in GoalDetailPage(goalID: UUID()) }
 }
 
 #Preview("Spaardoel berekenen") {

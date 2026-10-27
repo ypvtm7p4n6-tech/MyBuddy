@@ -23,6 +23,7 @@ struct ExpensesPage: View {
         ListScaffold(title: "Uitgaven") {
             Section {
                 MonthBar()
+                    .bankBareRow()
             }
             ExpensesSummarySection(month: month, message: fillMessage)
             lineSections(month: month, beforeStart: beforeStart, hasLines: hasLines)
@@ -104,7 +105,7 @@ struct ExpensesPage: View {
 // MARK: - Samenvatting
 
 /// De uitgaven van de maand, verdeeld in Vast en Variabel, met wat uit spaarpotten komt. Alle bedragen komen uit
-/// `expenseOverview(in:)`: hetzelfde als op Maand en bij Nog te verdelen.
+/// `expenseOverview(in:)`: hetzelfde als in het Maandoverzicht en bij Nog te verdelen.
 private struct ExpensesSummarySection: View {
     let month: YearMonth
     let message: String?

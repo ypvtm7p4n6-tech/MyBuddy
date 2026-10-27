@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// De pagina bij een `SettingsPage`: de inhoud van alle tien bestemmingen onder `Destination.settings(_)`. Heeft geen eigen
-/// `NavigationStack`: de stapel komt van `TabStack` (iOS) of van `SettingsPane` (Mac).
+/// `NavigationStack`: de stapel komt van `TabStack` (iPhone en iPad, achter de profielknop) of van `SettingsPane` (Mac). Het
+/// kleurverloop erachter is saliegrijs (`DestinationView` of `SettingsPane` zet het).
 struct SettingsDestination: View {
     let page: SettingsPage
 
@@ -56,6 +57,7 @@ struct SettingsPane: View {
         .environment(\.openSettingsPage, { subpage in
             path = NavigationRules.push(Destination.settings(subpage), onto: path)
         })
+        .environment(\.backdropHue, .sage)
         .onAppear { openRequestedSubpage() }
         .onChange(of: subpageRequest) { _, _ in openRequestedSubpage() }
         #if os(macOS)

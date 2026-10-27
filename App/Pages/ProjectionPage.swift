@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - De kaart Toekomstschatting op het tabblad Plannen
+// MARK: - De oude kaart Toekomstschatting (tot de opruiming van pakket 3)
 
 /// Wat je beleggingen over 5, 10 en 20 jaar waard zijn, met je huidige inleg en rendement. Een tik opent de pagina.
 struct ProjectionSummaryCard: View {
@@ -74,7 +74,7 @@ struct ProjectionPage: View {
 
     /// "Gebruik je beleggingen" start bij je beleggingen aan het EIND van deze maand (de schatting rekent per maand
     /// verder, vanaf volgende maand). Staat er nog een inleg van deze maand te wachten, dan is dat meer dan wat je vandaag
-    /// hebt: zeg dat erbij, zodat het getal niet tegenspreekt wat het Overzicht en Beleggingen tonen.
+    /// hebt: zeg dat erbij, zodat het getal niet tegenspreekt wat Home en Beleggingen tonen.
     private var startNote: String? {
         let d = store.data
         let now = store.now

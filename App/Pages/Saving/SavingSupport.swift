@@ -1,12 +1,11 @@
 import SwiftUI
 
-// Kleine gedeelde onderdelen van Sparen (spaarpotten en beleggingen): een link naar een pagina voor rijen en tegels met eigen
-// inhoud, een drukstatus, en het menu van een kaart.
+// Kleine gedeelde onderdelen van Sparen (spaarpotten en beleggingen): een link naar een pagina voor tegels met eigen inhoud, een
+// drukstatus, een pijltje en het menu van een kaart. De lijstrijen van Spaarpotten en Beleggingen gebruiken `MediaRow`; deze
+// onderdelen zijn voor de oude kaarten en tegels voor Home (`FavoriteCards`, `FavoriteTiles`), tot pakket 3 ze opruimt.
 
-/// Een rij of tegel met eigen inhoud die naar een pagina leidt. Het gaat via `router.open`: hoort de pagina bij de tab waar je
-/// nu bent, dan komt ze op het pad van die tab, anders wisselt de app van tab (K16, zoals `DestinationLink` in `Components.swift`).
-/// De inhoud tekent zelf een pijltje (`chevron.right`) als het een rij is. Nodig omdat `NavigationRow` alleen een titel, een waarde en
-/// een regel uitleg kent en `DestinationLink` privé is (zie WIRING in het rapport van pakket C).
+/// Een tegel met eigen inhoud die naar een pagina leidt. Het gaat via `router.open`: de pagina komt op het pad van de tab waar je
+/// nu bent (B5, K16). De inhoud tekent zelf een pijltje (`chevron.right`) als het een rij is.
 struct SavingLink<Inner: View>: View {
     let destination: Destination
     private let inner: Inner

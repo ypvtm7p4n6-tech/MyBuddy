@@ -196,9 +196,100 @@ extension PotFormat {
     }
 }
 
-// MARK: - Wat er op het Overzicht staat
+// MARK: - De kop van een albumpagina
 
-/// De keuze van potten en beleggingen voor het Overzicht en Sparen: maximaal `potLimit` potten en `holdingLimit` beleggingen, in
+/// De teksten in de kop van de albumpagina van een spaarpot of belegging: de ondertitel en de feiten onder het kerngetal. Alleen
+/// teksten uit bestaande cijfers (saldo, doel, rente, inleg); er wordt niets nieuws uitgerekend.
+enum SavingAlbumText {
+    /// "Spaarpot", of "Spaarpot · doel € 2.400" als de pot een doel heeft.
+    static func potSubtitle(goal: Double?) -> String {
+        guard let goal, goal > 0 else { return "Spaarpot" }
+        return "Spaarpot · doel \(Fmt.euro(goal))"
+    }
+
+    /// De feiten onder het saldo van een pot: hoe ver je bent (of dat er geen doel is), de rente en de inleg. `interestRate` is nil
+    /// zonder actieve rente; `progress` is de breuk van het doel (nil zonder doel).
+    static func potFacts(balance: Double, goal: Double?, progress: Double?, interestRate: Double?,
+                         contribution: String?) -> [String] {
+        var facts: [String] = []
+        if let goal, goal > 0 {
+            var text = PotFormat.goalStatus(balance: balance, goal: goal)
+            if let progress {
+                text = "\(Fmt.percent(progress, digits: 0)) van je doel · " + text
+            }
+            facts.append(text)
+        } else {
+            facts.append("Geen doel ingesteld")
+        }
+        if let interestRate {
+            facts.append("\(Fmt.percent(interestRate, digits: 2)) rente per jaar")
+        }
+        if let contribution {
+            facts.append(contribution)
+        }
+        return facts
+    }
+
+    /// "Inleg € 300 deze maand", of bij een percentage "Inleg 10% van je salaris, € 300 deze maand". nil zonder inleg.
+    static func contributionFact(_ info: ContributionInfo?) -> String? {
+        guard let info, info.hasContribution else { return nil }
+        if info.isPercent {
+            return "Inleg \(info.ruleText), \(Fmt.euro(info.amount)) deze maand"
+        }
+        return "Inleg \(Fmt.euro(info.amount)) deze maand"
+    }
+
+    /// De ondertitel van een pot in de lijst: "Doel € 2.400 · 43%" (of "Geen doel ingesteld"), met de rente erachter als die er is en
+    /// op een tweede regel de inleg als percentage (`ContributionInfo.listLine`).
+    static func potListSubtitle(goal: Double?, progress: Double?, interestRate: Double?, contributionLine: String?) -> String {
+        var parts: [String] = []
+        if let progress, let goal, goal > 0 {
+            parts.append("Doel \(Fmt.euro(goal))")
+            parts.append(Fmt.percent(progress, digits: 0))
+        } else {
+            parts.append("Geen doel ingesteld")
+        }
+        if let interestRate {
+            parts.append("\(Fmt.percent(interestRate, digits: 2)) rente")
+        }
+        var text = parts.joined(separator: " · ")
+        if let contributionLine {
+            text += "\n" + contributionLine
+        }
+        return text
+    }
+
+    /// "ETF", of "ETF · VWRL" als de belegging een ticker heeft.
+    static func holdingSubtitle(kind: String, ticker: String?) -> String {
+        guard let ticker, !ticker.isEmpty else { return kind }
+        return "\(kind) · \(ticker)"
+    }
+
+    /// De feiten onder de waarde van een belegging: sinds wanneer je belegt, of de waarde geschat is, en de inleg.
+    static func holdingFacts(startMonth: YearMonth, isEstimated: Bool, contribution: String?) -> [String] {
+        var facts: [String] = ["Belegd sinds \(Fmt.month(startMonth))"]
+        if isEstimated {
+            facts.append("Waarde geschat uit je inleg")
+        }
+        if let contribution {
+            facts.append(contribution)
+        }
+        return facts
+    }
+
+    /// De ondertitel van een belegging in de lijst: "VWRL · € 112,40" (of de soort zonder ticker), met erachter hoeveel je tot nu
+    /// toe won of verloor ("+3,1%", "−2,0%") of "Geschat". `gainFraction` is nil zonder inleg.
+    static func holdingListSubtitle(base: String, isEstimated: Bool, gainFraction: Double?) -> String {
+        if isEstimated { return base + " · Geschat" }
+        guard let gainFraction else { return base }
+        let sign = gainFraction >= 0 ? "+" : "−"
+        return base + " · " + sign + Fmt.percent(abs(gainFraction))
+    }
+}
+
+// MARK: - Wat er op Home staat
+
+/// De keuze van potten en beleggingen voor Home: maximaal `potLimit` potten en `holdingLimit` beleggingen, in
 /// de volgorde waarin je tikt. De rekenmotor bewaart de keuze (`homePotIDs`, `homeHoldingIDs`); dit is alleen de logica van het blad.
 enum FavoritePicker {
     static let potLimit = 3
@@ -345,7 +436,7 @@ struct HoldingFigures: Equatable {
 
 // MARK: - Een grafiek in het klein
 
-/// De kernwaarden naast een kleine grafiek zonder assen (Overzicht en Sparen): het begin en het eind als tekst, zodat de lijn nooit
+/// De kernwaarden naast een kleine grafiek zonder assen (Home en Sparen): het begin en het eind als tekst, zodat de lijn nooit
 /// alleen staat. nil als er niets te tekenen valt (de lege staat staat dan in een regel).
 struct TrendGlance: Equatable {
     /// "mei '26 € 7.350". nil bij een enkel punt.

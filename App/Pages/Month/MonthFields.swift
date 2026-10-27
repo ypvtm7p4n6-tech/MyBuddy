@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Kleine bouwstenen die de pagina's van de Maand-tab delen: Inkomen, Salaris, Uitgaven en Verdelen, en het blad voor een regel.
+// Kleine bouwstenen die de maandpagina's delen (Bibliotheek, Deze maand): Inkomen, Salaris, Uitgaven en Verdelen, en het blad voor een regel.
 
 // MARK: - Dag van de maand kiezen
 
@@ -26,7 +26,7 @@ struct DayPickerRow: View {
 
 // MARK: - Het kerngetal en uitleg
 
-/// Het kerngetal van een pagina op de Maand-tab: een korte titel en het bedrag groot eronder. Eén element voor VoiceOver
+/// Het kerngetal van een maandpagina: een korte titel en het bedrag groot eronder. Eén element voor VoiceOver
 /// ("Inkomen in oktober 2026: € 3.000").
 struct MonthFigureHero: View {
     let title: String

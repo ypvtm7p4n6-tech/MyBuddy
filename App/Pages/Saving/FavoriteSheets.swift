@@ -1,7 +1,7 @@
 import SwiftUI
 
-// De twee korte bladen waarin je kiest welke potten (maximaal 3) en beleggingen (maximaal 4) op het Overzicht en bij Sparen staan, in
-// de volgorde waarin je tikt. Ze hebben `hasChanges`: met een niet-bewaarde keuze is veeg-om-te-sluiten uit. De keuze zelf
+// De twee korte bladen waarin je kiest welke potten (maximaal 3) en beleggingen (maximaal 4) op Home staan, in de volgorde waarin je
+// tikt. Ze hebben `hasChanges`: met een niet-bewaarde keuze is veeg-om-te-sluiten uit. De keuze zelf
 // (`FavoritePicker`) staat zonder SwiftUI in App/UI/PotDisplay.swift, met tests.
 
 /// Het volgnummer van een gekozen rij, of een lege cirkel als de rij niet gekozen is (de keuze staat dus niet alleen in kleur).
@@ -26,7 +26,7 @@ private struct FavoriteOrderMark: View {
     }
 }
 
-// MARK: - Spaarpotten op het Overzicht
+// MARK: - Spaarpotten op Home
 
 struct FavoritePotsSheet: View {
     @Environment(AppStore.self) private var store
@@ -37,7 +37,7 @@ struct FavoritePotsSheet: View {
     init() {}
 
     var body: some View {
-        SheetScaffold(title: "Spaarpotten op het Overzicht", hasChanges: selected != original, onSave: { save() }) {
+        SheetScaffold(title: "Spaarpotten op Home", hasChanges: selected != original, onSave: { save() }) {
             Section {
                 ForEach(store.data.pots) { pot in
                     row(pot)
@@ -60,7 +60,7 @@ struct FavoritePotsSheet: View {
             selected = FavoritePicker.toggled(pot.id, in: selected, limit: FavoritePicker.potLimit)
         } label: {
             HStack(spacing: 12) {
-                SymbolBadge(symbol: pot.symbol, color: Theme.color(pot.colorIndex), size: 32)
+                ArtworkTile(symbol: pot.symbol, hue: Theme.hue(pot.colorIndex), size: .row)
                 Text(pot.name)
                     .foregroundStyle(Color.primary)
                 Spacer(minLength: 8)
@@ -80,7 +80,7 @@ struct FavoritePotsSheet: View {
     }
 }
 
-// MARK: - Beleggingen op het Overzicht
+// MARK: - Beleggingen op Home
 
 struct FavoriteHoldingsSheet: View {
     @Environment(AppStore.self) private var store
@@ -91,7 +91,7 @@ struct FavoriteHoldingsSheet: View {
     init() {}
 
     var body: some View {
-        SheetScaffold(title: "Beleggingen op het Overzicht", hasChanges: selected != original, onSave: { save() }) {
+        SheetScaffold(title: "Beleggingen op Home", hasChanges: selected != original, onSave: { save() }) {
             Section {
                 ForEach(store.data.holdings) { holding in
                     row(holding)
@@ -114,7 +114,7 @@ struct FavoriteHoldingsSheet: View {
             selected = FavoritePicker.toggled(holding.id, in: selected, limit: FavoritePicker.holdingLimit)
         } label: {
             HStack(spacing: 12) {
-                SymbolBadge(symbol: holding.kind.symbol, color: Theme.color(holding.kind.colorIndex), size: 32)
+                ArtworkTile(symbol: holding.kind.symbol, hue: Theme.hue(holding.kind.colorIndex), size: .row)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(holding.name)
                         .foregroundStyle(Color.primary)

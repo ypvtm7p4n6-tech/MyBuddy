@@ -221,7 +221,7 @@ struct MoneyLinesSection: View {
     var body: some View {
         let d = store.data
         let plan = d.plan(for: month)
-        // Maanden vóór de startmaand tellen nergens mee (Maand, Nog te verdelen, Bankrekening, Dag voor dag): regels erin zouden
+        // Maanden vóór de startmaand tellen nergens mee (Maandoverzicht, Nog te verdelen, Bankrekening, Dag voor dag): regels erin zouden
         // een bedrag tonen dat op geen enkel ander scherm terugkomt. Daarom laat deze sectie daar niets zien en niets toevoegen.
         let beforeStart = month < d.startMonth
         let all: [MoneyLine] = beforeStart ? [] : (kind == .income ? plan.extraIncome : plan.expenses)

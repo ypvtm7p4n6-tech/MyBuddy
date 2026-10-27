@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Gedeelde onderdelen van de Plannen-pagina's en -kaarten (pakket D): doelen, noodbuffer, versnellers, toekomstschatting
+// Gedeelde onderdelen van de Plannen-pagina's en de oude kaarten (pakket D): doelen, noodbuffer, versnellers, toekomstschatting
 // en aankoopcheck. Ze zijn alleen bedoeld voor de bestanden van dit pakket en bouwen op het ontwerpsysteem (`Card`,
 // `Theme`, `IconButton`): hier staat geen eigen kleur, geen glas en geen vaste lettergrootte.
 
@@ -49,8 +49,8 @@ struct PlanningPressStyle: ButtonStyle {
 }
 
 /// Een tegel in een kaart die naar een pagina leidt (bijvoorbeeld een doel of de rij "Spaardoel berekenen"): de inhoud links
-/// en rechts een pijltje. Hij opent met `router.open`: hoort de pagina bij de tab waar je bent, dan komt ze op het pad van die
-/// tab, anders wisselt de app van tab (K16). Voor VoiceOver is het een link.
+/// en rechts een pijltje. Hij opent met `router.open`: de pagina komt op het pad van de tab waar je bent (B5), nooit twee keer
+/// dezelfde pagina in een pad (K16). Voor VoiceOver is het een link.
 struct PlanningLinkTile<Content: View>: View {
     let destination: Destination
     private let content: Content

@@ -7,7 +7,7 @@ private func bufferMonthsText(_ value: Double) -> String {
     return "\(Fmt.input(rounded, maxDigits: 1)) \(unit)"
 }
 
-// MARK: - De kaart Noodbuffer op het tabblad Plannen
+// MARK: - De oude kaart Noodbuffer (tot de opruiming van pakket 3)
 
 /// Samenvatting: doelbuffer, wat er al is, voortgang en hoeveel maanden het dekt. Gebruikt de keuzes die op de pagina Noodbuffer
 /// zijn bewaard, zodat de cijfers kloppen met de pagina. Een tik opent de pagina.
