@@ -438,6 +438,7 @@ CoreTests/ 1 - 3
 CoreTests/Tests/MyBuddyCoreTests/CashflowDisplayTests.swift - 2A 3
 CoreTests/Tests/MyBuddyCoreTests/RecentActivity.swift - 2B 3
 CoreTests/Tests/MyBuddyCoreTests/RecentActivityTests.swift - 2B 3
+CoreTests/Tests/MyBuddyCoreTests/SavingAlbumTextTests.swift - 2C 3
 scripts/ 1 - 3
 docs/design/ 1 - 3
 docs/design2/ 1 - 3
