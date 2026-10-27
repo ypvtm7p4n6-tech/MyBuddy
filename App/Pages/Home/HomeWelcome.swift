@@ -1,6 +1,6 @@
 import SwiftUI
 
-// De meldingen bovenaan Home en de lege start. De meldingen zijn dezelfde als op het oude Overzicht (opslaan mislukt, startmelding,
+// De meldingen bovenaan Home en de lege start. De meldingen zijn dezelfde als op de oude Home (opslaan mislukt, startmelding,
 // synchronisatie, "De cijfers sluiten niet"); de lege start is een welkomstkaart in plaats van hero en planken.
 
 // MARK: - Meldingen

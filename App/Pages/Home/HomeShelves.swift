@@ -223,7 +223,7 @@ private struct HomeDayEventLine: View {
     }
 }
 
-/// De kaart als er in het venster niets gebeurt: dezelfde tekst als op het oude Overzicht.
+/// De kaart als er in het venster niets gebeurt: dezelfde tekst als op de oude Home.
 private struct HomeQuietCard: View {
     var body: some View {
         ShelfCard {

@@ -1,12 +1,12 @@
 import SwiftUI
 
 // Gedeelde onderdelen van Home (pakket 2A): de bladen die Home opent, de kaarten van de hero, de paginamarge en het
-// contextmenu van een tegel. Alle gegevens komen uit dezelfde bronnen als de oude kaarten van het Overzicht; hier wordt niets
+// contextmenu van een tegel. Alle gegevens komen uit dezelfde bronnen als de oude kaarten van Home; hier wordt niets
 // zelf uitgerekend.
 
 // MARK: - Bladen
 
-/// De bladen die Home opent. Alle bladen staan achter één `.sheet(item:)` op `HomeTab`; de planken en de hero melden alleen
+/// De bladen die Home opent. Alle bladen staan achter één bladpresentatie op `HomeTab`; de planken en de hero melden alleen
 /// welk blad ze willen (`HomePresent`). Een pot of belegging staat er met zijn id: het blad zoekt hem op bij het openen.
 enum HomeSheet: Identifiable {
     case balance

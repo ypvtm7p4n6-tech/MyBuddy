@@ -141,7 +141,7 @@ final class GoalTests: XCTestCase {
         g.inflationAdjusted = false
         g.funding = .custom(start: 500, monthly: 0, annualReturn: 0)
         XCTAssertTrue(d.analyze(g, current: oct2026).isReached)
-        XCTAssertTrue(d.accelerators(for: g, current: oct2026).isEmpty)
+        XCTAssertTrue(d.accelerators(for: g, current: oct2026, today: day(oct2026, 15)).isEmpty)
     }
 
     func testTemplatesUseOwnData() {
@@ -161,7 +161,7 @@ final class AcceleratorTests: XCTestCase {
     func testSampleDataProducesRankedPersonalAccelerators() {
         let d = FinanceData.sample(now: sampleNow)
         let pension = d.goals[0]
-        let list = d.accelerators(for: pension, current: oct2026)
+        let list = d.accelerators(for: pension, current: oct2026, today: day(oct2026, 15))
         XCTAssertFalse(list.isEmpty)
 
         let baseline = d.analyze(pension, current: oct2026).monthsToGoal
@@ -183,7 +183,7 @@ final class AcceleratorTests: XCTestCase {
         let d = FinanceData.sample(now: sampleNow)
         let goal = d.goals[0]
         let inputs = d.goalInputs(for: goal, current: oct2026)
-        let list = Array(d.accelerators(for: goal, current: oct2026).prefix(3))
+        let list = Array(d.accelerators(for: goal, current: oct2026, today: day(oct2026, 15)).prefix(3))
         XCTAssertGreaterThanOrEqual(list.count, 2)
         let combined = d.scenarioMonths(inputs, change: d.combine(list))
         for acc in list {
@@ -199,7 +199,7 @@ final class AcceleratorTests: XCTestCase {
         g.targetAmount = 50_000
         g.inflationAdjusted = false
         g.funding = .custom(start: 0, monthly: 200, annualReturn: 0.05)
-        let list = d.accelerators(for: g, current: oct2026)
+        let list = d.accelerators(for: g, current: oct2026, today: day(oct2026, 15))
         let bank = list.first { $0.id == "bank" }
         XCTAssertNotNil(bank)
         // Buffer: 2 maanden × gemiddelde uitgaven (1016,67) = 2033,34; overschot ≈ 7966,66.
@@ -221,12 +221,12 @@ final class AcceleratorTests: XCTestCase {
         g.inflationAdjusted = false
         g.funding = .portfolio
 
-        let ids = Set(d.accelerators(for: g, current: oct2026).map(\.id))
+        let ids = Set(d.accelerators(for: g, current: oct2026, today: day(oct2026, 15)).map(\.id))
         XCTAssertTrue(ids.contains("costs"))
         XCTAssertTrue(ids.contains("shift"))
 
         g.funding = .custom(start: 10_000, monthly: 0, annualReturn: 0.05)
-        let idsCustom = Set(d.accelerators(for: g, current: oct2026).map(\.id))
+        let idsCustom = Set(d.accelerators(for: g, current: oct2026, today: day(oct2026, 15)).map(\.id))
         XCTAssertFalse(idsCustom.contains("costs"))
         XCTAssertFalse(idsCustom.contains("shift"))
     }
@@ -238,7 +238,7 @@ final class AcceleratorTests: XCTestCase {
         g.targetAmount = 10_000
         g.inflationAdjusted = false
         g.funding = .custom(start: 0, monthly: 0, annualReturn: 0)
-        let list = d.accelerators(for: g, current: oct2026)
+        let list = d.accelerators(for: g, current: oct2026, today: day(oct2026, 15))
         XCTAssertFalse(list.isEmpty)
         XCTAssertTrue(list.allSatisfy { $0.makesReachable })
         XCTAssertTrue(list.allSatisfy { $0.monthsSaved == nil })

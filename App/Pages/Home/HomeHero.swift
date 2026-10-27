@@ -1,7 +1,7 @@
 import SwiftUI
 
 // De hero van Home: drie grote kaarten in een carrousel (Nog te verdelen, Vermogen, Saldo vandaag). Alle bedragen komen uit
-// dezelfde bronnen als de oude kaarten van het Overzicht: `MonthBoard` (en daarmee `MonthFigures`), `netWorth(at:current:)` met
+// dezelfde bronnen als de oude kaarten van Home: `MonthBoard` (en daarmee `MonthFigures`), `netWorth(at:current:)` met
 // `NetWorthTrend`, en het banksaldo van vandaag met de dagboekhouding (`LedgerBook`, `UpcomingDaysWindow`). De kaarten zijn geen
 // links: de pillen leiden naar de pagina's. De achtergrond van Home volgt de zichtbare kaart (`HomeTab`).
 
@@ -73,7 +73,7 @@ struct HomeHeroNote: Identifiable {
 }
 
 /// Wat er bij "Nog te verdelen" hoort: waarom het negatief is, het salarisschema, wat uit een spaarpot komt en een waarschuwing
-/// over de percentages. Dezelfde regels en teksten als het oude Overzicht; zonder een van die dingen staat er niets.
+/// over de percentages. Dezelfde regels en teksten als de oude Home; zonder een van die dingen staat er niets.
 enum HomeHeroNotes {
     static func list(board: MonthBoard, percentWarning: AllocationWarning?) -> [HomeHeroNote] {
         var notes: [HomeHeroNote] = []

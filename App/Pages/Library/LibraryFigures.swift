@@ -1,4 +1,9 @@
 import Foundation
+// Foundation-only: geen SwiftUI. In de app zit alles in één module; een test kan dit bestand als symlink tussen de tests zetten
+// en leest de gegevens dan via `@testable import`.
+#if canImport(MyBuddyCore)
+@testable import MyBuddyCore
+#endif
 
 // De getallen en teksten van de rijen van de Bibliotheek (B7 en par. 1.4 van docs/design2/plan.md). Elke waarde komt uit
 // dezelfde bron als de oude kaart die hij vervangt (`income(in:)`, `expenseOverview(in:)`, `monthFigures(_:)`,
