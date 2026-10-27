@@ -319,26 +319,43 @@ struct ShelfCard<Content: View>: View {
 // MARK: - Bladertegel
 
 /// Een bladertegel van Zoeken: minimaal 96 punten hoog, de titel linksonder en een decoratief symbool rechtsboven. Een tik
-/// opent de pagina. De kleur is nooit het enige teken: titel en symbool staan erbij.
+/// opent de pagina. De kleur is nooit het enige teken: titel en symbool staan erbij. Met `showsCurrentMonth` opent een
+/// maandpagina op de huidige maand (B8); met `opensViaRouter` opent de tegel via `router.open`, zodat Instellingen op de Mac het
+/// `Settings`-venster opent in plaats van een pagina te pushen.
 struct BrowseTile: View {
     let title: String
     let symbol: String
     let hue: TileHue
     let destination: Destination
+    let showsCurrentMonth: Bool
+    let opensViaRouter: Bool
     @ScaledMetric(relativeTo: .headline) private var minHeight: CGFloat = 96
+    @Environment(Router.self) private var router
 
-    init(title: String, symbol: String, hue: TileHue, destination: Destination) {
+    init(title: String, symbol: String, hue: TileHue, destination: Destination,
+         showsCurrentMonth: Bool = false, opensViaRouter: Bool = false) {
         self.title = title
         self.symbol = symbol
         self.hue = hue
         self.destination = destination
+        self.showsCurrentMonth = showsCurrentMonth
+        self.opensViaRouter = opensViaRouter
     }
 
     var body: some View {
-        DestinationLink(destination: destination) { _ in
-            tile
+        if opensViaRouter {
+            Button {
+                router.open(destination)
+            } label: {
+                tile
+            }
+            .buttonStyle(TilePressStyle())
+        } else {
+            DestinationLink(destination: destination, showsCurrentMonth: showsCurrentMonth) { _ in
+                tile
+            }
+            .buttonStyle(TilePressStyle())
         }
-        .buttonStyle(TilePressStyle())
     }
 
     private var tile: some View {

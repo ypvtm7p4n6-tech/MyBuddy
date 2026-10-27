@@ -1,56 +1,7 @@
 import SwiftUI
 
-// Indelingen van het ontwerpsysteem: even grote blokken, rijen met tegels en rijen met een label en een bedrag.
+// Indelingen van het ontwerpsysteem: rijen met tegels en rijen met een label en een bedrag.
 // Alles hier stapelt bij toegankelijkheidsformaten van Dynamic Type en krimpt nooit tekst.
-
-// MARK: - Even grote blokken
-
-/// Legt blokken in kolommen. Elk blok is even breed én even hoog (zo hoog als het hoogste blok).
-/// Het aantal kolommen volgt de beschikbare breedte: één op een iPhone, meer op iPad en Mac.
-struct EqualSizeGrid: Layout {
-    var minimumColumnWidth: CGFloat = 340
-    var spacing: CGFloat = Theme.pageSpacing
-
-    private func columns(for width: CGFloat, items: Int) -> Int {
-        guard items > 0 else { return 1 }
-        let fit = SafeInt.clamped(Double(((width + spacing) / (minimumColumnWidth + spacing)).rounded(.down)), to: 1...64)
-        return max(1, min(items, fit))
-    }
-
-    private func usableWidth(_ proposal: ProposedViewSize) -> CGFloat {
-        guard let w = proposal.width, w.isFinite, w > 0 else { return minimumColumnWidth }
-        return w
-    }
-
-    private func cellSize(width: CGFloat, subviews: Subviews) -> (columns: Int, cellWidth: CGFloat, cellHeight: CGFloat) {
-        let cols = columns(for: width, items: subviews.count)
-        let cellWidth = (width - spacing * CGFloat(cols - 1)) / CGFloat(cols)
-        let tallest = subviews
-            .map { $0.sizeThatFits(ProposedViewSize(width: cellWidth, height: nil)).height }
-            .max() ?? 0
-        return (cols, cellWidth, tallest)
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = usableWidth(proposal)
-        let cell = cellSize(width: width, subviews: subviews)
-        let rows = Int((Double(subviews.count) / Double(cell.columns)).rounded(.up))
-        let height = CGFloat(rows) * cell.cellHeight + CGFloat(max(0, rows - 1)) * spacing
-        return CGSize(width: width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let cell = cellSize(width: bounds.width, subviews: subviews)
-        for (index, subview) in subviews.enumerated() {
-            let row = index / cell.columns
-            let column = index % cell.columns
-            let origin = CGPoint(x: bounds.minX + CGFloat(column) * (cell.cellWidth + spacing),
-                                 y: bounds.minY + CGFloat(row) * (cell.cellHeight + spacing))
-            subview.place(at: origin, anchor: .topLeading,
-                          proposal: ProposedViewSize(width: cell.cellWidth, height: cell.cellHeight))
-        }
-    }
-}
 
 // MARK: - Tegels naast elkaar
 

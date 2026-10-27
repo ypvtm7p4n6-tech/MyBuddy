@@ -1,7 +1,7 @@
 import SwiftUI
 
 // De hero van Home: drie grote kaarten in een carrousel (Nog te verdelen, Vermogen, Saldo vandaag). Alle bedragen komen uit
-// dezelfde bronnen als de oude kaarten van Home: `MonthBoard` (en daarmee `MonthFigures`), `netWorth(at:current:)` met
+// dezelfde bronnen als de kaarten van Home van vóór ontwerp 2: `MonthBoard` (en daarmee `MonthFigures`), `netWorth(at:current:)` met
 // `NetWorthTrend`, en het banksaldo van vandaag met de dagboekhouding (`LedgerBook`, `UpcomingDaysWindow`). De kaarten zijn geen
 // links: de pillen leiden naar de pagina's. De achtergrond van Home volgt de zichtbare kaart (`HomeTab`).
 
@@ -19,14 +19,14 @@ struct HomeHeroSection: View {
     }
 }
 
-/// De kaart bij een hero-id, bovenaan uitgelijnd: de kaarten zijn niet even hoog, dus de kortere staat niet in het midden.
+/// De kaart bij een hero-id. De kaarten zijn even hoog als de hoogste (`HeroCard` vult de hoogte van de rij en zet de pillen
+/// onderaan), ook in de carrousel en naast elkaar.
 private struct HomeHeroCard: View {
     let id: String
     let present: HomePresent
 
     var body: some View {
         card
-            .frame(maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder

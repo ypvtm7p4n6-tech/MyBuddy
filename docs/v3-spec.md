@@ -4,6 +4,13 @@ Dit document is het gedeelde contract voor alle bouwers. Wie een bestand "bezit"
 Alle andere bestanden alleen lezen. Moet je iets in een bestand van een ander veranderen: zet het
 onder **WIRING** in je eindrapport.
 
+**Stand na ontwerp 2 (Apple Muziek en Apple TV).** De rekenmotor, de modelvelden en de afspraken over bedragen en tests hieronder
+gelden ongewijzigd. De schermen zijn vervangen: drie tabs (Home, Bibliotheek, Zoeken), Instellingen achter een profielknop, planken en
+albumpagina's in plaats van blokken met glas. De paragrafen "Blokken en pagina's (UI)" en "Blokken verplaatsen" beschrijven de huidige
+stand (blok-id's, bestemmingen, termen); de opbouw van het ontwerpsysteem staat in `system_architecture.md` en alle besluiten in
+`docs/design2/plan.md`. De tabel "Eigendom per bouwer" is die van de v3-bouw en alleen nog historisch: het eigendom van ontwerp 2 staat in
+`docs/design2/plan.md` (blok "Eigendom per golf", gecontroleerd door `docs/design2/own-check.sh`).
+
 ## Algemene afspraken
 
 - Alle tekst in de UI is Nederlands, "je"-vorm, kort. Code-commentaar Nederlands, zoals in de rest van de app.
@@ -12,10 +19,12 @@ onder **WIRING** in je eindrapport.
 - **Bedragen worden altijd afgerond getoond**: `Fmt.euro(x)` (= hele euro's). Alleen eenheidsprijzen waar centen
   ertoe doen (uurloon, koers, rente-uitkomst onder 10 euro) gebruiken `Fmt.euroExact(x)`. Percentages: `Fmt.percent(x)` (max 1 decimaal).
   Rekenwaarden in Core blijven op centen (`.cents`); afronden is een weergaveregel. Invulvelden mogen wel decimalen tonen.
-- Elke nieuwe pagina: `PageScaffold(title:)`, blokken met `GlassBlock`/`LinkedBlock`, knoppen met `ChipButton`/`ChipLink`/`ChipGrid`
-  (allemaal even hoog: `Theme.buttonHeight`), tegels met `.tile()`/`StatTile`. Kijk naar bestaande pagina's voor de stijl.
-- Animaties: gebruik `.smooth`/`.snappy` (kort, 0.25-0.35s). Bedragen krijgen `.contentTransition(.numericText())` en
-  een `.animation(.smooth, value:)` op de waarde; lijsten/blokken `withAnimation(.smooth)` bij toevoegen/verwijderen.
+- Elke nieuwe pagina: `PageScaffold(title:)` (kaarten) of `ListScaffold(title:)` (lijst), kaarten met `Card`/`LinkCard`, knoppen in de
+  inhoud met `PillButton`/`PillLink` of `ActionButton`/`ActionLink` (minimaal `Theme.minTapTarget` hoog), tegels met `.tile()`/`StatTile`,
+  lijstrijen met `MediaRow`/`MediaRowLabel`. Een pagina die in de Bibliotheek of Zoeken moet staan krijgt een regel in `PageCatalog`.
+  Kijk naar bestaande pagina's voor de stijl en naar `system_architecture.md` ("Ontwerpsysteem v2").
+- Animaties: gebruik `Theme.motion`/`Theme.quickMotion` (`.smooth`/`.snappy`, kort, 0.25-0.35s) via `.animated(by:)`, dat Verlaag
+  beweging respecteert. Bedragen krijgen `.contentTransition(.numericText())`; lijsten/blokken animeren bij toevoegen/verwijderen.
   Geen harde sprongen, geen animatie op elke frame van een slider-drag.
 - Elk nieuw `Codable` veld: `decodeIfPresent` met standaardwaarde (oude bestanden moeten blijven laden).
 - Tests: elke Core-wijziging krijgt XCTest-tests in `CoreTests/Tests/MyBuddyCoreTests/`. Verwachte waarden onafhankelijk
@@ -35,8 +44,11 @@ P=/tmp/claude-0/-home-user-MyBuddy/9beb118c-8e88-5a84-a4b5-426733aaf64d/scratchp
 $P/venv/bin/python $P/check_swift.py App/Pages/<bestand>.swift
 ```
 Let extra op de bekende valkuilen: tuple-destructuring in `ForEach` (gebruik Identifiable structs), `if` binnen
-`AxisContentBuilder` (gebruik `.chartAxes(shown:)`), schaduwende namen in initializers, `@Bindable` voor `@Observable` bindings,
-`private` properties die buiten het type gebruikt worden, ontbrekende `import Charts`.
+`AxisContentBuilder` (grafieken staan in `Charts.swift`; schrijf geen eigen assen), schaduwende namen in initializers, `@Bindable` voor
+`@Observable` bindings, `private` properties die buiten het type gebruikt worden, ontbrekende `import Charts`, iOS 26-API's buiten
+`#available`, alleen-iOS-API's buiten `#if os(iOS)`.
+De hele app (ook de SwiftUI-laag) controleer je met de nagebootste typecheck `/tmp/ctl-all/run-all.sh` (0 fouten vereist); die vervangt
+Xcode niet.
 
 ## Nieuwe modelvelden (staan al in `Models.swift`, niet hernoemen)
 
@@ -46,7 +58,9 @@ Let extra op de bekende valkuilen: tuple-destructuring in `ForEach` (gebruik Ide
 - `MonthPlan.transferDay: Int?`: overschrijfdag voor de hele maandverdeling. Volgorde: `plan.transferDay ?? pot/holding.transferDay ?? payDay`.
 - `Pot.interestRate` (breuk per jaar), `interestPayout` (`InterestPayout`), `interestPayoutDay`, `interestPayoutMonth`, `Pot.transferDay`, `Holding.transferDay`.
 - `PotEntryKind.interest` ("Rente") en `.expense` ("Uitgave betaald").
-- `AppSettings.blockOrder: [String: [String]]`: eigen blokvolgorde per pagina ("home", "savings", "tools").
+- `AppSettings.blockOrder: [String: [String]]`: eigen blokvolgorde per pagina. Sinds ontwerp 2 leest alleen `"overview"` (Home) een
+  volgorde; de sleutels `home`, `savings`, `tools` (v3) en `month`, `saving`, `planning` (ontwerp 1) blijven ongemoeid in de gegevens en
+  worden bij het lezen omgezet (`BlockOrderMigration`, alleen lezen).
 - `FinanceData.appliedAccelerators: [AppliedAccelerator]` (met `AcceleratorBackup`) en `FinanceData.modifiedAt`.
 - `AppStore`: `today`, `onDataChanged`, `applyRemote(_:)`; `mutate` zet `modifiedAt` en slaat niets op als er niets veranderde.
 
@@ -123,23 +137,44 @@ func nextInterestPayment(for potID: UUID, asOf today: Date = Date()) -> Interest
 
 ## Blokken en pagina's (UI)
 
-Tabs: **Home**, **Savings**, **Tools** (`AppTab.tools`, pad `router.toolsPath`).
+Tabs (`AppTab`): **Home**, **Bibliotheek** en **Zoeken**. Instellingen is geen tab: de profielknop rechtsboven op de drie wortels opent de
+pagina `.settingsRoot` op de stapel van de tab (iPhone en iPad); op de Mac is het het `Settings`-venster. Elke tab heeft een eigen
+`NavigationStack` met het pad `router.paths[tab]`; een pagina opent op de stapel waar je bent (`router.open`).
 
-- **Home**: Nog te verdelen (header), blokken Overzicht, Spaarpotten, Beleggingen (alle drie even groot, zoals nu).
-- **Savings**: periodekeuze + blokken: Overzicht (`PeriodBlock`), Inkomen (`IncomeBlock`), Bankrekening (`BankBlock`),
-  Verdelen (`DistributeBlock`), Spaarpotten (`PotsSummaryBlock`), Buffer (`BufferBlock`),
-  **Beleggingen** (de oude "Portefeuille", `PortfolioBlock`, titel "Beleggingen", opent `.portfolio`),
-  **Doelen** (`GoalsHubBlock`, één blok dat spaardoelen en levensdoelen samenvoegt, opent `.goals`).
-- **Tools**: Versnellers (`AcceleratorsBlock`), Toekomstschatting (`ProjectionBlock`), Aankoopcheck (`PurchaseBlock`, opent `.purchase`).
-- Destinations: bestaande + `.purchase` (`PurchasePage`) en `.cashflow` (`CashflowPage`, dag voor dag). `.savingsGoal` blijft bereikbaar vanuit de doelenpagina.
-- Blok-id's voor de volgorde (`AppSettings.blockOrder`): home: `overview`, `pots`, `invest`; savings: `period`, `income`, `bank`, `distribute`, `pots`, `buffer`, `portfolio`, `goals`; tools: `accelerators`, `projection`, `purchase`.
+- **Home**: de hero (drie kaarten: Nog te verdelen, Vermogen, Saldo vandaag; geen blok, vast bovenaan) en vijf planken in de volgorde van
+  de gebruiker: Komende dagen, Spaarpotten, Beleggingen, Doelen, Hulpmiddelen. Zonder gegevens een welkomstkaart met "Salaris instellen"
+  en "Voorbeelddata laden".
+- **Bibliotheek**: 13 rijen in drie groepen, daarna Recent. Deze maand: Maandoverzicht, Inkomen, Uitgaven, Verdelen, Bankrekening, Dag voor
+  dag. Sparen en beleggen: Spaarpotten, Beleggingen. Plannen: Doelen, Noodbuffer, Versnellers, Toekomstschatting, Aankoopcheck.
+- **Zoeken**: tien bladertegels (Inkomen, Uitgaven, Verdelen, Bankrekening, Dag voor dag, Spaarpotten, Beleggingen, Doelen, Hulpmiddelen,
+  Instellingen), of resultaten per groep.
+- Albumpagina's: spaarpot, belegging en doel (`AlbumHeader` als eerste rij van de lijst).
+
+**Bestemmingen** (`enum Destination`, de tabel met titel, symbool, tint en groep is `PageCatalog`): `home`, `library` (alleen wortels),
+`flow` (Maandoverzicht), `income`, `salary`, `expenses`, `distribute`, `bank`, `cashflow` (Dag voor dag), `pots`, `pot(id)`, `portfolio`,
+`holding(id)`, `goals`, `goal(id)`, `savingsGoal` (vanaf Doelen), `accelerators`, `buffer`, `projection`, `purchase`, `tools` (Hulpmiddelen),
+`settingsRoot`, `settings(SettingsPage)`. Een bestemming zonder rij in de Bibliotheek is bereikbaar via zijn ouder (`Destination.parents`,
+`PageInfo.reachableFrom`). Maandpagina's (`flow`, `income`, `expenses`, `distribute`, `bank`, `cashflow`) openen vanaf Home, de Bibliotheek en
+Zoeken op de huidige maand (`showsCurrentMonth`); daarna bladert de maandbalk.
+
+**Blok-id's voor de volgorde** (`AppSettings.blockOrder`, alleen sleutel `overview` = Home): `upcoming` (Komende dagen), `pots`
+(Spaarpotten), `invest` (Beleggingen), `goals` (Doelen), `tools` (Hulpmiddelen). Het id `wealth` uit een eerdere ronde is hero 2 en wordt
+bij het lezen overgeslagen. Oude pagina's, nu alleen nog sleutels in de opgeslagen gegevens: `home`: `overview`, `pots`, `invest`;
+`savings`: `period`, `income`, `bank`, `distribute`, `pots`, `buffer`, `portfolio`, `goals`; `tools`: `accelerators`, `projection`,
+`purchase`; `month`: `flow`, `income`, `expenses`, `distribute`, `bank`, `days`; `saving`: `pots`, `portfolio`; `planning`: `goals`,
+`buffer`, `accelerators`, `projection`, `purchase`.
+
+**Termen** (een woord per begrip): tabs **Home**, **Bibliotheek**, **Zoeken**; "Toon alles" (met het label van de plank, bijvoorbeeld "Toon
+alle spaarpotten"), **Maandoverzicht**, **Hulpmiddelen**, **Recent**, **Blader**; groepskoppen "Deze maand", "Sparen en beleggen", "Plannen".
+"Kies potten voor Home…", "Kies beleggingen voor Home…", bladen "Spaarpotten op Home" en "Beleggingen op Home". Verboden: "Overzicht" als
+pagina- of tabnaam (`Importoverzicht` mag), "Savings", "Tools", "Portefeuille".
 
 ### Blokken verplaatsen
-Niet zichtbaar als knop. Lang indrukken op een blok (contextmenu): "Volgorde aanpassen…" opent een sheet met een lijst
-(`.onMove`, bewerkmodus altijd aan) + "Klaar" en "Standaardvolgorde". Opslaan in `AppSettings.blockOrder`. Home houdt de
-drie blokken even groot.
+Niet zichtbaar als knop. Lang indrukken op een plankkop op Home (contextmenu): "Volgorde aanpassen…" opent een sheet met een lijst
+(`.onMove`, bewerkmodus altijd aan) + "Klaar" en "Standaardvolgorde"; dezelfde lijst staat in Instellingen, Indeling. Opslaan in
+`AppSettings.blockOrder["overview"]`. Alleen Home heeft een volgorde; hero en Bibliotheek staan vast.
 
-## Eigendom per bouwer
+## Eigendom per bouwer (v3-bouw, historisch)
 
 | Bouwer | Bezit |
 |---|---|

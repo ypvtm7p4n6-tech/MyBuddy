@@ -2,6 +2,8 @@
 
 Peildatum 23 oktober 2026, basis `HEAD` 1b98404. Uitvoerbaar bouwplan voor "verander het design opnieuw waardoor de app simpeler wordt, een combinatie van Apple Muziek en Apple TV", daarna "build". Bronnen: de code, `docs/design/plan.md`, het onderzoek `docs/design2/patterns.md` en eigen proeven tegen de typecontrole (2.2). Er is niets in `App/` of `CoreTests/` aangepast.
 
+**Stand na pakket 3 (27 oktober 2026).** Alle drie golven zijn uitgevoerd: de oude tabroots (`Pages/Tabs/`), `LegacyTabNames.swift`, de oude kaarten en tegels (`HomePotsCard`, `HomeHoldingsCard`, `UpcomingDaysCard`, `FavoriteTileGrid` en tegels, elke `*SummaryCard` van de oude tabs, `SavingSupport.swift`, `EqualSizeGrid`) en alle compat (`BlockPage.month/.saving/.planning/.home/.savings/.tools`, `blockOrderToolbar`, `OrderedBlocks`, `GlassBlock`, `LinkedBlock`, `Chip*`, `ProgressRing`, `ProgressBar`, `SegmentBar`, `MeshBackground`, `glassCard`, `glassButton`, `Theme.olive*`, `Theme.flow*`, `Theme.buttonHeight`, `PeriodControl`, `searchToolbarButton`, `showsSettings`, `TimeLineChart`, `FlowChart`, `AllocationDonut`, `TimePoint`, `chartAxes`) zijn verwijderd; de migratie van oude opgeslagen sleutels bleef. `TabNote`, `TabWarning` en `OverviewCheckBanner` hoefden niet te verhuizen: Home heeft eigen onderdelen en niemand las ze meer. Vier WIRING-punten van de bouwers zijn afgehandeld: `HeroCard` heeft gelijke hoogte (`maxHeight: .infinity` en een `Spacer`), `Shelf(showAllShowsCurrentMonth:)` laat "Toon alle dagen" op de huidige maand openen, `BrowseTile(showsCurrentMonth:opensViaRouter:)` en `SearchTab` openen maandtegels op de huidige maand en Instellingen via `router.open` (op de Mac het `Settings`-venster), en een zoekresultaat van een maandpagina opent ook op de huidige maand. **Eerlijk over de verificatie:** er is geen Xcode-build gedraaid en de macOS-CI is niet gestart; de enige compilercontrole is de nagebootste typecheck (0 fouten), zie `README.md`, "Verificatie".
+
 **Gezag.** Dit plan vervangt `docs/design/plan.md` voor tabstructuur (2.1 t/m 2.7), Instellingen als tab (K2, K3), kaartenpagina's per tab, 4.4 A, 4.5, werkpakketten en eigendom (6). Bindend blijft: kleuren en tokens (4.1, 4.2), gedragsregels 4.6, grafieken (5), Instellingen en Account (3.2 t/m 3.6), de termenlijst 2.8 (aangevuld in 1.6), `hig-notes.md`. **Lezen:** 0 besluiten, 1 architectuur en oud naar nieuw (1.5), 2 contract, 3 pagina's, 4 pakketten en eigendom, 5 verificatie, 6 risico's.
 
 ## 0. Besluiten (bindend; geen vragen)
@@ -288,7 +290,8 @@ struct PosterCard: View {    // tegel, titel (2 regels), ondertitel, waarde; bre
 struct ShelfCard<Content: View>: View {   // tekst- of brede kaart: hue nil = Theme.card, anders GradientSurface; radius 16
     init(hue: TileHue? = nil, destination: Destination? = nil, showsCurrentMonth: Bool = false, @ViewBuilder content: () -> Content) }
 struct BrowseTile: View {    // Zoeken: minimaal 96 pt hoog, radius 16, titel linksonder .headline, decoratief symbool rechtsboven
-    init(title: String, symbol: String, hue: TileHue, destination: Destination) }
+    init(title: String, symbol: String, hue: TileHue, destination: Destination,
+         showsCurrentMonth: Bool = false, opensViaRouter: Bool = false) }   // opensViaRouter: Button { router.open } (Instellingen op de Mac = Settings-venster)
 struct TilePressStyle: ButtonStyle {}   // dekking 0,7; schaal 0,98 behalve bij Verlaag beweging
 
 // Shelf.swift
@@ -296,6 +299,7 @@ struct ShelfAction: Identifiable { let id = UUID(); let title: String; let symbo
     init(_ title: String, symbol: String, role: ButtonRole? = nil, action: @escaping () -> Void) }
 struct Shelf<Item: Identifiable, Tile: View>: View {
     init(_ title: String, subtitle: String? = nil, showAll: Destination? = nil, showAllLabel: String? = nil,
+         showAllShowsCurrentMonth: Bool = false,
          actions: [ShelfAction] = [], orderID: String? = nil, wide: Bool = false,
          items: [Item], @ViewBuilder tile: @escaping (Item) -> Tile) }
 // Kop: titel .title2.weight(.semibold) (isHeader), subtitel .subheadline, rechts "Toon alles" (label showAllLabel) en bij actions een "…"-menu (IconButton "Meer"); orderID geeft de kop .blockOrderMenu(page: .overview, id:).
@@ -306,7 +310,7 @@ struct Shelf<Item: Identifiable, Tile: View>: View {
 struct HeroCarousel<Card: View>: View { init(ids: [String], selection: Binding<String?>? = nil, @ViewBuilder card: @escaping (String) -> Card) }
 // < 860 pt (onGeometryChange): ScrollView(.horizontal), kaart .containerRelativeFrame { ShelfMetrics.heroWidth }, viewAligned, scrollPosition(id:); stippen eronder als Buttons
 // (raakdoel Theme.minTapTarget, label "Pagina n van m") plus acties "Volgende pagina" en "Vorige pagina". >= 860 pt: drie kaarten naast elkaar zonder stippen. Toegankelijkheidsformaat: onder elkaar.
-struct HeroCard<Content: View, Pills: View>: View {   // GradientSurface radius heroRadius, minimaal 168 pt (schaalt), padding 20, eyebrow .subheadline.weight(.semibold) in onTileSecondary
+struct HeroCard<Content: View, Pills: View>: View {   // GradientSurface radius heroRadius, minimaal 168 pt (schaalt), maxHeight .infinity (even hoog als de hoogste), pillen onderaan, padding 20, eyebrow .subheadline.weight(.semibold) in onTileSecondary
     init(hue: TileHue, eyebrow: String, symbol: String, @ViewBuilder content: () -> Content, @ViewBuilder pills: () -> Pills) }
 extension HeroCard where Pills == EmptyView { init(hue: TileHue, eyebrow: String, symbol: String, @ViewBuilder content: () -> Content) }
 extension View { func heroPanel() -> some View }   // zwart op 22%, radius 16, padding 12, .environment(\.colorScheme, .dark): grafiek in een hero of tegel
@@ -408,7 +412,9 @@ Doelen als `MediaRowLabel`-lijst en Doel als album (par. 3); controleer elke pag
 
 <!-- EIGENDOM-BEGIN -->
 ```text
-# pad (meest specifiek wint) | golf1 | golf2 | golf3   ("-" = niemand)
+# pad (meest specifiek wint) | golf1 | golf2 | golf3   ("-" = niemand, "C" = de coördinator)
+# Verwijderd in pakket 3 (dus zonder regel): App/Pages/Tabs/, App/Navigation/LegacyTabNames.swift, App/Pages/Saving/FavoriteCards.swift,
+# App/Pages/Saving/FavoriteTiles.swift, App/Pages/Saving/SavingSupport.swift en App/Pages/Bank/UpcomingDays.swift.
 App/ - - 3
 App/UI/ 1 - 3
 App/UI/CashflowDisplay.swift - 2A 3
@@ -422,16 +428,12 @@ App/MyBuddyApp.swift 1 - 3
 App/Debug/ 1 - 3
 App/Pages/ - 2D 3
 App/Pages/DestinationView.swift 1 - 3
-App/Pages/Tabs/ - - 3
 App/Pages/Home/ 1 2A 3
 App/Pages/Library/ 1 2B 3
 App/Pages/Search/ 1 2B 3
 App/Pages/ToolsPage.swift 1 2B 3
 App/Pages/Month/FlowPage.swift 1 2B 3
-App/Pages/Bank/UpcomingDays.swift - - 3
 App/Pages/Saving/ - 2C 3
-App/Pages/Saving/FavoriteCards.swift - - 3
-App/Pages/Saving/FavoriteTiles.swift - - 3
 App/Pages/PotPages.swift - 2C 3
 App/Pages/PortfolioPages.swift - 2C 3
 CoreTests/ 1 - 3
@@ -442,6 +444,7 @@ CoreTests/Tests/MyBuddyCoreTests/SavingAlbumTextTests.swift - 2C 3
 scripts/ 1 - 3
 docs/design/ 1 - 3
 docs/design2/ 1 - 3
+docs/design2/plan.md C C 3
 ```
 <!-- EIGENDOM-EINDE -->
 

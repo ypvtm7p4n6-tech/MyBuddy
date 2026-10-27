@@ -8,6 +8,7 @@ import SwiftUI
 /// De wortel van de tab Zoeken: het zoekveld van het systeem met daaronder de bladertegels of de resultaten.
 struct SearchTab: View {
     @Environment(Router.self) private var router
+    @Environment(AppStore.self) private var store
     @State private var query = ""
     @State private var isSearching = false
     /// Het laatste verzoek van Cmd+F dat het zoekveld al heeft geopend. De tab kan pas na het verzoek bestaan.
@@ -36,11 +37,15 @@ struct SearchTab: View {
     }
 
     /// Een resultaat opent op de stapel van deze tab, dus terug brengt je bij de resultaten. De wortels van Home en de Bibliotheek
-    /// selecteren hun tab, en Instellingen opent met zijn ouders (op de Mac in het `Settings`-venster).
+    /// selecteren hun tab, en Instellingen opent met zijn ouders (op de Mac in het `Settings`-venster). Een maandpagina opent op
+    /// de huidige maand, zoals de bladertegel (B8).
     private func open(_ entry: SearchEntry) {
         if entry.destination.isTabRoot || entry.group == .settings {
             router.go(entry.destination)
         } else {
+            if PageCatalog.info(entry.destination)?.section == .month {
+                router.showCurrentMonth(store.now)
+            }
             router.open(entry.destination)
         }
     }
@@ -78,7 +83,9 @@ struct SearchBrowseGrid: View {
                 .accessibilityAddTraits(.isHeader)
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(PageCatalog.browsePages) { info in
-                    BrowseTile(title: info.title, symbol: info.symbol, hue: info.hue, destination: info.destination)
+                    // Een maandpagina opent op de huidige maand; Instellingen opent via de router (op de Mac het Settings-venster).
+                    BrowseTile(title: info.title, symbol: info.symbol, hue: info.hue, destination: info.destination,
+                               showsCurrentMonth: info.section == .month, opensViaRouter: info.destination == .settingsRoot)
                 }
             }
         }

@@ -89,7 +89,8 @@ struct HomeUpcomingShelf: View {
         let hasBalance = d.hasBankBalanceNow(current: store.now, today: today)
         let items = HomeUpcomingItem.items(busy: busy, hasBalance: hasBalance)
         Shelf("Komende dagen", subtitle: subtitle(window: window, busy: busy), showAll: .cashflow,
-              showAllLabel: "Toon alle dagen", orderID: "upcoming", wide: true, items: items) { item in
+              showAllLabel: "Toon alle dagen", showAllShowsCurrentMonth: true, orderID: "upcoming", wide: true,
+              items: items) { item in
             HomeUpcomingTile(item: item, present: present)
         }
     }

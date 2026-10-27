@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Gedeelde onderdelen van Home (pakket 2A): de bladen die Home opent, de kaarten van de hero, de paginamarge en het
+// Gedeelde onderdelen van Home: de bladen die Home opent, de kaarten van de hero, de paginamarge en het
 // contextmenu van een tegel. Alle gegevens komen uit dezelfde bronnen als de oude kaarten van Home; hier wordt niets
 // zelf uitgerekend.
 

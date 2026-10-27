@@ -1,26 +1,9 @@
 import SwiftUI
 
 // Alle spaarpotten (lijstpagina): een rij per pot met een tegel in de kleur van de pot. De pagina van één spaarpot (de albumpagina)
-// staat in Saving/PotDetailPage.swift, de bladen in Saving/PotSheets.swift en de kaarten voor Home in Saving/FavoriteCards.swift.
+// staat in Saving/PotDetailPage.swift, de bladen in Saving/PotSheets.swift en de keuzebladen voor Home in Saving/FavoriteSheets.swift.
 // De teksten en cijfers rond rente (zonder SwiftUI: `PotFormat`, `PotInterestStats`, `PotHistoryContext`) staan in
 // App/UI/PotDisplay.swift, zodat de tests in CoreTests ze meecompileren.
-
-/// Klein label "2% rente" voor potten met rente.
-struct PotInterestBadge: View {
-    let rate: Double
-
-    var body: some View {
-        Text("\(Fmt.percent(rate, digits: 2)) rente")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(Theme.positive)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Theme.positive.opacity(0.16), in: Capsule())
-            .accessibilityLabel("Rente \(Fmt.percent(rate, digits: 2)) per jaar")
-    }
-}
 
 // MARK: - Een spaarpot verwijderen
 

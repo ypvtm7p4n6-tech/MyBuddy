@@ -164,16 +164,30 @@ struct HeroCard<Content: View, Pills: View>: View {
 
     var body: some View {
         GradientSurface(hue: hue, radius: Theme.heroRadius) {
-            VStack(alignment: .leading, spacing: 12) {
-                Label(eyebrow, systemImage: symbol)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.onTileSecondary)
-                    .accessibilityAddTraits(.isHeader)
-                content
-                pills
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label(eyebrow, systemImage: symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.onTileSecondary)
+                        .accessibilityAddTraits(.isHeader)
+                    content
+                }
+                // De pillen staan onderaan: naast elkaar in een rij of een carrousel krijgen alle kaarten de hoogte van de hoogste.
+                Spacer(minLength: 0)
+                pillsBlock
             }
             .padding(20)
-            .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: minHeight, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    /// De pillen met 12 punten ruimte erboven, of niets (en dus ook geen ruimte) zonder pillen.
+    @ViewBuilder
+    private var pillsBlock: some View {
+        if Pills.self == EmptyView.self {
+            EmptyView()
+        } else {
+            pills.padding(.top, 12)
         }
     }
 }

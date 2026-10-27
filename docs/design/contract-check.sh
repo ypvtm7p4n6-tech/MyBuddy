@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# VEROUDERD (ontwerp 1): niet meer draaien. Vervangen door docs/design2/contract-check.sh; zie docs/design2/plan.md par. 5.2.
 # Contractcontrole: bestaat elk symbool uit par. 4.4 van docs/design/plan.md, met de goede handtekening?
 # Gebruik: docs/design/contract-check.sh [0|1|alles|final]
 #   0     golf 0 (0A, 0B, F)           1     golf 1 (A, B1, B2, C, D, E)      alles  beide

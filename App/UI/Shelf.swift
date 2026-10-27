@@ -24,12 +24,15 @@ struct ShelfAction: Identifiable {
 /// Een plank: titel (een kop voor VoiceOver), eventueel een ondertitel, rechts "Toon alles" en een "…"-menu, en eronder de
 /// tegels. De tegel komt van de aanroeper (`PosterCard`, `ShelfCard`) en krijgt zijn breedte van de plank; met `wide` zijn het
 /// brede kaarten (twee tegelbreedtes plus de tussenruimte). Hoogstens acht tegels; meer staan achter "Toon alles". Met
-/// `orderID` krijgt de kop het contextmenu om de volgorde van de planken aan te passen (lang indrukken).
+/// `orderID` krijgt de kop het contextmenu om de volgorde van de planken aan te passen (lang indrukken). Met
+/// `showAllShowsCurrentMonth` opent "Toon alles" een maandpagina op de huidige maand (`router.showCurrentMonth`, B8), zoals
+/// `showsCurrentMonth` bij een tegel.
 struct Shelf<Item: Identifiable, Tile: View>: View {
     let title: String
     let subtitle: String?
     let showAll: Destination?
     let showAllLabel: String?
+    let showAllShowsCurrentMonth: Bool
     let actions: [ShelfAction]
     let orderID: String?
     let wide: Bool
@@ -39,12 +42,14 @@ struct Shelf<Item: Identifiable, Tile: View>: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     init(_ title: String, subtitle: String? = nil, showAll: Destination? = nil, showAllLabel: String? = nil,
+         showAllShowsCurrentMonth: Bool = false,
          actions: [ShelfAction] = [], orderID: String? = nil, wide: Bool = false,
          items: [Item], @ViewBuilder tile: @escaping (Item) -> Tile) {
         self.title = title
         self.subtitle = subtitle
         self.showAll = showAll
         self.showAllLabel = showAllLabel
+        self.showAllShowsCurrentMonth = showAllShowsCurrentMonth
         self.actions = actions
         self.orderID = orderID
         self.wide = wide
@@ -104,7 +109,7 @@ struct Shelf<Item: Identifiable, Tile: View>: View {
     @ViewBuilder
     private var showAllLink: some View {
         if let showAll {
-            DestinationLink(destination: showAll) { _ in
+            DestinationLink(destination: showAll, showsCurrentMonth: showAllShowsCurrentMonth) { _ in
                 Text("Toon alles")
                     .font(.subheadline)
                     .foregroundStyle(Theme.accent)

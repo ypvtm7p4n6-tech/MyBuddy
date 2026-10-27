@@ -2,7 +2,7 @@ import SwiftUI
 
 // Alle beleggingen (lijstpagina): Samenvatting, Groei, Verdeling en de beleggingen zelf, een rij per belegging met een tegel in de
 // kleur van de soort (Saving/HoldingRow.swift). De pagina van één belegging (de albumpagina) staat in
-// Saving/HoldingDetailPage.swift, de bladen in Saving/HoldingSheets.swift en de kaarten voor Home in Saving/FavoriteCards.swift.
+// Saving/HoldingDetailPage.swift, de bladen in Saving/HoldingSheets.swift en de keuzebladen voor Home in Saving/FavoriteSheets.swift.
 // De cijfers bovenaan (`PortfolioFigures`) en de teksten van het formulier (`HoldingForm`) staan zonder SwiftUI in
 // App/UI/PotDisplay.swift.
 

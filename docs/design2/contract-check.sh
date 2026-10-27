@@ -110,7 +110,7 @@ sig Router 'var settingsRequest: SettingsPage\?' 'Router.settingsRequest'
 sig Router 'var orderPage: BlockPage\?' 'Router.orderPage'
 sig TabStack 'init\(_ tab' 'TabStack(_ tab:)'
 sig ActiveSession 'func unregister\(store' 'ActiveSession.unregister(store:)'
-sig BlockPage 'static var allCases: \[BlockPage\] \{ \[\.overview\] \}' 'BlockPage.allCases == [.overview]'
+sig BlockPage '\s*case overview\s+var id: String' 'BlockPage heeft alleen .overview (allCases == [.overview])'
 sig BlockPage 'BlockInfo\(id: "upcoming"' 'BlockPage.overview: upcoming'
 sig BlockPage 'BlockInfo\(id: "tools"' 'BlockPage.overview: tools'
 
@@ -138,9 +138,11 @@ sig PosterCard 'init\(symbol: String, hue: TileHue, title: String, subtitle: Str
 sig PosterCard 'progress: Double\? = nil, progressLabel: String\? = nil, destination: Destination\? = nil,' 'PosterCard.init (vervolg)'
 sig PosterCard 'showsCurrentMonth: Bool = false, action: \(\(\) -> Void\)\? = nil\)' 'PosterCard.init (einde)'
 sig ShelfCard 'init\(hue: TileHue\? = nil, destination: Destination\? = nil, showsCurrentMonth: Bool = false,' 'ShelfCard.init'
-sig BrowseTile 'init\(title: String, symbol: String, hue: TileHue, destination: Destination\)' 'BrowseTile.init'
+sig BrowseTile 'init\(title: String, symbol: String, hue: TileHue, destination: Destination,' 'BrowseTile.init'
+sig BrowseTile 'showsCurrentMonth: Bool = false, opensViaRouter: Bool = false\)' 'BrowseTile.init (showsCurrentMonth, opensViaRouter)'
 sig ShelfAction 'init\(_ title: String, symbol: String, role: ButtonRole\? = nil, action: @escaping \(\) -> Void\)' 'ShelfAction.init'
 sig Shelf 'init\(_ title: String, subtitle: String\? = nil, showAll: Destination\? = nil, showAllLabel: String\? = nil,' 'Shelf.init'
+sig Shelf 'showAllShowsCurrentMonth: Bool = false,' 'Shelf.init (showAllShowsCurrentMonth)'
 sig Shelf 'actions: \[ShelfAction\] = \[\], orderID: String\? = nil, wide: Bool = false,' 'Shelf.init (vervolg)'
 sig Shelf 'items: \[Item\], @ViewBuilder tile: @escaping \(Item\) -> Tile\)' 'Shelf.init (einde)'
 sig HeroCarousel 'init\(ids: \[String\], selection: Binding<String\?>\? = nil, @ViewBuilder card: @escaping \(String\) -> Card\)' 'HeroCarousel.init'
@@ -191,11 +193,14 @@ fi
 # ---- Na pakket 3 ----
 if [ "$WAVE" = final ]; then
   absent 'homePath|savingsPath|toolsPath|showSettings' 'Router-compat of oude padnamen'
-  absent 'GlassBlock\(|LinkedBlock\(|Chip(Button|Link|Grid|Label)\(|MeshBackground' 'compat-componenten'
-  absent 'Theme\.(flow[A-Z]|olive|buttonHeight)' 'oude thematokens'
+  absent 'GlassBlock|LinkedBlock|Chip(Button|Link|Grid|Label)\b|MeshBackground|ProgressRing|ProgressBar|SegmentBar' 'compat-componenten'
+  absent 'Theme\.(flow[A-Z]|olive|buttonHeight|chipRadius)|static let (olive|flow[A-Z])|buttonHeight' 'oude thematokens'
   absent 'searchToolbarButton|PeriodControl|TabPressStyle|TabAmountLink' 'oude zoekknop en tabhulpen'
   absent 'static var (overview|month|saving|planning): AppTab' 'tijdelijke tabnamen (LegacyTabNames)'
-  absent 'case month, saving, planning|case home, savings, tools' 'BlockPage-compatcases'
+  absent 'case home, savings, tools|BlockPage\.(month|saving|planning|home|savings|tools)\b|isLegacy|OrderedBlocks|blockOrderToolbar' 'BlockPage-compatcases en blokvolgorde-compat'
+  absent '\b(HomePotsCard|HomeHoldingsCard|UpcomingDaysCard|FavoriteTileGrid|FavoritePotTile|FavoriteHoldingTile|FavoriteSlotTile|PotsSummaryCard|PortfolioSummaryCard|GoalsSummaryCard|BufferSummaryCard|AcceleratorsSummaryCard|ProjectionSummaryCard|PurchaseSummaryCard|EqualSizeGrid)\b' 'oude kaarten, tegels en hun raster'
+  absent '\b(OverviewTab|MonthTab|SavingTab|PlanningTab|OverviewHero|OverviewWealthCard|OverviewWelcome|OverviewCheckBanner|MonthFlowCard)\b' 'oude tabroots en hun kaarten'
+  absent 'TimeLineChart|FlowChart|AllocationDonut|TimePoint|chartAxes|glassCard|glassButton|showsSettings' 'oude grafiek- en glascompat'
   if [ -d App/Pages/Tabs ]; then echo "OVERGANGSVORM NOG AANWEZIG: App/Pages/Tabs"; MISSING=1; fi
 fi
 [ "$MISSING" = 0 ] && echo "CONTRACT COMPLEET" || { echo "CONTRACT ONVOLLEDIG"; exit 1; }

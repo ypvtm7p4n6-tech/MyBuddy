@@ -1,6 +1,17 @@
 #!/bin/bash
 # Maakt screenshots van alle schermen in de iOS Simulator (debug-modus met voorbeelddata).
 # Gebruik: scripts/ci-screenshots.sh [uitvoermap]
+#
+# De launch-argumenten staan in App/Debug/DebugLaunch.swift; dit script gebruikt alleen argumenten die daar bestaan:
+#   -mybuddy-demo              voorbeelddata
+#   -mybuddy-tab home|library|search      de tab (de oude namen overview, month, saving, planning, savings en tools werken nog als alias)
+#   -mybuddy-open <pagina>     opent een pagina op de stapel van de tab (flow, tools, income, bank, pot0, goal0, layout, ...)
+#   -mybuddy-hero 0|1|2        Home opent op hero-kaart 0, 1 of 2 (Nog te verdelen, Vermogen, Saldo vandaag)
+#   -mybuddy-settings          pusht Instellingen op de stapel van de tab
+#   -mybuddy-order home        opent het blad "Volgorde aanpassen" van Home
+#   -mybuddy-period year       de periode van de maandpagina's
+#   -mybuddy-scroll <punten>   schuift een pagina van kaarten (Home, Maandoverzicht, rekenpagina's) omhoog
+#   -mybuddy-scroll-to <kop>   scrolt een lijstpagina naar de sectie met die koptekst (alleen koppen die bestaan, niet de maandkop)
 set -euo pipefail
 
 OUT="${1:-screenshots}"
@@ -39,46 +50,57 @@ shoot_device() {
     sleep 3
     xcrun simctl io "$udid" screenshot "$OUT/${label}-${appearance}-${name}.png" >/dev/null
   }
-  # Tabs: home, savings, tools. Beleggingen en doelen staan onder Savings, de aankoopcheck onder Tools.
-  # Met -mybuddy-scroll zie je ook het onderste blok: de tabbalk mag daar niets van afdekken.
-  shot home -mybuddy-tab home
+
+  # De drie tabs. Home: de drie hero-kaarten (de achtergrond volgt de zichtbare kaart) en de planken eronder; met
+  # -mybuddy-scroll zie je ook de onderste plank, die de tabbalk niet mag afdekken.
+  shot home -mybuddy-tab home -mybuddy-hero 0
+  shot home-hero1 -mybuddy-tab home -mybuddy-hero 1
+  shot home-hero2 -mybuddy-tab home -mybuddy-hero 2
   shot home-2 -mybuddy-tab home -mybuddy-scroll 650
-  shot savings -mybuddy-tab savings
-  shot savings-2 -mybuddy-tab savings -mybuddy-scroll 650
-  shot savings-3 -mybuddy-tab savings -mybuddy-scroll 1300
-  shot savings-4 -mybuddy-tab savings -mybuddy-scroll 1950
-  shot tools -mybuddy-tab tools
-  shot tools-2 -mybuddy-tab tools -mybuddy-scroll 650
+  shot home-3 -mybuddy-tab home -mybuddy-scroll 1300
+  # Bibliotheek: de groepen "Sparen en beleggen", "Plannen" en "Recent" (de kop "Deze maand" heeft de maand in de naam).
+  shot library -mybuddy-tab library
+  shot library-saving -mybuddy-tab library -mybuddy-scroll-to "Sparen en beleggen"
+  shot library-planning -mybuddy-tab library -mybuddy-scroll-to "Plannen"
+  shot library-recent -mybuddy-tab library -mybuddy-scroll-to "Recent"
+  shot search -mybuddy-tab search
+
   if [ "$appearance" = "light" ]; then
-    shot savings-year -mybuddy-tab savings -mybuddy-period year
-    shot order-home -mybuddy-tab home -mybuddy-order home
-    shot order-savings -mybuddy-tab savings -mybuddy-order savings
-    shot order-tools -mybuddy-tab tools -mybuddy-order tools
-    shot overview -mybuddy-tab home -mybuddy-open overview
-    shot income -mybuddy-tab savings -mybuddy-open income
-    shot bank -mybuddy-tab savings -mybuddy-open bank
-    shot bank-2 -mybuddy-tab savings -mybuddy-open bank -mybuddy-scroll 700
-    shot bank-3 -mybuddy-tab savings -mybuddy-open bank -mybuddy-scroll 1400
-    shot cashflow -mybuddy-tab savings -mybuddy-open cashflow
-    shot cashflow-2 -mybuddy-tab savings -mybuddy-open cashflow -mybuddy-scroll 700
-    shot distribute -mybuddy-tab savings -mybuddy-open distribute
-    shot pots -mybuddy-tab savings -mybuddy-open pots
-    shot pot -mybuddy-tab savings -mybuddy-open pot0
-    shot pot-2 -mybuddy-tab savings -mybuddy-open pot0 -mybuddy-scroll 700
-    shot buffer -mybuddy-tab savings -mybuddy-open buffer
-    shot buffer-2 -mybuddy-tab savings -mybuddy-open buffer -mybuddy-scroll 700
-    shot portfolio -mybuddy-tab savings -mybuddy-open portfolio
-    shot holding -mybuddy-tab savings -mybuddy-open holding0
-    shot goals -mybuddy-tab savings -mybuddy-open goals
-    shot goal -mybuddy-tab savings -mybuddy-open goal0
-    shot goal-2 -mybuddy-tab savings -mybuddy-open goal0 -mybuddy-scroll 700
-    shot savingsgoal -mybuddy-tab savings -mybuddy-open savingsgoal
-    shot savingsgoal-2 -mybuddy-tab savings -mybuddy-open savingsgoal -mybuddy-scroll 700
-    shot projection -mybuddy-tab tools -mybuddy-open projection
-    shot accelerators -mybuddy-tab tools -mybuddy-open accelerators
-    shot purchase -mybuddy-tab tools -mybuddy-open purchase
-    shot purchase-2 -mybuddy-tab tools -mybuddy-open purchase -mybuddy-scroll 700
+    # Nieuwe pagina's en Instellingen als volle pagina achter de profielknop.
+    shot flow -mybuddy-tab library -mybuddy-open flow
+    shot flow-2 -mybuddy-tab library -mybuddy-open flow -mybuddy-scroll 650
+    shot flow-year -mybuddy-tab library -mybuddy-open flow -mybuddy-period year
+    shot tools -mybuddy-tab home -mybuddy-open tools
     shot settings -mybuddy-tab home -mybuddy-settings
+    shot settings-layout -mybuddy-tab home -mybuddy-open layout
+    shot order-home -mybuddy-tab home -mybuddy-order home
+    # Deze maand
+    shot income -mybuddy-tab library -mybuddy-open income
+    shot bank -mybuddy-tab library -mybuddy-open bank
+    shot bank-2 -mybuddy-tab library -mybuddy-open bank -mybuddy-scroll-to "Verwacht verloop"
+    shot bank-3 -mybuddy-tab library -mybuddy-open bank -mybuddy-scroll-to "Geschiedenis"
+    shot cashflow -mybuddy-tab library -mybuddy-open cashflow
+    shot cashflow-2 -mybuddy-tab library -mybuddy-open cashflow -mybuddy-scroll-to "Saldo per dag"
+    shot distribute -mybuddy-tab library -mybuddy-open distribute
+    # Sparen en beleggen: de lijsten en de albumpagina's
+    shot pots -mybuddy-tab library -mybuddy-open pots
+    shot pot -mybuddy-tab library -mybuddy-open pot0
+    shot pot-2 -mybuddy-tab library -mybuddy-open pot0 -mybuddy-scroll-to "Verloop"
+    shot portfolio -mybuddy-tab library -mybuddy-open portfolio
+    shot holding -mybuddy-tab library -mybuddy-open holding0
+    shot holding-2 -mybuddy-tab library -mybuddy-open holding0 -mybuddy-scroll-to "Waarde-updates"
+    # Plannen
+    shot goals -mybuddy-tab library -mybuddy-open goals
+    shot goal -mybuddy-tab library -mybuddy-open goal0
+    shot goal-2 -mybuddy-tab library -mybuddy-open goal0 -mybuddy-scroll 700
+    shot savingsgoal -mybuddy-tab library -mybuddy-open savingsgoal
+    shot savingsgoal-2 -mybuddy-tab library -mybuddy-open savingsgoal -mybuddy-scroll 700
+    shot buffer -mybuddy-tab library -mybuddy-open buffer
+    shot buffer-2 -mybuddy-tab library -mybuddy-open buffer -mybuddy-scroll 700
+    shot projection -mybuddy-tab library -mybuddy-open projection
+    shot accelerators -mybuddy-tab library -mybuddy-open accelerators
+    shot purchase -mybuddy-tab library -mybuddy-open purchase
+    shot purchase-2 -mybuddy-tab library -mybuddy-open purchase -mybuddy-scroll 700
   fi
 }
 
@@ -86,4 +108,5 @@ shoot_device "$IPHONE" iphone light
 shoot_device "$IPHONE" iphone dark
 shoot_device "$SMALL" small light
 shoot_device "$IPAD" ipad light
-ls -la "$OUT" | head -80
+shoot_device "$IPAD" ipad dark
+ls -la "$OUT" | head -120

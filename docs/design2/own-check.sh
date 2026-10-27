@@ -7,7 +7,7 @@
 #          docs/design2/own-check.sh --owner <pad> <golf>
 #            Wie is eigenaar van dit bestand in die golf? (voor het doorsturen van een CI-fout)
 # Het blok staat tussen <!-- EIGENDOM-BEGIN --> en <!-- EIGENDOM-EINDE --> in docs/design2/plan.md. Regel: "pad golf1 golf2 golf3",
-# "-" = niemand. Een pad dat op / eindigt geldt voor alles daaronder; de meest specifieke (langste) regel wint. Een pad zonder regel
+# "-" = niemand, "C" = de coördinator (het plan zelf). Een pad dat op / eindigt geldt voor alles daaronder; de meest specifieke (langste) regel wint. Een pad zonder regel
 # telt als "-" in golf 1 en 2 en als 3 in golf 3.
 exec python3 - "$@" <<'PY'
 import os, re, subprocess, sys
@@ -78,7 +78,7 @@ for f in sorted(changed):
 
 print(f"Eigendom golf {golf}, veranderd sinds {base}: {len(changed)} bestanden")
 for owner in sorted(per_owner):
-    label = "niemand (fout)" if owner == "-" else "pakket " + owner
+    label = "niemand (fout)" if owner == "-" else "de coördinator" if owner == "C" else "pakket " + owner
     print(f"  {label}: {len(per_owner[owner])} bestanden")
 for f in violations:
     print(f"FOUT: {f} heeft geen eigenaar in golf {golf}")
