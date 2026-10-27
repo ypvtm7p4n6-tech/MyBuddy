@@ -2,7 +2,7 @@
 import SwiftUI
 
 // Voorbeelden voor de Xcode-canvas (alleen in een debug-build): de lijsten en albumpagina's van Sparen (gevuld, donker, grote tekst,
-// breed en leeg), de kaarten voor Home en de bladen, met voorbeelddata, en de drie gemelde gevallen bij Beleggingen
+// breed en leeg) en de bladen, met voorbeelddata, en de drie gemelde gevallen bij Beleggingen
 // (`-mybuddy-demo-holding`): een belegging zonder waarde-updates.
 
 /// Maakt een winkel met voorbeelddata (en eventueel een belegging zonder waarde-updates, of juist helemaal leeg) en een router voor
@@ -48,20 +48,6 @@ private struct FirstHoldingPreview: View {
     var body: some View {
         if let holding = store.data.holdings.first {
             HoldingDetailPage(holdingID: holding.id)
-        }
-    }
-}
-
-/// De vier kaarten onder elkaar, zoals ze nu nog op Home en bij Sparen staan (pakket 3 ruimt ze op).
-private struct SavingCardsPreview: View {
-    var body: some View {
-        PageScaffold(title: "Sparen", large: true) {
-            VStack(spacing: Theme.pageSpacing) {
-                HomePotsCard()
-                HomeHoldingsCard()
-                PotsSummaryCard()
-                PortfolioSummaryCard()
-            }
         }
     }
 }
@@ -148,20 +134,6 @@ private struct SavingCardsPreview: View {
     SavingPreviewHost(isEmpty: true) { HoldingDetailPage(holdingID: UUID()) }
 }
 
-#Preview("Kaarten") {
-    SavingPreviewHost { SavingCardsPreview() }
-}
-
-#Preview("Kaarten, donker") {
-    SavingPreviewHost { SavingCardsPreview() }
-        .preferredColorScheme(.dark)
-}
-
-#Preview("Kaarten, grote tekst") {
-    SavingPreviewHost { SavingCardsPreview() }
-        .dynamicTypeSize(.accessibility3)
-}
-
 #Preview("Beleggingen, alleen ingelegd") {
     SavingPreviewHost(scenario: .onlyInvested) { PortfolioPage() }
 }
@@ -176,10 +148,6 @@ private struct SavingCardsPreview: View {
 
 #Preview("Beleggingen, gevolgd zonder koers") {
     SavingPreviewHost(scenario: .trackedOffline) { PortfolioPage() }
-}
-
-#Preview("Kaarten, alleen ingelegd") {
-    SavingPreviewHost(scenario: .onlyInvested) { SavingCardsPreview() }
 }
 
 #Preview("Belegging toevoegen") {

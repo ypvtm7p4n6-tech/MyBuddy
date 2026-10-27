@@ -36,64 +36,6 @@ extension PurchaseNoteKind {
     }
 }
 
-// MARK: - De oude kaart Aankoopcheck (tot de opruiming van pakket 3)
-
-/// Korte uitleg en je uurloon. Toont nooit wat iets kost. Een tik opent de pagina.
-struct PurchaseSummaryCard: View {
-    @Environment(AuthStore.self) private var auth
-    @Environment(\.cloudAccount) private var cloud
-
-    var body: some View {
-        // Dezelfde account-id als de Noodbuffer en het spaardoel (zie `accountPrefsID`).
-        let account = accountPrefsID(auth: auth, cloud: cloud)
-        PurchaseSummaryCardContent(key: AccountPrefs.key(PurchaseCalc.wageStorageKey, account: account))
-    }
-}
-
-private struct PurchaseSummaryCardContent: View {
-    @Environment(AppStore.self) private var store
-    @AppStorage private var manualWage: Double
-
-    init(key: String) {
-        _manualWage = AppStorage(wrappedValue: 0, key)
-    }
-
-    var body: some View {
-        let wage = PurchaseCalc.resolvedWage(manual: manualWage, data: store.data)
-        LinkCard(title: "Aankoopcheck", symbol: "cart", domain: .tools, subtitle: "Is het je werkuren waard?",
-                 destination: .purchase) {
-            PlanningFootnote("Zet een aankoop tegenover je werktijd en kijk of je er genoeg uren voor over hebt.")
-            if let wage = wage {
-                StatTile(title: "Je uurloon", value: Fmt.euroExact(wage) + " per uur", caption: "netto")
-            } else {
-                wagePrompt
-            }
-        }
-    }
-
-    private var wagePrompt: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "pencil.line")
-                .font(.title3)
-                .foregroundStyle(Theme.accent)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Je uurloon")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.textSecondary)
-                Text("Vul je uurloon in om te beginnen")
-                    .font(.subheadline.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .tile()
-        .accessibilityElement(children: .combine)
-    }
-}
-
 // MARK: - Stappen
 
 enum PurchaseStep: Int, CaseIterable, Identifiable {

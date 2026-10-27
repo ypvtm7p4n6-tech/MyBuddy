@@ -81,12 +81,10 @@ enum DebugLaunch {
         }
     }
 
-    /// De pagina bij een naam voor `-mybuddy-order`. De oude namen home, savings en tools zijn een alias voor overview,
-    /// month en planning (alleen Home heeft nog een volgorde om aan te passen).
+    /// De pagina bij een naam voor `-mybuddy-order`: alleen Home heeft een volgorde om aan te passen (`overview`, met `home` als
+    /// alias). Een andere naam geeft nil.
     private static func blockPage(named name: String) -> BlockPage? {
-        let aliases = ["home": "overview", "savings": "month", "tools": "planning"]
-        if let mapped = aliases[name], let page = BlockPage(rawValue: mapped) { return page }
-        return BlockPage(rawValue: name)
+        BlockPage(rawValue: name == "home" ? "overview" : name)
     }
 
     @MainActor

@@ -1,14 +1,16 @@
 import Foundation
 // Foundation-only: geen SwiftUI. In de app zit alles in één module. In het testpakket (CoreTests/Tests/MyBuddyCoreTests) staat
 // dit bestand als symlink tussen de tests; de tests staan in BlockOrderMigrationTests.swift. Het bevat de migratie van de
-// opgeslagen volgorde, het uitrekenen van de volgorde (`order`, `AppSettings.orderedBlocks`) en de pagina's met hun blokken
+// opgeslagen volgorde, het uitrekenen van de volgorde (`order`, `AppSettings.orderedBlocks`) en de pagina met haar blokken
 // (`BlockPage`, `BlockInfo`).
 #if canImport(MyBuddyCore)
 @testable import MyBuddyCore
 #endif
 
-/// Zet een opgeslagen blokvolgorde van de oude pagina's (`home`, `savings`, `tools`) om naar de nieuwe pagina's (`overview`,
-/// `month`, `saving`, `planning`), met behoud van de onderlinge volgorde (par. 2.7 van docs/design/plan.md).
+/// Zet een opgeslagen blokvolgorde van de oude pagina's (`home`, `savings`, `tools`) om naar de sleutels van de pagina's van
+/// ontwerp 1 (`overview`, `month`, `saving`, `planning`), met behoud van de onderlinge volgorde (par. 2.7 van
+/// docs/design/plan.md). Sinds ontwerp 2 leest alleen `overview` (Home) nog een volgorde; de andere sleutels blijven ongemoeid in
+/// de opgeslagen gegevens en gaan nergens verloren. Deze migratie blijft, zodat een volgorde uit een oude versie laadt.
 ///
 /// De functie leest alleen: ze draait bij het lezen van de volgorde (`AppSettings.orderedBlocks(for:)`) en schrijft niets
 /// terug, tot de gebruiker zelf een volgorde kiest. Ze is idempotent: de uitkomst bevat geen oude sleutels meer, dus nog een keer
@@ -119,98 +121,29 @@ struct BlockInfo: Identifiable, Equatable {
 /// Sinds ontwerp 2 is dat alleen Home: de planken Komende dagen, Spaarpotten, Beleggingen, Doelen en Hulpmiddelen. De hero
 /// (Nog te verdelen, Vermogen, Saldo vandaag) is geen blok en staat vast bovenaan; `wealth` is hero 2, dus een opgeslagen
 /// volgorde met `wealth` laadt gewoon (een onbekend id wordt overgeslagen). De sleutels `month`, `saving`, `planning`,
-/// `home`, `savings` en `tools` blijven ongemoeid in de opgeslagen gegevens.
+/// `home`, `savings` en `tools` van eerdere versies blijven ongemoeid in de opgeslagen gegevens (`BlockOrderMigration`).
 enum BlockPage: String, CaseIterable, Identifiable {
     case overview
-    // Overgangsvorm tot pakket 3: de blokken van de oude tabroots Maand, Sparen en Plannen en van de drie oudste pagina's.
-    case month, saving, planning
-    case home, savings, tools
-
-    /// Alleen Home; de overgangsvormen doen niet mee in een lijst van alle pagina's.
-    static var allCases: [BlockPage] { [.overview] }
 
     var id: String { rawValue }
 
     /// Sleutel in `AppSettings.blockOrder`.
     var key: String { rawValue }
 
-    /// Is dit een van de oude pagina's (tot pakket 3)?
-    var isLegacy: Bool {
-        switch self {
-        case .home, .savings, .tools: return true
-        case .overview, .month, .saving, .planning: return false
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .overview, .home: return "Home"
-        case .month, .savings: return "Maand"
-        case .saving: return "Sparen"
-        case .planning, .tools: return "Plannen"
-        }
-    }
+    var title: String { "Home" }
 
     /// Alleen een pagina met drie of meer blokken toont "Volgorde aanpassen": ordenen van twee blokken is zinloos.
     var allowsOrdering: Bool { blocks.count >= 3 }
 
     /// De blokken in de standaardvolgorde.
     var blocks: [BlockInfo] {
-        switch self {
-        case .overview:
-            return [
-                BlockInfo(id: "upcoming", title: "Komende dagen", symbol: "calendar.badge.clock"),
-                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full"),
-                BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis"),
-                BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered"),
-                BlockInfo(id: "tools", title: "Hulpmiddelen", symbol: "wrench.and.screwdriver")
-            ]
-        case .month:
-            return [
-                BlockInfo(id: "flow", title: "Waar gaat je geld heen", symbol: "chart.bar.xaxis"),
-                BlockInfo(id: "income", title: "Inkomen", symbol: "eurosign.circle"),
-                BlockInfo(id: "expenses", title: "Uitgaven", symbol: "creditcard"),
-                BlockInfo(id: "distribute", title: "Verdelen", symbol: "square.split.2x2"),
-                BlockInfo(id: "bank", title: "Bankrekening", symbol: "building.columns"),
-                BlockInfo(id: "days", title: "Dag voor dag", symbol: "list.bullet.rectangle")
-            ]
-        case .saving:
-            return [
-                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full"),
-                BlockInfo(id: "portfolio", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis")
-            ]
-        case .planning:
-            return [
-                BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered"),
-                BlockInfo(id: "buffer", title: "Noodbuffer", symbol: "shield.lefthalf.filled"),
-                BlockInfo(id: "accelerators", title: "Versnellers", symbol: "bolt"),
-                BlockInfo(id: "projection", title: "Toekomstschatting", symbol: "calendar.badge.clock"),
-                BlockInfo(id: "purchase", title: "Aankoopcheck", symbol: "cart")
-            ]
-        case .home:
-            return [
-                BlockInfo(id: "overview", title: "Maandoverzicht", symbol: "chart.bar.xaxis"),
-                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full.fill"),
-                BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis")
-            ]
-        case .savings:
-            return [
-                BlockInfo(id: "period", title: "Maandoverzicht", symbol: "chart.bar.xaxis"),
-                BlockInfo(id: "income", title: "Inkomen", symbol: "eurosign.circle.fill"),
-                BlockInfo(id: "bank", title: "Bankrekening", symbol: "building.columns.fill"),
-                BlockInfo(id: "distribute", title: "Verdelen", symbol: "square.split.2x2.fill"),
-                BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full.fill"),
-                BlockInfo(id: "buffer", title: "Noodbuffer", symbol: "shield.lefthalf.filled"),
-                BlockInfo(id: "portfolio", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis"),
-                BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered")
-            ]
-        case .tools:
-            return [
-                BlockInfo(id: "accelerators", title: "Versnellers", symbol: "bolt.fill"),
-                BlockInfo(id: "projection", title: "Toekomstschatting", symbol: "calendar.badge.clock"),
-                BlockInfo(id: "purchase", title: "Aankoopcheck", symbol: "cart")
-            ]
-        }
+        [
+            BlockInfo(id: "upcoming", title: "Komende dagen", symbol: "calendar.badge.clock"),
+            BlockInfo(id: "pots", title: "Spaarpotten", symbol: "tray.full"),
+            BlockInfo(id: "invest", title: "Beleggingen", symbol: "chart.line.uptrend.xyaxis"),
+            BlockInfo(id: "goals", title: "Doelen", symbol: "flag.checkered"),
+            BlockInfo(id: "tools", title: "Hulpmiddelen", symbol: "wrench.and.screwdriver")
+        ]
     }
 }
 
@@ -222,7 +155,7 @@ extension AppSettings {
     /// in de opgeslagen lijst staan (nieuwe blokken) komen achteraan, in de standaardvolgorde.
     func orderedBlocks(for page: BlockPage) -> [BlockInfo] {
         let defaults = page.blocks
-        let stored: [String: [String]] = page.isLegacy ? blockOrder : BlockOrderMigration.migrate(blockOrder)
+        let stored = BlockOrderMigration.migrate(blockOrder)
         let ids = BlockOrderMigration.order(stored: stored[page.key], defaults: defaults.map { $0.id })
         return ids.compactMap { id in defaults.first(where: { $0.id == id }) }
     }

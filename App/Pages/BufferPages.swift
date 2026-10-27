@@ -7,58 +7,6 @@ private func bufferMonthsText(_ value: Double) -> String {
     return "\(Fmt.input(rounded, maxDigits: 1)) \(unit)"
 }
 
-// MARK: - De oude kaart Noodbuffer (tot de opruiming van pakket 3)
-
-/// Samenvatting: doelbuffer, wat er al is, voortgang en hoeveel maanden het dekt. Gebruikt de keuzes die op de pagina Noodbuffer
-/// zijn bewaard, zodat de cijfers kloppen met de pagina. Een tik opent de pagina.
-struct BufferSummaryCard: View {
-    @Environment(AuthStore.self) private var auth
-    @Environment(\.cloudAccount) private var cloud
-
-    var body: some View {
-        let account = accountPrefsID(auth: auth, cloud: cloud)
-        BufferSummaryCardContent(key: AccountPrefs.key(BufferSetup.storageKey, account: account))
-    }
-}
-
-private struct BufferSummaryCardContent: View {
-    @Environment(AppStore.self) private var store
-    @AppStorage private var storedSetup: String
-
-    init(key: String) {
-        _storedSetup = AppStorage(wrappedValue: "", key)
-    }
-
-    var body: some View {
-        let d = store.data
-        let now = store.now
-        let setup = BufferSetup.fromJSON(storedSetup) ?? BufferCalc.initialSetup(for: d, current: now)
-        // Met het saldo van vandaag (`store.today`): dezelfde bank en spaarpot als op de pagina Noodbuffer.
-        let r = BufferCalc.summary(for: d, setup: setup, current: now, today: store.today)
-        LinkCard(title: "Noodbuffer", symbol: "shield.lefthalf.filled", domain: .goals,
-                 subtitle: r.hasTarget ? "\(r.months) maanden aan uitgaven" : nil,
-                 destination: .buffer) {
-            if r.hasTarget {
-                figures(r)
-            } else {
-                PlanningFootnote("Vul je uitgaven in, dan rekent de app uit hoeveel noodbuffer bij je past.")
-            }
-        }
-    }
-
-    private func figures(_ r: BufferResult) -> some View {
-        VStack(alignment: .leading, spacing: Theme.rowSpacing) {
-            BigAmount(value: r.target, font: Theme.titleAmount, label: "Doel noodbuffer")
-            ProgressMeter(value: r.progress, tint: r.isFull ? Theme.positive : Theme.accent, style: .bar(height: 10),
-                          label: "Voortgang noodbuffer", valueText: Fmt.percent(r.progress, digits: 0))
-            AmountRow(title: "Nu", value: Fmt.euro(r.current))
-            if let coverage = r.coverageMonths {
-                AmountRow(title: "Dekt", value: bufferMonthsText(coverage))
-            }
-        }
-    }
-}
-
 // MARK: - De pagina
 
 /// De noodbuffer als rekenpagina: de uitkomst met het verloop bovenaan, daaronder de invoer in vier blokken en de spaarpot.

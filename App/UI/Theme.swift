@@ -292,8 +292,6 @@ enum Theme {
     static let pageMaxWidth: CGFloat = 960
     /// Breedste inhoud van een lijst of formulier.
     static let readableWidth: CGFloat = 720
-    /// Smalste breedte van één blok. Op een iPhone past er één kolom, op iPad en Mac twee.
-    static let blockColumnMinimum: CGFloat = 340
 
     /// Kleinste raakdoel: 44 punten op iPhone en iPad, 28 op de Mac (de aanwijzer is nauwkeuriger).
     static var minTapTarget: CGFloat {
@@ -304,36 +302,10 @@ enum Theme {
         #endif
     }
 
-    /// Kolommen voor de blokken op een pagina met kaarten.
-    static var blockColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: blockColumnMinimum), spacing: pageSpacing, alignment: .top)]
-    }
-
     // MARK: Beweging (overal dezelfde, kort en zacht)
 
     /// Standaard voor veranderende bedragen, blokken en lijsten. Gebruik `.animated(by:)`, dat Verlaag beweging respecteert.
     static let motion: Animation = .smooth(duration: 0.3)
     /// Voor kleine, snelle reacties: tabwissel, indrukken van een knop.
     static let quickMotion: Animation = .snappy(duration: 0.25)
-
-    // MARK: Overgangsvormen (tot pakket G; nieuwe code gebruikt deze niet)
-
-    static let olive = accentFill
-    static let oliveDeep = Color(hex: 0x2B3418)
-    static let oliveLight = Color(hex: 0xA9C06B)
-    static let flowExpenses = chartExpenses
-    static let flowVariable = chartVariable
-    static let flowSaved = chartSaved
-    static let flowInvested = chartInvested
-    static let flowFree = chartFree
-    static let chipRadius: CGFloat = 10
-    /// Was 42; nu de minimale maat van een raakdoel.
-    static var buttonHeight: CGFloat { minTapTarget }
-}
-
-/// Overgangsvorm: de oude mesh-achtergrond tekent nu het vlakke canvas.
-struct MeshBackground: View {
-    var body: some View {
-        Theme.canvas.ignoresSafeArea()
-    }
 }

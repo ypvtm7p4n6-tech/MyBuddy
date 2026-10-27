@@ -1,8 +1,7 @@
 import SwiftUI
 
-// Gedeelde onderdelen van de Plannen-pagina's en de oude kaarten (pakket D): doelen, noodbuffer, versnellers, toekomstschatting
-// en aankoopcheck. Ze zijn alleen bedoeld voor de bestanden van dit pakket en bouwen op het ontwerpsysteem (`Card`,
-// `Theme`, `IconButton`): hier staat geen eigen kleur, geen glas en geen vaste lettergrootte.
+// Gedeelde onderdelen van de Plannen-pagina's: doelen, noodbuffer, versnellers, toekomstschatting en aankoopcheck. Ze bouwen op
+// het ontwerpsysteem (`Card`, `Theme`, `IconButton`): hier staat geen eigen kleur, geen glas en geen vaste lettergrootte.
 
 // MARK: - Taal
 
@@ -37,49 +36,14 @@ struct PlanningFootnote: View {
     }
 }
 
-// MARK: - Links in een kaart
+// MARK: - Drukstatus
 
-/// Drukstatus voor een tegel die naar een pagina leidt: de inhoud wordt iets doorzichtig zolang je drukt. Vervangt
+/// Drukstatus voor een tegel of rij die naar een pagina leidt: de inhoud wordt iets doorzichtig zolang je drukt. Vervangt
 /// `.buttonStyle(.plain)`, dat geen reactie geeft.
 struct PlanningPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.6 : 1)
-    }
-}
-
-/// Een tegel in een kaart die naar een pagina leidt (bijvoorbeeld een doel of de rij "Spaardoel berekenen"): de inhoud links
-/// en rechts een pijltje. Hij opent met `router.open`: de pagina komt op het pad van de tab waar je bent (B5), nooit twee keer
-/// dezelfde pagina in een pad (K16). Voor VoiceOver is het een link.
-struct PlanningLinkTile<Content: View>: View {
-    let destination: Destination
-    private let content: Content
-    @Environment(Router.self) private var router
-
-    init(destination: Destination, @ViewBuilder content: () -> Content) {
-        self.destination = destination
-        self.content = content()
-    }
-
-    var body: some View {
-        Button {
-            router.open(destination)
-        } label: {
-            HStack(spacing: 8) {
-                content
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .accessibilityHidden(true)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: Theme.minTapTarget, alignment: .leading)
-            .tile()
-            .contentShape(RoundedRectangle(cornerRadius: Theme.tileRadius, style: .continuous))
-        }
-        .buttonStyle(PlanningPressStyle())
-        .accessibilityAddTraits(.isLink)
     }
 }
 

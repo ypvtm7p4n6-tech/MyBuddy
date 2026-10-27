@@ -1,8 +1,8 @@
 #if DEBUG
 import SwiftUI
 
-// Voorbeelden van de pagina's en kaarten van Plannen met voorbeelddata, voor de Xcode-canvas (alleen in een debug-build).
-// De kaarten staan ook in licht, donker en bij grote tekst (`.accessibility3`).
+// Voorbeelden van de pagina's van Plannen met voorbeelddata, voor de Xcode-canvas (alleen in een debug-build): gevuld, donker,
+// bij grote tekst (`.accessibility3`) en leeg.
 
 /// Maakt een winkel met voorbeelddata, een router en een inlogstatus voor de previews en geeft de winkel aan de inhoud.
 @MainActor
@@ -30,36 +30,6 @@ private struct PlanningPreviewHost<Content: View>: View {
         .environment(router)
         .environment(auth)
     }
-}
-
-/// De vijf oude kaarten van het tabblad Plannen onder elkaar (tot de opruiming van pakket 3).
-private struct PlanningCardsPreview: View {
-    var body: some View {
-        PageScaffold(title: "Plannen", large: true) {
-            VStack(spacing: Theme.pageSpacing) {
-                GoalsSummaryCard()
-                BufferSummaryCard()
-                AcceleratorsSummaryCard()
-                ProjectionSummaryCard()
-                PurchaseSummaryCard()
-            }
-        }
-    }
-}
-
-#Preview("Kaarten op Plannen, licht") {
-    PlanningPreviewHost { _ in PlanningCardsPreview() }
-        .preferredColorScheme(.light)
-}
-
-#Preview("Kaarten op Plannen, donker") {
-    PlanningPreviewHost { _ in PlanningCardsPreview() }
-        .preferredColorScheme(.dark)
-}
-
-#Preview("Kaarten op Plannen, grote tekst") {
-    PlanningPreviewHost { _ in PlanningCardsPreview() }
-        .dynamicTypeSize(.accessibility3)
 }
 
 #Preview("Doelen") {

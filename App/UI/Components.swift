@@ -2,8 +2,8 @@ import SwiftUI
 
 // De bouwstenen van het ontwerpsysteem (par. 4.3 t/m 4.5 van docs/design/plan.md): pagina's, kaarten, cijfers, knoppen en
 // de maandkiezer. Geen glas in de inhoud: een kaart is `Theme.card` op het kleurverloop van `BackdropGradient`. Glas komt van
-// het systeem (tabbalk, werkbalk, bladen). Onderaan staat de overgangslaag met de oude namen (tot pakket 3). De tegels,
-// planken, rijen en pillen van ontwerp 2 staan in Tiles.swift, Shelf.swift, Hero.swift, Rows.swift, Album.swift en Pills.swift.
+// het systeem (tabbalk, werkbalk, bladen). De tegels, planken, rijen en pillen van ontwerp 2 staan in Tiles.swift, Shelf.swift,
+// Hero.swift, Rows.swift, Album.swift en Pills.swift.
 
 // MARK: - Pagina's
 
@@ -14,8 +14,6 @@ import SwiftUI
 struct PageScaffold<Content: View>: View {
     let title: String
     var large: Bool = false
-    /// Verouderd: Instellingen is een pagina achter de profielknop. Doet niets en verdwijnt in pakket 3.
-    var showsSettings: Bool = false
     var fullBleed: Bool = false
     @ViewBuilder var content: Content
     @Environment(\.backdropHue) private var backdropHue
@@ -717,30 +715,6 @@ struct NoticeCard: View {
     }
 }
 
-// MARK: - Zoeken
-
-private struct SearchToolbarButton: ViewModifier {
-    @Environment(Router.self) private var router
-
-    func body(content: Content) -> some View {
-        content
-            .toolbar {
-                ToolbarItem(placement: .automatic) {
-                    IconButton("Zoeken", symbol: "magnifyingglass") {
-                        router.requestSearch()
-                    }
-                }
-            }
-    }
-}
-
-extension View {
-    /// Een zoekknop in de werkbalk: hij gaat naar het Overzicht en opent het zoekveld (`router.requestSearch()`).
-    func searchToolbarButton() -> some View {
-        modifier(SearchToolbarButton())
-    }
-}
-
 // MARK: - Periode kiezen
 
 /// Chevron-knop met een raakdoel van `Theme.minTapTarget` (44 punten op iOS, 28 op de Mac). Het pictogram blijft aan de
@@ -860,60 +834,6 @@ struct PeriodPicker: View {
     }
 }
 
-/// Maand / half jaar / jaar met terug en vooruit. De knoppen stoppen bij de grenzen van `MonthWindow`. Vervalt in pakket G
-/// (nieuwe code gebruikt `MonthBar` en `PeriodPicker`).
-struct PeriodControl: View {
-    @Environment(AppStore.self) private var store
-    @Environment(Router.self) private var router
-
-    private var canGoBack: Bool {
-        let window = MonthWindow.bounds(startMonth: store.data.startMonth, now: store.now)
-        return router.focusMonth.adding(-router.periodMode.stepMonths) >= window.min
-    }
-
-    private var canGoForward: Bool {
-        let window = MonthWindow.bounds(startMonth: store.data.startMonth, now: store.now)
-        return router.focusMonth.adding(router.periodMode.stepMonths) <= window.max
-    }
-
-    var body: some View {
-        @Bindable var router = router
-        VStack(spacing: 10) {
-            Picker("Periode", selection: $router.periodMode) {
-                ForEach(PeriodMode.allCases) { mode in Text(mode.title).tag(mode) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            HStack {
-                StepButton(symbol: "chevron.left", label: "Vorige periode", alignment: .leading, isEnabled: canGoBack) {
-                    router.shiftPeriod(-1)
-                }
-                Spacer()
-                VStack(spacing: 1) {
-                    Text(Fmt.period(router.periodMode, containing: router.focusMonth))
-                        .font(.headline)
-                        .multilineTextAlignment(.center)
-                    if let note = statusNote { Text(note).font(.caption).foregroundStyle(Theme.warning) }
-                }
-                Spacer()
-                StepButton(symbol: "chevron.right", label: "Volgende periode", alignment: .trailing, isEnabled: canGoForward) {
-                    router.shiftPeriod(1)
-                }
-            }
-            .padding(.horizontal, 6)
-        }
-    }
-
-    private var statusNote: String? {
-        let months = router.periodMode.months(containing: router.focusMonth)
-        guard let last = months.last, let first = months.first else { return nil }
-        if first > store.now { return "Verwacht" }
-        if last > store.now { return "Deels verwacht" }
-        return nil
-    }
-}
-
 // MARK: - Account voor bewaarde keuzes
 
 /// Het account waaronder een pagina zijn eigen keuzes op dit apparaat bewaart (zie `AccountPrefs`): met Firebase
@@ -923,192 +843,4 @@ struct PeriodControl: View {
 func accountPrefsID(auth: AuthStore, cloud: CloudAccount?) -> String {
     if FirebaseConfig.isConfigured, let uid = cloud?.user?.uid { return "cloud-" + uid }
     return auth.currentAccount?.id.uuidString ?? "demo"
-}
-
-// MARK: - Overgangslaag: de oude namen (tot pakket G)
-
-// Alles hieronder bestaat alleen zodat de pagina's die nog niet zijn omgebouwd blijven compileren en werken. Het uiterlijk
-// is al nieuw (kaart in plaats van glas); het gedrag is dat van de oude componenten, ook voor links: een
-// `NavigationLink(value:)` op het pad van de eigen stapel, want de oude tabroots hebben elk een eigen stapel. Nieuwe code
-// gebruikt `Card`, `LinkCard`, `ActionButton`, `ActionLink`, `ActionGroup` en `ProgressMeter`. Pakket G verwijdert dit.
-
-/// Overgangsvorm van `Card`: dezelfde kaart met de oude parameters. `interactive` en `tint` doen niets meer.
-struct GlassBlock<Content: View>: View {
-    let title: String
-    var symbol: String? = nil
-    var subtitle: String? = nil
-    var headerLink: Destination? = nil
-    var showsChevron: Bool = false
-    var interactive: Bool = false
-    var tint: Color? = nil
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.rowSpacing) {
-            if let link = headerLink {
-                NavigationLink(value: link) {
-                    CardHeader(title: title, symbol: symbol, domain: nil, subtitle: subtitle, showsChevron: true)
-                }
-                .buttonStyle(PressedStyle())
-            } else {
-                CardHeader(title: title, symbol: symbol, domain: nil, subtitle: subtitle, showsChevron: showsChevron)
-            }
-            content
-        }
-        .modifier(CardSurface())
-    }
-}
-
-/// Overgangsvorm van `LinkCard`.
-struct LinkedBlock<Content: View>: View {
-    let title: String
-    var symbol: String? = nil
-    var subtitle: String? = nil
-    let destination: Destination
-    var tint: Color? = nil
-    var showsCurrentMonth: Bool = false
-    @ViewBuilder var content: Content
-    @Environment(AppStore.self) private var store
-    @Environment(Router.self) private var router
-
-    var body: some View {
-        if showsCurrentMonth {
-            Button {
-                router.showCurrentMonth(store.now)
-                router.open(destination)
-            } label: { card }
-            .buttonStyle(PressedStyle())
-        } else {
-            NavigationLink(value: destination) { card }
-                .buttonStyle(PressedStyle())
-        }
-    }
-
-    private var card: some View {
-        VStack(alignment: .leading, spacing: Theme.rowSpacing) {
-            CardHeader(title: title, symbol: symbol, domain: nil, subtitle: subtitle, showsChevron: true)
-            content
-        }
-        .modifier(CardSurface())
-        .contentShape(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-    }
-}
-
-/// Overgangsvorm van het label van `ActionButton`: een afgeronde vlakke knop zonder glas, over de hele breedte.
-struct ChipLabel: View {
-    let title: String
-    var symbol: String? = nil
-    var destructive = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if let symbol { Image(systemName: symbol) }
-            Text(title)
-                .multilineTextAlignment(.center)
-        }
-        .font(.footnote.weight(.semibold))
-        .foregroundStyle(destructive ? Theme.negative : Theme.accent)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, minHeight: Theme.minTapTarget)
-        .background(Theme.tileFill, in: Capsule())
-        .contentShape(Capsule())
-    }
-}
-
-/// Overgangsvorm van `ActionButton`.
-struct ChipButton: View {
-    let title: String
-    var symbol: String? = nil
-    var role: ButtonRole? = nil
-    let action: () -> Void
-
-    var body: some View {
-        Button(role: role, action: action) {
-            ChipLabel(title: title, symbol: symbol, destructive: role == .destructive)
-        }
-        .buttonStyle(PressedStyle())
-    }
-}
-
-/// Overgangsvorm van `ActionLink`.
-struct ChipLink: View {
-    let title: String
-    var symbol: String? = nil
-    let destination: Destination
-
-    var body: some View {
-        NavigationLink(value: destination) {
-            ChipLabel(title: title, symbol: symbol)
-        }
-        .buttonStyle(PressedStyle())
-    }
-}
-
-/// Overgangsvorm van `ActionGroup`: knoppen in een raster van even grote cellen.
-struct ChipGrid<Content: View>: View {
-    var minimumWidth: CGFloat = 150
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumWidth), spacing: 10)], spacing: 10) {
-            content
-        }
-    }
-}
-
-/// Overgangsvorm van `ProgressMeter` (ring).
-struct ProgressRing: View {
-    var progress: Double
-    var tint: Color
-    var lineWidth: CGFloat = 7
-
-    var body: some View {
-        ProgressMeter(value: progress, tint: tint, style: .ring(lineWidth: lineWidth),
-                      label: "Voortgang", valueText: Fmt.percent(progress, digits: 0))
-    }
-}
-
-/// Overgangsvorm van `ProgressMeter` (balk).
-struct ProgressBar: View {
-    var progress: Double
-    var tint: Color
-    var height: CGFloat = 8
-
-    var body: some View {
-        ProgressMeter(value: progress, tint: tint, style: .bar(height: height),
-                      label: "Voortgang", valueText: Fmt.percent(progress, digits: 0))
-    }
-}
-
-/// Overgangsvorm van `SegmentedMeter`: één balk die in stukken is verdeeld.
-struct SegmentBar: View {
-    struct Segment: Identifiable {
-        let id: String
-        let value: Double
-        let color: Color
-    }
-
-    let segments: [Segment]
-    var height: CGFloat = 12
-
-    var body: some View {
-        let positive = segments.filter { $0.value > 0 }
-        let total = max(positive.reduce(0) { $0 + $1.value }, 0.0001)
-        GeometryReader { geo in
-            HStack(spacing: 2) {
-                ForEach(positive) { segment in
-                    Capsule()
-                        .fill(segment.color)
-                        .frame(width: max(4, (geo.size.width - CGFloat(max(0, positive.count - 1)) * 2) * segment.value / total))
-                }
-                if positive.isEmpty {
-                    Capsule().fill(Theme.tileFill)
-                }
-            }
-        }
-        .frame(height: height)
-        .clipShape(Capsule())
-        .animated(by: positive.map(\.value))
-    }
 }

@@ -16,7 +16,7 @@ extension AppStore {
     func setBlockOrder(_ ids: [String], for page: BlockPage) {
         let isDefault = ids == page.blocks.map(\.id)
         mutate { d in
-            let keepExplicit = !page.isLegacy && BlockOrderMigration.hasLegacyKeys(d.settings.blockOrder)
+            let keepExplicit = BlockOrderMigration.hasLegacyKeys(d.settings.blockOrder)
             if isDefault && !keepExplicit {
                 d.settings.blockOrder[page.key] = nil
             } else {
@@ -33,29 +33,6 @@ extension AppStore {
         guard ids.indices.contains(to) else { return }
         ids.swapAt(from, to)
         setBlockOrder(ids, for: page)
-    }
-}
-
-// MARK: - De blokken van een pagina, in de eigen volgorde
-
-/// Geeft per blok-id van de pagina een view, in de volgorde die de gebruiker koos. Alleen de blokken: de kern van de pagina
-/// staat erboven. Gebruik het binnen `EqualSizeGrid` of een `LazyVGrid`. Elk blok krijgt het contextmenu om de volgorde aan
-/// te passen (alleen op een pagina met drie of meer blokken).
-struct OrderedBlocks<Content: View>: View {
-    let page: BlockPage
-    private let content: (String) -> Content
-    @Environment(AppStore.self) private var store
-
-    init(page: BlockPage, @ViewBuilder content: @escaping (String) -> Content) {
-        self.page = page
-        self.content = content
-    }
-
-    var body: some View {
-        ForEach(store.data.settings.blockIDs(for: page), id: \.self) { id in
-            content(id)
-                .blockOrderMenu(page: page, id: id)
-        }
     }
 }
 
@@ -115,40 +92,9 @@ extension View {
     }
 }
 
-// MARK: - Menu in de werkbalk
-
-private struct BlockOrderToolbar: ViewModifier {
-    let page: BlockPage
-    @Environment(Router.self) private var router
-
-    func body(content: Content) -> some View {
-        content
-            .toolbar {
-                if page.allowsOrdering {
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu {
-                            Button {
-                                router.orderPage = page
-                            } label: {
-                                Label("Volgorde aanpassen…", systemImage: "arrow.up.arrow.down")
-                            }
-                        } label: {
-                            Label("Meer", systemImage: "ellipsis")
-                        }
-                        .help("Meer")
-                    }
-                }
-            }
-    }
-}
+// MARK: - Bewerkmodus
 
 extension View {
-    /// Een menu in de werkbalk van een tabroot met "Volgorde aanpassen…" (opent `BlockOrderSheet`). Alleen bij pagina's met
-    /// drie of meer blokken: bij minder is er niets te ordenen en komt er geen menu.
-    func blockOrderToolbar(page: BlockPage) -> some View {
-        modifier(BlockOrderToolbar(page: page))
-    }
-
     /// Zet een `List` altijd in bewerkmodus (iOS), zodat de rijen direct versleept kunnen worden. Op de Mac sleep je zonder
     /// bewerkmodus.
     @ViewBuilder

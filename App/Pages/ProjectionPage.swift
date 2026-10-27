@@ -1,40 +1,5 @@
 import SwiftUI
 
-// MARK: - De oude kaart Toekomstschatting (tot de opruiming van pakket 3)
-
-/// Wat je beleggingen over 5, 10 en 20 jaar waard zijn, met je huidige inleg en rendement. Een tik opent de pagina.
-struct ProjectionSummaryCard: View {
-    @Environment(AppStore.self) private var store
-
-    var body: some View {
-        let d = store.data
-        let now = store.now
-        let start = d.portfolioValue(current: now)
-        // Een schatting: wat er per maand wordt ingelegd, en bij een salaris om de zoveel weken of dagen een gemiddelde maand
-        // (`monthlyInvestment`, zie SalarySchedule.swift). Zo rekent ook de toekomstschatting zelf.
-        let monthly = d.monthlyInvestment(current: now)
-        let rate = d.weightedNetReturn(current: now)
-        let inflation = d.settings.inflation
-        LinkCard(title: "Toekomstschatting", symbol: "calendar.badge.clock", domain: .tools,
-                 subtitle: "Wat is het over x jaar?", destination: .projection) {
-            if start == 0 && monthly == 0 {
-                PlanningFootnote("Vul beleggingen in en reken uit wat ze over dagen, maanden of jaren waard zijn.")
-            } else {
-                VStack(alignment: .leading, spacing: Theme.rowSpacing) {
-                    FigureRow {
-                        ForEach([5, 10, 20], id: \.self) { years in
-                            StatTile(title: "Over \(years) jaar",
-                                     value: Fmt.euro(Growth.projection(start: start, monthly: monthly, annualReturn: rate,
-                                                                       months: Double(years * 12), inflation: inflation).total))
-                        }
-                    }
-                    PlanningFootnote("Met \(d.salary.isMonthly ? "" : "gemiddeld ")\(Fmt.euro(monthly)) per maand en \(Fmt.percent(rate)) rendement per jaar.")
-                }
-            }
-        }
-    }
-}
-
 // MARK: - De pagina
 
 /// Rekenmachine: wat is mijn belegging over x dagen, weken, maanden of jaren waard? De uitkomst en het verloop staan bovenaan,
