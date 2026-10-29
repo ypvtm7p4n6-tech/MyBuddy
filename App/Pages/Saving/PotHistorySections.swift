@@ -50,8 +50,7 @@ struct PotHistorySection: View {
                 }
             }
             if let hiddenNote = StartDateText.hiddenPotNote(d, potID: pot.id) {
-                NavigationRow(title: StartDateText.pageTitle, symbol: "calendar", domain: .settings, subtitle: hiddenNote,
-                              destination: .settings(.startDate))
+                SettingsLinkRow(page: .startDate, title: StartDateText.pageTitle, subtitle: hiddenNote)
             }
         } header: {
             SectionHeader("Geschiedenis", symbol: "clock.arrow.circlepath", domain: .saving)

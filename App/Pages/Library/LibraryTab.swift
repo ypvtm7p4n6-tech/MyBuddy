@@ -36,7 +36,7 @@ private struct LibraryList: View {
             ForEach(LibrarySection.allCases) { section in
                 LibrarySectionRows(section: section, figures: figures)
             }
-            LibraryRecentRows(items: figures.recent())
+            LibraryRecentRows(items: figures.recent(), hiddenNote: StartDateText.hiddenRecentNote(store.data))
         }
         .profileToolbarItem()
     }
@@ -84,12 +84,17 @@ struct LibraryPageRow: View {
 /// De groep Recent: de laatste vijf handmatige boekingen (`RecentActivity`). Zonder boekingen is er geen groep.
 struct LibraryRecentRows: View {
     let items: [RecentItem]
+    /// Hoeveel boekingen er vóór de startdatum liggen (ze tellen niet mee), met een link naar Startdatum. nil = niets te melden.
+    var hiddenNote: String? = nil
 
     var body: some View {
         if !items.isEmpty {
             Section {
                 ForEach(items) { item in
                     LibraryRecentRow(item: item)
+                }
+                if let hiddenNote {
+                    SettingsLinkRow(page: .startDate, title: StartDateText.pageTitle, subtitle: hiddenNote)
                 }
             } header: {
                 SectionHeader("Recent")

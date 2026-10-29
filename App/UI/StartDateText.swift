@@ -247,6 +247,13 @@ enum StartDateText {
         return hiddenEntriesNote(count: data.hiddenPotCount(for: potID), startDay: start)
     }
 
+    /// De voetnoot onder een lijst met de boekingen van alles samen, zoals Recent in de Bibliotheek: de bankrekening en alle
+    /// spaarpotten bij elkaar.
+    static func hiddenRecentNote(_ data: FinanceData) -> String? {
+        guard let start = data.effectiveStartDay else { return nil }
+        return hiddenEntriesNote(count: data.hiddenBankCount + data.hiddenPotCount(for: nil), startDay: start)
+    }
+
     /// De waarschuwing in het blad voor een bankboeking of potboeking als de boeking van vóór de startdatum zou zijn: nu invullen
     /// terwijl de startdatum nog moet komen. nil als de boeking meetelt.
     static func entryBeforeStartWarning(_ data: FinanceData, at moment: Date) -> String? {

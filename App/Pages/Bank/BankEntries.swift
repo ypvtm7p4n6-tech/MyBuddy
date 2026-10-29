@@ -41,8 +41,7 @@ struct BankEntriesSections: View {
     @ViewBuilder
     private var hiddenRow: some View {
         if let note = StartDateText.hiddenBankNote(store.data) {
-            NavigationRow(title: StartDateText.pageTitle, symbol: "calendar", domain: .settings, subtitle: note,
-                          destination: .settings(.startDate))
+            SettingsLinkRow(page: .startDate, title: StartDateText.pageTitle, subtitle: note)
         }
     }
 

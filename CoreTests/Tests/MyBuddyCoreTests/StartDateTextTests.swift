@@ -177,7 +177,10 @@ final class StartDateTextTests: XCTestCase {
         d.addPotEntry(potID: pot.id, amount: 7, kind: .deposit, date: startMoment(oct2026, 5))
         XCTAssertNil(StartDateText.hiddenBankNote(d), "zonder startdatum is niets verborgen")
         XCTAssertNil(StartDateText.hiddenPotNote(d, potID: pot.id))
+        XCTAssertNil(StartDateText.hiddenRecentNote(d))
         d.setStart(startOct(15))
+        XCTAssertEqual(StartDateText.hiddenRecentNote(d), "3 boekingen van vóór je startdatum (15 oktober 2026) tellen niet mee.",
+                       "bank (boeking en ingevuld saldo) en spaarpotten samen")
         XCTAssertEqual(StartDateText.hiddenBankNote(d), "2 boekingen van vóór je startdatum (15 oktober 2026) tellen niet mee.")
         XCTAssertEqual(StartDateText.hiddenPotNote(d, potID: pot.id), "1 boeking van vóór je startdatum (15 oktober 2026) telt niet mee.")
         XCTAssertEqual(StartDateText.hiddenPotNote(d, potID: nil), "1 boeking van vóór je startdatum (15 oktober 2026) telt niet mee.")

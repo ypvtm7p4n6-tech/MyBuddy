@@ -87,6 +87,10 @@ enum HomeHeroNotes {
         if let salaryNote = board.salaryNote {
             notes.append(HomeHeroNote(id: "salary", text: salaryNote, symbol: nil))
         }
+        // In de startmaand telt alleen wat vanaf je startdatum valt.
+        if let startNote = board.startNote {
+            notes.append(HomeHeroNote(id: "start", text: startNote, symbol: nil))
+        }
         // Uitgaven uit een spaarpot kosten dit maandbudget niets.
         if board.hasPotExpenses {
             let text = "Wat je uit een spaarpot betaalt (\(Fmt.euro(board.fromPots))) telt niet mee in dit bedrag."

@@ -410,16 +410,16 @@ extension FinanceData {
         let shift = CentsMath.int(without.bankBalanceNow(current: current, today: today))
             - CentsMath.int(bankBalanceNow(current: current, today: today))
 
-        let countBefore = bankEntries.count
+        let countBefore = bankEntries.count // raw: telt alleen wat deze bewerking zelf toevoegt
         transferPotToBank(potID: id, amount: balance, date: today)
         if shift != 0 {
             let name = removed.name.isEmpty ? "spaarpot" : removed.name
             bankEntries.append(BankEntry(date: today, amount: CentsMath.value(-shift), kind: shift > 0 ? .toPot : .fromPot,
                                          note: shift > 0 ? "Eerder overgemaakt naar \(name)" : "Eerder betaald uit \(name)"))
         }
-        let created = Set(bankEntries.dropFirst(countBefore).map { $0.id })
+        let created = Set(bankEntries.dropFirst(countBefore).map { $0.id }) // raw: alleen de boekingen van deze bewerking
         deletePot(id)
-        for i in bankEntries.indices where created.contains(bankEntries[i].id) {
+        for i in bankEntries.indices where created.contains(bankEntries[i].id) { // raw: alleen de boekingen van deze bewerking
             bankEntries[i].pairID = nil
             bankEntries[i].potID = nil
         }
@@ -427,7 +427,7 @@ extension FinanceData {
 
     mutating func deletePot(_ id: UUID) {
         pots.removeAll { $0.id == id }
-        potEntries.removeAll { $0.potID == id }
+        potEntries.removeAll { $0.potID == id } // raw: alle boekingen van de pot verdwijnen, ook die vóór de startdatum
         for key in Array(months.keys) {
             months[key]?.allocations.removeValue(forKey: id.uuidString)
             // Ook een eigen percentage van een maand (variabel percentage) hoort bij de pot en verdwijnt met hem.
@@ -456,9 +456,9 @@ extension FinanceData {
     /// bankboeking, of de boeking in de andere pot): zo ontstaat er geen geld uit het niets. Boekingen zonder
     /// `pairID` (van vóór deze regel) blijven los verwijderbaar.
     mutating func deletePotEntry(_ id: UUID) {
-        let pair = potEntries.first { $0.id == id }?.pairID
-        potEntries.removeAll { $0.id == id || (pair != nil && $0.pairID == pair) }
-        if let pair { bankEntries.removeAll { $0.pairID == pair } }
+        let pair = potEntries.first { $0.id == id }?.pairID // raw: zoeken op id
+        potEntries.removeAll { $0.id == id || (pair != nil && $0.pairID == pair) } // raw: verwijderen met de andere helft
+        if let pair { bankEntries.removeAll { $0.pairID == pair } } // raw: verwijderen met de andere helft
     }
 
     /// Zet het saldo op een nieuw bedrag via een correctieboeking.

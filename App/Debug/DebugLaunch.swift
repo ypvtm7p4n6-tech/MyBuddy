@@ -117,6 +117,7 @@ enum DebugLaunch {
         case "calculations", "rekenen": return .settings(.calculations)
         case "rates", "prices": return .settings(.prices)
         case "data": return .settings(.data)
+        case "startdate": return .settings(.startDate)
         case "layout": return .settings(.layout)
         case "about": return .settings(.about)
         case "importreview": return .settings(.importReview)

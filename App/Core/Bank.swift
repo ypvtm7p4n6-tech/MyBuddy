@@ -17,12 +17,14 @@ struct PairedRemoval: Equatable {
     var potEntries: [PotEntry] = []
 
     /// Aantal boekingen dat er extra verdwijnt.
-    var count: Int { bankEntries.count + potEntries.count }
+    var count: Int { bankEntries.count + potEntries.count } // raw: de andere helften van één overboeking
     var isEmpty: Bool { count == 0 }
 
     /// Totaal van de bedragen (zonder teken) van wat er extra verdwijnt, op centen.
     var amount: Double {
-        let cents = bankEntries.map { abs(CentsMath.int($0.amount)) } + potEntries.map { abs(CentsMath.int($0.amount)) }
+        let bank = bankEntries.map { abs(CentsMath.int($0.amount)) } // raw: de andere helften van één overboeking
+        let pots = potEntries.map { abs(CentsMath.int($0.amount)) } // raw: de andere helften van één overboeking
+        let cents = bank + pots
         return CentsMath.value(CentsMath.sum(cents))
     }
 
@@ -251,7 +253,7 @@ extension FinanceData {
     }
 
     mutating func deleteBankSnapshot(_ id: UUID) {
-        bankSnapshots.removeAll { $0.id == id }
+        bankSnapshots.removeAll { $0.id == id } // raw: verwijderen op id
     }
 
     // MARK: Stortingen, opnames en overboekingen
@@ -267,28 +269,29 @@ extension FinanceData {
     /// spaarpot samen veranderen dan niet door één kant te wissen. Boekingen zonder `pairID` (van vóór deze regel)
     /// blijven los verwijderbaar.
     mutating func deleteBankEntry(_ id: UUID) {
-        let pair = bankEntries.first { $0.id == id }?.pairID
-        bankEntries.removeAll { $0.id == id || (pair != nil && $0.pairID == pair) }
-        if let pair { potEntries.removeAll { $0.pairID == pair } }
+        let pair = bankEntries.first { $0.id == id }?.pairID // raw: zoeken op id
+        bankEntries.removeAll { $0.id == id || (pair != nil && $0.pairID == pair) } // raw: verwijderen met de andere helft
+        if let pair { potEntries.removeAll { $0.pairID == pair } } // raw: verwijderen met de andere helft
     }
 
     /// Wat er samen met deze bankboeking verdwijnt als je ze verwijdert (de andere helft van de overboeking).
     /// Leeg bij een losse boeking of een onbekend id. Bedoeld voor een waarschuwing in de app.
     func pairedEntries(ofBank id: UUID) -> PairedRemoval {
-        guard let pair = bankEntries.first(where: { $0.id == id })?.pairID else { return PairedRemoval() }
+        guard let pair = bankEntries.first(where: { $0.id == id })?.pairID else { return PairedRemoval() } // raw: zoeken op id
         return pairedRemoval(pairID: pair, exceptBank: id, exceptPot: nil)
     }
 
     /// Wat er samen met deze potboeking verdwijnt als je ze verwijdert (de andere helft van de overboeking).
     /// Leeg bij een losse boeking of een onbekend id. Bedoeld voor een waarschuwing in de app.
     func pairedEntries(ofPot id: UUID) -> PairedRemoval {
-        guard let pair = potEntries.first(where: { $0.id == id })?.pairID else { return PairedRemoval() }
+        guard let pair = potEntries.first(where: { $0.id == id })?.pairID else { return PairedRemoval() } // raw: zoeken op id
         return pairedRemoval(pairID: pair, exceptBank: nil, exceptPot: id)
     }
 
     private func pairedRemoval(pairID: UUID, exceptBank: UUID?, exceptPot: UUID?) -> PairedRemoval {
-        PairedRemoval(bankEntries: bankEntries.filter { $0.pairID == pairID && $0.id != exceptBank },
-                      potEntries: potEntries.filter { $0.pairID == pairID && $0.id != exceptPot })
+        // De andere helften van een overboeking zoeken op pairID, ook als ze vóór de startdatum liggen (daarom de ruwe lijsten).
+        PairedRemoval(bankEntries: bankEntries.filter { $0.pairID == pairID && $0.id != exceptBank }, // raw: op pairID
+                      potEntries: potEntries.filter { $0.pairID == pairID && $0.id != exceptPot }) // raw: op pairID
     }
 
     /// Boekt geld van de bankrekening naar een spaarpot. Beide helften delen een `pairID`.
