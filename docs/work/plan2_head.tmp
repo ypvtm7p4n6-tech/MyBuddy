@@ -1,0 +1,25 @@
+# MyBuddy: verdelen met een extra bedrag, extra overschrijfdata, de bankrekening als bestemming, doelen met meer potten, opnemen met bestemming en loon per maand (bouwplan 2)
+
+Peildatum 29 oktober 2026. Basis: `HEAD` a95891f (stabiele basislijn, 1848 tests groen) plus golf 1 van `docs/work/plan.md` (startdatum) als af gerekend; de proef draaide op de tussenstand van golf 1 (commit 87f50d8, 1957 tests groen, 10 overgeslagen). Dit plan hoort bij `docs/work/plan.md`: het gebruikt de bouwstenen van de startdatum (`counts(day:in:)`, `countedBankEntries`, `countedPotEntries`, `forEstimates`, `firstCountedDay(in:)`) en past in de golven van dat plan (par. 5). Er is niets in `App/`, `CoreTests/` of `Tests/` aangepast; alleen dit plan en proefbestanden in `/tmp/arch-probe2/`.
+
+De wens van de gebruiker (29 okt. 2026), in zes werkstukken:
+
+| # | Wens | Kort |
+|---|---|---|
+| D1 | Naast een vast percentage ook een bedrag invullen dat er extra bij komt in dezelfde pot. | Percentage plus extra bedrag, standaard en per maand. |
+| D2 | Meerdere data als overschrijfdag naast de standaarddag (op basis van je uitbetaaldag); een overschrijving op een andere dag gaat pas op die dag echt over. | Delen van de inleg op een eigen dag, standaard en per maand. |
+| D3 | In Verdelen ook standaard naar je bankrekening kunnen overschrijven, zoals naar spaarpotten. | De bankrekening als rij in de verdeling (toewijzing zonder beweging). |
+| D4 | Bij spaardoelen meerdere spaarpotten kunnen gebruiken. | Een doel uit meer potten. |
+| D5 | Bij geld opnemen uit een pot aangeven waar het heen gaat (andere pot, bankrekening), en dat het er echt komt. | Opnemen en storten met bestemming en herkomst. |
+| D6 | Het uurloon of salaris per maand kunnen aanpassen ("vanaf november uurloon Y in plaats van X"). | Loon per maand: een lijst met wijzigingen vanaf een maand. |
+
+## Bewijs
+
+**Wat is geprobeerd (29 okt., proefkopie van de tussenstand van golf 1 in `/tmp/arch-probe2/ref/`; referentiecode, tests en `core-edits-vs-golf1.diff` in `/tmp/arch-probe2/ref-verdelen/`; de bouwer neemt over of schrijft opnieuw).**
+- Basislijn: `swift test` op de tussenstand van golf 1: 1957 tests groen. Met alle Core-wijzigingen van dit plan blijven die 1957 groen, inclusief de byte-vergelijking van het oude opslagformaat (`StartDateLegacyOutput`), en de proeftests komen erbij (zie hieronder; totaal PROEF_TOTAAL tests).
+- D1+D2+D3+D5: `ledgerScenario` is aan het EIND uitgebreid met een zesde reeks (zaad + 41_000): 87 van de eerste 200 datasets hebben een percentage met extra bedrag, 91 extra overschrijfdata (67 ook per maand), 95 een bankdeel, 62 opnemen of storten met bestemming. Een onafhankelijke berekening van de stukken (gewone lussen, zonder `TransferMath`) legt zich naast elke overschrijving: dagen en bedragen kloppen in 384 pot-maanden met gesplitste overschrijvingen en 806 maanden met een extra bedrag. `LedgerConsistencyTests` slaagt op 200 en op 1200 zaadwaarden: het dagboek sluit (bank, potten, overzicht) op elke dag, ook met een startdatum midden in de maand (`StartDayPropertyTests`).
+- D3, de keuze: de eigenschapstest `testTheBankShareMovesNoMoneyOnAnyDay` zet 135 datasets met een bankdeel (428 maanden) naast dezelfde gegevens zonder bankdeel: banksaldo, potsaldo en gebeurtenissen van elke dag en het vermogen zijn gelijk; `remaining` is gelijk; `unassigned == remaining - toBank`. `testRemainingToTheBankReachesExactlyZero` (meer dan 300 maanden): "Rest naar bankrekening" brengt "nog te verdelen" op precies 0 zonder iets anders te veranderen.
+- D4: een doel met twee potten rekent als een doel met eigen waarden met de som van de saldi en van de maandinleg (gelijke maanden tot het doel en gelijke voortgang); een doel met één pot is byte voor byte wat het was; zonder de sleutel `morePotIDs` (zoals een oudere app die leest) is het een doel met de eerste pot.
+- D6: de uitbetalingen van 300 datasets, met wijzigingen van het loon per maand, een schema om de zoveel weken of dagen, een eigen salaris of eigen uren en een startdatum, komen overeen met een onafhankelijke berekening (`referenceSalarySettings`, `referenceSalaryPayouts`); het dagboek sluit.
+- Typecontrole: `run-all.sh quick` op de proefkopie (private kopie `/tmp/ctl-arch2`): 0 fouten; de bestaande schermen compileren ongewijzigd tegen de nieuwe Core (alle nieuwe parameters hebben een standaardwaarde).
+
