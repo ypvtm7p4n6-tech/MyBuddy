@@ -51,7 +51,7 @@ struct MoneyLineRowLabel: View {
         let payers = payingPots(d)
         let info: SeriesInfo? = line.isRecurring ? d.seriesInfo(of: line, in: month) : nil
         let note = RecurringText.rowNote(info: info, month: month, current: store.now)
-        let texts = detailTexts(day: day, payers: payers, note: note)
+        let texts = detailTexts(day: day, payers: payers, note: note, counts: lineCounts(d))
         Group {
             if typeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 4) {
@@ -74,7 +74,12 @@ struct MoneyLineRowLabel: View {
         return line.isRecurring ? "\(dayText) · elke maand" : dayText
     }
 
-    private func detailTexts(day: Int, payers: [Pot], note: RecurringRowNote?) -> some View {
+    /// Telt de regel mee? In de startmaand niet als haar dag vóór de startdatum valt (zie `FinanceData.incomeCounts`).
+    private func lineCounts(_ d: FinanceData) -> Bool {
+        kind == .income ? d.incomeCounts(line, in: month) : d.expenseCounts(line, in: month)
+    }
+
+    private func detailTexts(day: Int, payers: [Pot], note: RecurringRowNote?, counts: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(line.name)
                 .font(.body)
@@ -82,6 +87,11 @@ struct MoneyLineRowLabel: View {
             Label(metaText(day: day), systemImage: line.isRecurring ? "arrow.triangle.2.circlepath" : "calendar")
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)
+            if !counts {
+                Label(StartDateText.lineBeforeStart, systemImage: "calendar.badge.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.warning)
+            }
             if let note {
                 Text(note.text)
                     .font(.footnote)
@@ -228,7 +238,7 @@ struct MoneyLinesSection: View {
         let lines = all.filter { expenseKind == nil || kind == .income || $0.kind == expenseKind }
         Section {
             if beforeStart {
-                MonthExplanation(text: "Maanden vóór je startmaand (\(Fmt.month(d.startMonth))) tellen niet mee: daar vul je niets in.")
+                MonthExplanation(text: StartDateText.beforeStartNote(d, .fillIn))
             } else if lines.isEmpty {
                 EmptyHint(symbol: MoneyLinesText.symbol(kind: kind, expenseKind: expenseKind),
                           title: MoneyLinesText.emptyTitle(kind: kind, expenseKind: expenseKind),
@@ -248,13 +258,15 @@ struct MoneyLinesSection: View {
         }
     }
 
+    /// Het totaal van de regels die meetellen: in de startmaand niet die vóór de startdatum (die staan er wel, met een opmerking).
     @ViewBuilder
     private func totalRow(_ d: FinanceData, lines: [MoneyLine]) -> some View {
-        if !lines.isEmpty {
+        let counted = lines.filter { kind == .income ? d.incomeCounts($0, in: month) : d.expenseCounts($0, in: month) }
+        if !counted.isEmpty {
             let fromPots = kind == .expense
-                ? CentsMath.value(CentsMath.sum(lines.map { CentsMath.int(d.fromPots(of: $0)) }))
+                ? CentsMath.value(CentsMath.sum(counted.map { CentsMath.int(d.fromPots(of: $0)) }))
                 : 0
-            AmountRow(title: "Totaal", value: Fmt.euro(lines.total),
+            AmountRow(title: "Totaal", value: Fmt.euro(counted.total),
                       detail: fromPots > 0 ? "Waarvan \(Fmt.euro(fromPots)) uit spaarpotten" : nil, bold: true)
         }
     }

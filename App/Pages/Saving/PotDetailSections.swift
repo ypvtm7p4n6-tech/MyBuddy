@@ -246,7 +246,7 @@ struct PotContributionSection: View {
         Text("Geen rente ingesteld. Stel een percentage in en de app schrijft de rente zelf bij op de dag dat die wordt uitbetaald.")
             .font(.footnote)
             .foregroundStyle(Theme.textSecondary)
-        if store.data.potEntries.contains(where: { $0.potID == pot.id && $0.kind == .interest }) {
+        if store.data.countedPotEntries.contains(where: { $0.potID == pot.id && $0.kind == .interest }) {
             Text("Rente die al is bijgeschreven blijft in de geschiedenis staan. Klopt het saldo niet meer, pas het dan aan met Saldo aanpassen.")
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)

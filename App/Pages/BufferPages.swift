@@ -179,7 +179,8 @@ private struct BufferPageContent: View {
 
     @ViewBuilder
     private func expensesCard(_ d: FinanceData, now: YearMonth, result r: BufferResult) -> some View {
-        let overview = d.expenseOverview(in: now)
+        // Een buffer rekent met een HELE startmaand (`forEstimates`), net als de berekening zelf.
+        let overview = d.forEstimates.expenseOverview(in: now)
         let known = overview.fixed + overview.variable > 0
         Card(title: "Noodzakelijke uitgaven", symbol: "cart", domain: .goals,
              subtitle: known ? "Uit je uitgaven van \(Fmt.month(now))" : "Nog geen uitgaven ingevuld") {

@@ -656,7 +656,8 @@ struct BankFlowFigures: Equatable {
     /// Het deel van de uitgaven van één soort dat van de bankrekening gaat, zoals de rekenmotor het boekt per regel.
     private static func bankPart(_ d: FinanceData, month: YearMonth, kind: ExpenseKind) -> Double {
         guard month >= d.startMonth else { return 0 }
-        let cents = d.expenseLines(in: month, kind: kind).map { CentsMath.int(d.fromBank(of: $0)) }
+        // Alleen de uitgaven die meetellen (in de startmaand die op of na de startdag), zoals `expenseOverview`.
+        let cents = d.countedExpenseLines(in: month, kind: kind).map { CentsMath.int(d.fromBank(of: $0)) }
         return CentsMath.value(CentsMath.sum(cents))
     }
 
@@ -681,11 +682,12 @@ struct BankHistoryItem: Identifiable, Equatable {
     /// Alle ingevulde saldi en boekingen, de nieuwste eerst (bij dezelfde datum in een vaste volgorde).
     static func items(from d: FinanceData) -> [BankHistoryItem] {
         var list: [BankHistoryItem] = []
-        for snapshot in d.bankSnapshots {
+        // Alleen wat meetelt: met een startdatum staan boekingen en saldi van daarvoor niet in de lijst.
+        for snapshot in d.countedBankSnapshots {
             list.append(BankHistoryItem(id: snapshot.id, date: snapshot.date, title: "Saldo ingevuld", detail: snapshot.note,
                                         amount: snapshot.balance, isSnapshot: true))
         }
-        for entry in d.bankEntries {
+        for entry in d.countedBankEntries {
             list.append(BankHistoryItem(id: entry.id, date: entry.date, title: entry.kind.title, detail: entry.note,
                                         amount: entry.amount, isSnapshot: false))
         }
@@ -697,7 +699,7 @@ struct BankHistoryItem: Identifiable, Equatable {
     /// De tekst voor de bevestiging bij het verwijderen van een boeking, of nil als de boeking los staat (dan is verwijderen
     /// veilig en vraagt de app niets).
     static func removalWarning(forBankEntry id: UUID, in d: FinanceData) -> String? {
-        guard let entry = d.bankEntries.first(where: { $0.id == id }) else { return nil }
+        guard let entry = d.bankEntries.first(where: { $0.id == id }) else { return nil } // raw: zoeken op id
         // Een overboeking met `pairID`: de rekenmotor verwijdert beide helften en zegt zelf wat er verdwijnt.
         if let warning = d.pairedEntries(ofBank: id).warning { return warning }
         // Een oude overboeking zonder `pairID`: alleen de kant op de bankrekening verdwijnt.

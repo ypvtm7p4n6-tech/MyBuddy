@@ -214,6 +214,6 @@ struct LibraryFigures {
     // MARK: Teksten
 
     private var beforeStartText: String {
-        "Telt mee vanaf je startmaand (\(Fmt.month(data.startMonth)))"
+        StartDateText.countsFromNote(data)
     }
 }

@@ -26,7 +26,8 @@ struct RecentItem: Identifiable, Equatable {
 // MARK: - De laatste handmatige boekingen
 
 /// Recent (B18 van docs/design2/plan.md): de laatste handmatige boekingen op de bankrekening en in spaarpotten, de nieuwste
-/// eerst. Er wordt niets bewaard en niets uitgerekend: de lijst komt uit `bankEntries` en `potEntries`. Een beginsaldo
+/// eerst. Er wordt niets bewaard en niets uitgerekend: de lijst komt uit `bankEntries` en `potEntries` (de boekingen die
+/// meetellen: met een startdatum niet die van vóór de startdag, zie `countedBankEntries`). Een beginsaldo
 /// (`.opening`) is geen boeking van jou en de rente die de app zelf bijschrijft (`.interest`) evenmin. Een boeking na `asOf`
 /// (gepland) staat er nog niet in. Een overboeking bestaat uit twee helften met hetzelfde `pairID`; die staat er eenmaal.
 enum RecentActivity {
@@ -57,7 +58,7 @@ enum RecentActivity {
     /// De boekingen op de bankrekening. Een overboeking met een spaarpot staat er niet: die komt van de potkant.
     private static func bankEvents(in data: FinanceData, asOf: Date, context: RecentContext) -> [RecentEvent] {
         var events: [RecentEvent] = []
-        for (index, entry) in data.bankEntries.enumerated() {
+        for (index, entry) in data.countedBankEntries.enumerated() {
             guard entry.date <= asOf else { continue }
             if let pair = entry.pairID, context.hasPotHalf(pair) { continue }
             let subtitle = joined([entry.kind.title, entry.note, Fmt.date(entry.date)])
@@ -74,7 +75,7 @@ enum RecentActivity {
     /// De boekingen in spaarpotten, zonder beginsaldo en rente. Van een overboeking telt één helft.
     private static func potEvents(in data: FinanceData, asOf: Date, context: RecentContext) -> [RecentEvent] {
         var events: [RecentEvent] = []
-        for (index, entry) in data.potEntries.enumerated() {
+        for (index, entry) in data.countedPotEntries.enumerated() {
             guard entry.date <= asOf, entry.kind != .opening, entry.kind != .interest else { continue }
             guard let pot = context.pots[entry.potID] else { continue }
             if let item = potItem(entry, pot: pot, context: context) {
@@ -148,13 +149,13 @@ private struct RecentContext {
         for pot in data.pots {
             pots[pot.id] = pot
         }
-        for entry in data.potEntries where entry.kind != .opening {
+        for entry in data.countedPotEntries where entry.kind != .opening {
             guard let pair = entry.pairID, pots[entry.potID] != nil else { continue }
             var halves: [PotEntry] = potHalves[pair] ?? []
             halves.append(entry)
             potHalves[pair] = halves
         }
-        for entry in data.bankEntries {
+        for entry in data.countedBankEntries {
             if let pair = entry.pairID {
                 bankHalves[pair] = entry
             }

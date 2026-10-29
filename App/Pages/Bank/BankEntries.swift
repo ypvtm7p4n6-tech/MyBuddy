@@ -3,7 +3,8 @@ import SwiftUI
 // Het onderdeel Boekingen van Bankrekening: de geschiedenis van ingevulde saldi en boekingen, de nieuwste eerst. Elke rij heeft
 // swipe en contextmenu met Verwijderen (`rowActions`). Een ingevuld saldo en een losse storting of opname verdwijnen meteen; hoort
 // een boeking bij een overboeking naar of van een spaarpot, dan vraagt de app eerst om bevestiging en zegt ze wat er verdwijnt.
-// De lijst en de tekst van de bevestiging komen uit `BankHistoryItem` (CashflowDisplay.swift).
+// De lijst en de tekst van de bevestiging komen uit `BankHistoryItem` (CashflowDisplay.swift). Met een startdatum staan alleen de
+// boekingen vanaf die dag in de lijst; onderaan zegt een rij hoeveel eraan voorafgingen (ze blijven bewaard).
 
 /// Een boeking waarvan het verwijderen eerst om een bevestiging vraagt, omdat er een andere helft bij hoort.
 struct BankPendingDelete: Identifiable {
@@ -29,8 +30,19 @@ struct BankEntriesSections: View {
                     row(item)
                 }
             }
+            hiddenRow
         } header: {
             SectionHeader("Geschiedenis", symbol: "clock.arrow.circlepath", domain: .money)
+        }
+    }
+
+    /// Onderaan de lijst: hoeveel boekingen er vóór je startdatum liggen (bewaard, maar ze tellen niet mee), met een link naar
+    /// Startdatum. Zonder startdatum, of zonder zulke boekingen, staat er niets.
+    @ViewBuilder
+    private var hiddenRow: some View {
+        if let note = StartDateText.hiddenBankNote(store.data) {
+            NavigationRow(title: StartDateText.pageTitle, symbol: "calendar", domain: .settings, subtitle: note,
+                          destination: .settings(.startDate))
         }
     }
 

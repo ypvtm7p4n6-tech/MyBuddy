@@ -48,7 +48,7 @@ final class SearchIndexTests: XCTestCase {
     func testPageEntryCountMatchesPageDestinations() {
         let required = NavigationTestSupport.allDestinations().filter { requiresPageEntry($0) }
         XCTAssertEqual(SearchIndex.pages.count, required.count)
-        XCTAssertEqual(SearchIndex.pages.count, 29)
+        XCTAssertEqual(SearchIndex.pages.count, 30)
         XCTAssertEqual(SearchIndex.pages.count, PageCatalog.all.count + SettingsPage.allCases.count)
         // Elke bestemming heeft precies een regel.
         XCTAssertEqual(Set(SearchIndex.pages.map { $0.destination }).count, SearchIndex.pages.count)
@@ -120,6 +120,21 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertEqual(found("Account").first, .settings(.account))
         XCTAssertTrue(found("Belegd sinds").contains(.portfolio))
         XCTAssertTrue(found("Minimumsaldo").contains(.bank))
+    }
+
+    func testFindsTheStartDatePageByItsTerms() {
+        let data = emptyData()
+        func found(_ query: String) -> [Destination] { destinations(SearchIndex.results(for: query, in: data)) }
+        // De termen van docs/work/plan.md par. 2.3: beginnen, startdatum, begindatum, vanaf, opnieuw beginnen, eerste dag, beginsaldo.
+        for term in ["beginnen", "startdatum", "begindatum", "vanaf", "opnieuw beginnen", "eerste dag", "beginsaldo", "Startdatum"] {
+            XCTAssertTrue(found(term).contains(.settings(.startDate)), "'\(term)' vindt de startdatum niet")
+        }
+        XCTAssertEqual(found("Startdatum").first, .settings(.startDate), "de titel begint ermee")
+        let entry = SearchIndex.pages.first { $0.destination == .settings(.startDate) }
+        XCTAssertEqual(entry?.id, "settings-startDate")
+        XCTAssertEqual(entry?.title, "Startdatum")
+        XCTAssertEqual(entry?.group, .settings)
+        XCTAssertEqual(entry?.hue, .sage)
     }
 
     func testTitlePrefixComesBeforeTitleContainsBeforeOtherNames() {

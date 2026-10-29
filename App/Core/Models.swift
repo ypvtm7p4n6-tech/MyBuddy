@@ -734,6 +734,9 @@ struct AcceleratorBackup: Codable, Equatable {
 struct FinanceData: Codable, Equatable {
     var version: Int = 1
     var startMonth: YearMonth
+    /// De eerste dag van de tijdlijn (dagnauwkeurig); wat daarvoor valt telt niet mee (`StartDate.swift`). nil: de eerste dag van
+    /// `startMonth`, zoals altijd. Zet hem met `setStart(_:)`, dat `startMonth` meeneemt: `startDay.yearMonth == startMonth`.
+    var startDay: CalendarDay?
     var salary = SalarySettings()
     var months: [String: MonthPlan] = [:] {
         // De tussenopslag hoort bij precies deze maandplannen: bij elke wijziging begint een nieuwe, lege opslag. Een kopie
@@ -764,7 +767,7 @@ struct FinanceData: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case version, startMonth, salary, months, pots, potEntries, holdings
+        case version, startMonth, startDay, salary, months, pots, potEntries, holdings
         case bankSnapshots, bankEntries, goals, homePotIDs, homeHoldingIDs, settings
         case appliedAccelerators, modifiedAt
     }
@@ -777,6 +780,12 @@ extension FinanceData {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(startMonth: try c.decodeIfPresent(YearMonth.self, forKey: .startMonth) ?? YearMonth.current())
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        // Een onleesbare startdatum wordt genegeerd (het bestand laadt gewoon); een startdatum buiten `startMonth` wint: de
+        // startmaand volgt de dag, zodat `startDay.yearMonth == startMonth` altijd waar is.
+        if let day = try? c.decodeIfPresent(CalendarDay.self, forKey: .startDay) {
+            startDay = day
+            startMonth = day.yearMonth
+        }
         salary = try c.decodeIfPresent(SalarySettings.self, forKey: .salary) ?? SalarySettings()
         months = try c.decodeIfPresent([String: MonthPlan].self, forKey: .months) ?? [:]
         pots = try c.decodeIfPresent([Pot].self, forKey: .pots) ?? []
@@ -790,5 +799,30 @@ extension FinanceData {
         settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
         appliedAccelerators = try c.decodeIfPresent([AppliedAccelerator].self, forKey: .appliedAccelerators) ?? []
         modifiedAt = try c.decodeIfPresent(Date.self, forKey: .modifiedAt)
+    }
+}
+
+// Een eigen `encode`: hetzelfde als de automatische (dezelfde sleutels, dezelfde waarden), maar `startDay` alleen als hij iets zegt.
+// Een bestand zonder startdatum blijft zo byte voor byte gelijk aan vroeger (compact, en gelijk voor cloud, back-up en vergelijken).
+// Een startdatum die niet in `startMonth` valt (iemand zette `startMonth` rechtstreeks) wordt niet bewaard: hij geldt niet.
+extension FinanceData {
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(version, forKey: .version)
+        try c.encode(startMonth, forKey: .startMonth)
+        try c.encodeIfPresent(effectiveStartDay, forKey: .startDay)
+        try c.encode(salary, forKey: .salary)
+        try c.encode(months, forKey: .months)
+        try c.encode(pots, forKey: .pots)
+        try c.encode(potEntries, forKey: .potEntries)
+        try c.encode(holdings, forKey: .holdings)
+        try c.encode(bankSnapshots, forKey: .bankSnapshots)
+        try c.encode(bankEntries, forKey: .bankEntries)
+        try c.encode(goals, forKey: .goals)
+        try c.encodeIfPresent(homePotIDs, forKey: .homePotIDs)
+        try c.encodeIfPresent(homeHoldingIDs, forKey: .homeHoldingIDs)
+        try c.encode(settings, forKey: .settings)
+        try c.encode(appliedAccelerators, forKey: .appliedAccelerators)
+        try c.encodeIfPresent(modifiedAt, forKey: .modifiedAt)
     }
 }

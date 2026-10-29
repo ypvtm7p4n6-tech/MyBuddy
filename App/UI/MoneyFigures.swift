@@ -72,10 +72,14 @@ struct MonthBoard: Equatable {
     /// Bij een salaris om de zoveel weken of dagen: wanneer het salaris in deze maand binnenkomt ("Salaris komt binnen op de
     /// 2e en de 30e."). Het inkomen hierboven is de som van die uitbetalingen. nil bij het maandelijkse schema.
     let salaryNote: String?
+    /// In de startmaand van een startdatum die niet de eerste is: "Je begint op 3 november. In deze maand telt alleen mee wat op of
+    /// na die dag valt." nil in elke andere maand (en zonder startdatum). Zie `StartDateText.partialMonthNote`.
+    let startNote: String?
 
     init(_ data: FinanceData, month: YearMonth) {
         self.month = month
         self.figures = data.monthFigures(month)
+        self.startNote = StartDateText.partialMonthNote(data, month: month)
         if data.salary.isMonthly || month < data.startMonth {
             salaryNote = nil
         } else {
@@ -88,6 +92,7 @@ struct MonthBoard: Equatable {
         self.month = month
         self.figures = figures
         self.salaryNote = nil
+        self.startNote = nil
     }
 
     var income: Double { CentsMath.value(figures.income) }

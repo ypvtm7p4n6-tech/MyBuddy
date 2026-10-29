@@ -117,7 +117,7 @@ extension FinanceData {
         var planItems = [[(date: Date, cents: Int)]](repeating: [], count: targets.count)
         var indexOfPot: [UUID: Int] = [:]
         for (i, pot) in targets.enumerated() where indexOfPot[pot.id] == nil { indexOfPot[pot.id] = i }
-        for e in potEntries {
+        for e in countedPotEntries {
             guard let i = indexOfPot[e.potID] else { continue }
             if managed[e.potID]?.contains(e.id) == true { continue }
             entryItems[i].append((e.date, CentsMath.int(e.amount)))
@@ -175,6 +175,7 @@ extension FinanceData {
             }
             if anyShares {
                 for line in (seriesPayFromPots ? monthPlan().expenses : storedPlan?.expenses ?? []) where !line.potShares.isEmpty {
+                    guard expenseCounts(line, in: month) else { continue }
                     for payment in expenseSplit(of: line).pots {
                         guard let i = indexOfPot[payment.potID] else { continue }
                         planItems[i].append((date(day: min(max(expenseDay(of: line), 1), dayCount)), -payment.cents))
@@ -304,7 +305,7 @@ extension FinanceData {
         guard let pot = self.pot(potID) else { return [] }
         var items: [PotTimelineItem] = []
 
-        for e in potEntries where e.potID == potID {
+        for e in countedPotEntries where e.potID == potID {
             let kind: PotTimelineKind
             switch e.kind {
             case .interest: kind = .interest
@@ -345,7 +346,7 @@ extension FinanceData {
                                              title: "Maandverdeling \(Fmt.month(m))", note: "",
                                              amount: CentsMath.value(cents), isMonthlyAllocation: true, kind: .allocation))
             }
-            for line in monthPlan.expenses where !line.potShares.isEmpty {
+            for line in monthPlan.expenses where !line.potShares.isEmpty && expenseCounts(line, in: m) {
                 for payment in expenseSplit(of: line).pots where payment.potID == potID {
                     items.append(PotTimelineItem(id: "expense-\(line.id.uuidString)-\(payment.shareID.uuidString)-\(m.key)",
                                                  date: m.date(day: expenseDay(of: line), calendar: cal),
@@ -370,7 +371,9 @@ extension FinanceData {
     mutating func addPot(_ pot: Pot, openingBalance: Double = 0, now: Date = Date()) {
         pots.append(pot)
         if openingBalance != 0 {
-            potEntries.append(PotEntry(potID: pot.id, date: now, amount: openingBalance.cents, kind: .opening, note: ""))
+            // Met een startdatum komt een beginsaldo van vóór de startdag op de startdag (anders telde het niet mee).
+            potEntries.append(PotEntry(potID: pot.id, date: openingEntryDate(now: now), amount: openingBalance.cents,
+                                       kind: .opening, note: ""))
         }
     }
 

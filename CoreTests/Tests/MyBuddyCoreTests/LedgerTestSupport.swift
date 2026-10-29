@@ -317,6 +317,37 @@ func ledgerScenario(seed: UInt64) -> LedgerScenario {
             }
         }
     }
+
+    // Een vijfde reeks ingrepen (weer een eigen zaadwaarde, AAN HET EIND: de vier reeksen hierboven blijven voor elke zaadwaarde
+    // gelijk): een startdatum, ook midden in een maand, met handmatige boekingen en een ingevuld saldo van vóór die dag. Wat voor
+    // de startdag valt telt niet mee (docs/work/plan.md par. 2.1) en blijft bewaard; het dagboek sluit ook dan op elke dag.
+    var q = EngRandom(seed: seed &+ 29_000)
+    if q.chance(40) {
+        let month = start.adding(q.int(0...2))
+        let dayNumber = q.chance(25) ? 1 : q.int(1...month.dayCount)
+        let first = CalendarDay(month: month, day: dayNumber)
+        d.setStart(first)
+        features.insert(dayNumber > 1 ? "startdatum midden in de maand" : "startdatum op de eerste")
+        let cutoff = YearMonth.calendar.startOfDay(for: first.date())
+        if q.chance(60) {
+            let before = cutoff.addingTimeInterval(-Double(q.int(1...20)) * 86_400 - Double(q.int(0...20)) * 3_600)
+            d.addBankEntry(amount: q.amount(5, 400), note: "Voor de start", date: before)
+            if let pot = d.pots.first { d.addPotEntry(potID: pot.id, amount: q.amount(5, 300), kind: .deposit, note: "Voor de start", date: before) }
+            if q.chance(60) { d.addBankSnapshot(balance: q.amount(-200, 3_000), note: "Voor de start", date: before) }
+        }
+        // Soms heeft de startmaand een eigen salaris of eigen uren: dat is dan het totaal dat telt.
+        if q.chance(30) {
+            let useSalary = q.chance(50)
+            let salaryValue = q.amount(300, 3_000)
+            let hoursValue = Double(q.int(20...160))
+            d.editPlan(month) { plan in
+                if useSalary { plan.salaryOverride = salaryValue } else { plan.hoursOverride = hoursValue }
+            }
+            features.insert("eigen salaris in de startmaand")
+        }
+        let hidden = d.entriesBefore(first)
+        if hidden.bank + hidden.pots + hidden.balances > 0 { features.insert("boekingen vóór de start") }
+    }
     return LedgerScenario(data: d, today: today, months: start.adding(-2).range(count: span + 5), seed: seed, start: start,
                           features: features)
 }
@@ -331,7 +362,12 @@ func ledgerScenario(seed: UInt64) -> LedgerScenario {
 func referenceBankBalanceCents(_ d: FinanceData, endOfDay date: Date, events eventsOf: (YearMonth) -> [DayEvent]) -> Int? {
     let cal = YearMonth.calendar
     let limit = DayMath.nextDayStart(after: date, calendar: cal)
-    let snapshots = d.bankSnapshots.sorted { $0.date < $1.date }
+    // Met een startdatum bestaat wat daarvoor valt niet: handmatige boekingen en ingevulde saldi van vóór het begin van de
+    // startdag tellen niet mee. Het orakel leest de startdatum zelf uit de gegevens, niet via de hulpjes van de rekenmotor.
+    var cutoff: Date?
+    if let startDay = d.startDay, startDay.yearMonth == d.startMonth { cutoff = cal.startOfDay(for: startDay.date(calendar: cal)) }
+    func counts(_ moment: Date) -> Bool { cutoff.map { moment >= $0 } ?? true }
+    let snapshots = d.bankSnapshots.filter { counts($0.date) }.sorted { $0.date < $1.date }
     var baseCents = 0
     var entriesAfter: Date
     var planCounts: (Date) -> Bool
@@ -341,7 +377,7 @@ func referenceBankBalanceCents(_ d: FinanceData, endOfDay date: Date, events eve
         // Planboekingen van de dag van het meetpunt zitten al in het saldo.
         let firstPlanMoment = DayMath.nextDayStart(after: snapshot.date, calendar: cal)
         planCounts = { $0 >= firstPlanMoment }
-    } else if snapshots.isEmpty, let firstEntry = d.bankEntries.map({ $0.date }).min(), firstEntry < limit {
+    } else if snapshots.isEmpty, let firstEntry = d.bankEntries.filter({ counts($0.date) }).map({ $0.date }).min(), firstEntry < limit {
         // Een virtuele 0 vlak vóór de eerste boeking voor de handmatige boekingen; voor het plan (per kalenderdag) ligt hij
         // aan het begin van de dag van die boeking: de planboekingen van die hele dag tellen mee.
         entriesAfter = firstEntry.addingTimeInterval(-1)

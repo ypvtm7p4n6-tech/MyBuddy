@@ -96,7 +96,10 @@ private struct DistributeSummaryCard: View {
             RoundingNote()
         }
         if month < d.startMonth {
-            MonthExplanation(text: "Maanden vóór je startmaand (\(Fmt.month(d.startMonth))) tellen niet mee: daar verdeel je niets.")
+            MonthExplanation(text: StartDateText.beforeStartNote(d, .distribute))
+        }
+        if let note = StartDateText.partialMonthNote(d, month: month) {
+            MonthExplanation(text: note)
         }
         if figures.available < 0 {
             MonthWarningLine(text: "Je uitgaven zijn hoger dan je inkomen deze maand.", color: Theme.negative)
@@ -232,8 +235,13 @@ private struct MonthAllocationRow: View {
     }
 
     private var amountBinding: Binding<Double> {
-        Binding(get: { store.data.allocation(id, in: month) },
-                set: { value in store.mutate { AllocationEdit.setAmount(&$0, id: id, month: month, amount: value) } })
+        Binding(get: {
+            // Wat de regel zegt, ook als de overschrijving niet meetelt (zie `transferNote`): anders sprong het veld terug naar 0.
+            if case .amount(let value) = store.data.allocationRule(id, in: month) { return CentsMath.value(CentsMath.int(value)) }
+            return store.data.allocation(id, in: month)
+        }, set: { value in
+            store.mutate { AllocationEdit.setAmount(&$0, id: id, month: month, amount: value) }
+        })
     }
 
     private var percentBinding: Binding<Double> {
@@ -277,12 +285,21 @@ private struct MonthAllocationRow: View {
                                resolvedNote: effective.rule.isPercent ? effective.rule.summary : nil,
                                footnote: noIncomeNote(d, rule: effective.rule), subject: name)
             MonthExplanation(text: caption)
+            if let note = transferNote(d) {
+                MonthWarningLine(text: note)
+            }
             if effective.isOverride {
                 standardRow(d)
             }
         }
         .padding(12)
         .tile()
+    }
+
+    /// Valt de overschrijfdag van deze maand vóór de startdatum, dan telt de inleg niet mee: zeg dat bij de rij.
+    private func transferNote(_ d: FinanceData) -> String? {
+        guard month >= d.startMonth, !d.transferCounts(id, in: month) else { return nil }
+        return StartDateText.transferBeforeStart(day: d.transferDay(for: id, in: month))
     }
 
     /// Een percentage van niets is niets: zeg dat, anders lijkt het veld stuk.

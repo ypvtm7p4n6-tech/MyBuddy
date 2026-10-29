@@ -76,6 +76,8 @@ extension FinanceData {
         func add(id: String, day: Int, title: String, kind: DayEventKind, bank: Int, pot: Int = 0,
                  potID: UUID? = nil, holdingID: UUID? = nil, lineID: UUID? = nil) {
             let d = min(max(day, 1), month.dayCount)
+            // Wat vóór de startdag valt bestaat niet (in een gewone maand telt elke dag).
+            guard counts(day: d, in: month) else { return }
             out.append(DayEvent(id: id, date: month.date(day: d, calendar: cal), day: d, title: title, kind: kind,
                                 bankAmount: CentsMath.value(bank), potAmount: CentsMath.value(pot),
                                 potID: potID, holdingID: holdingID, lineID: lineID, isPlanned: false))
@@ -155,7 +157,7 @@ extension FinanceData {
     func bankEntryEvents(in month: YearMonth) -> [DayEvent] {
         let cal = YearMonth.calendar
         var out: [DayEvent] = []
-        for entry in bankEntries where YearMonth(date: entry.date, calendar: cal) == month {
+        for entry in countedBankEntries where YearMonth(date: entry.date, calendar: cal) == month {
             let cents = CentsMath.int(entry.amount)
             guard cents != 0 else { continue }
             out.append(DayEvent(id: "bank-\(entry.id.uuidString)", date: entry.date,
@@ -217,7 +219,7 @@ extension FinanceData {
                 }
             }
             // Rente-boekingen die niet bij het rooster horen (handmatig of van een eerdere instelling).
-            for e in potEntries where e.potID == pot.id && e.kind == .interest && !managed.contains(e.id)
+            for e in countedPotEntries where e.potID == pot.id && e.kind == .interest && !managed.contains(e.id)
                 && e.date >= lowerBound && e.date < upperBound {
                 place(DayEvent(id: "potentry-\(e.id.uuidString)", date: e.date, day: DayMath.dayNumber(of: e.date, calendar: cal),
                                title: "Rente \(pot.name)", kind: .interest, bankAmount: 0, potAmount: e.amount,

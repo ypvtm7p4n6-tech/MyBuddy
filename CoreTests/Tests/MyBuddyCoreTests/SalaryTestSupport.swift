@@ -52,14 +52,18 @@ func referencePayoutCents(_ salary: SalarySettings) -> Int {
 /// De uitbetalingen van `month` zoals ze horen te zijn, met een eventuele overschrijving van de maand (salaris: het totaal;
 /// uren: de uren van de maand, bij uurloon). Het totaal wordt gelijk verdeeld, de restcenten naar de eerste uitbetalingen;
 /// zonder uitbetaling in de maand komt een overschreven salaris op de salarisdag-terugval binnen.
-func referenceSalaryPayouts(_ salary: SalarySettings, start: YearMonth, month: YearMonth,
+func referenceSalaryPayouts(_ salary: SalarySettings, start: YearMonth, month: YearMonth, startDay: CalendarDay? = nil,
                             salaryOverride: Double? = nil, hoursOverride: Double? = nil) -> [ReferencePayout] {
     guard month >= start else { return [] }
-    let days = referencePayDays(salary, start: start, month: month)
+    // Met een startdatum (golf 1, docs/work/plan.md) tellen in de startmaand alleen de uitbetalingen op of na de startdag. Een
+    // eigen salaris of eigen uren is het totaal dat telt, verdeeld over die uitbetalingen. Zonder startdatum telt alles.
+    var firstCounted = 1
+    if let startDay, startDay.yearMonth == month { firstCounted = startDay.day }
+    let days = referencePayDays(salary, start: start, month: month).filter { $0 >= firstCounted }
     func spread(_ total: Int, fallback: Bool) -> [ReferencePayout] {
         if days.isEmpty {
             let day = min(min(max(salary.payDay, 1), 31), month.dayCount)
-            return fallback && total != 0 ? [ReferencePayout(day: day, cents: total)] : []
+            return fallback && total != 0 && day >= firstCounted ? [ReferencePayout(day: day, cents: total)] : []
         }
         // Gelijk verdelen: eerst het hele deel, dan de rest één cent per uitbetaling vanaf de eerste.
         var shares = [Int](repeating: total / days.count, count: days.count)   // alleen voor bedragen vanaf nul

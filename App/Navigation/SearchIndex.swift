@@ -81,7 +81,7 @@ enum SearchIndex {
         return entries
     }
 
-    /// De tien pagina's van Instellingen (alleen met zoektermen die bij de pagina horen).
+    /// De elf pagina's van Instellingen (alleen met zoektermen die bij de pagina horen).
     private static func settingsEntries() -> [SearchEntry] {
         [
             settingsPage(.account, ["inloggen", "uitloggen", "synchronisatie", "cloud", "e-mail", "profiel"]),
@@ -93,7 +93,8 @@ enum SearchIndex {
             settingsPage(.data, ["back-up", "exporteren", "importeren", "excel", "csv", "voorbeelddata", "alles wissen"]),
             settingsPage(.layout, ["volgorde", "blokken", "volgorde aanpassen", "verplaatsen"]),
             settingsPage(.about, ["versie", "privacy", "bronnen", "disclaimer", "over"]),
-            settingsPage(.importReview, ["importeren", "excel", "csv", "controleren"])
+            settingsPage(.importReview, ["importeren", "excel", "csv", "controleren"]),
+            settingsPage(.startDate, ["beginnen", "startdatum", "begindatum", "vanaf", "opnieuw beginnen", "eerste dag", "beginsaldo"])
         ]
     }
 

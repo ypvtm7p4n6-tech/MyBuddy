@@ -333,7 +333,8 @@ extension FinanceData {
     private func interestPayments(of pot: Pot, payoutMonths: [YearMonth], entryIDs: [UUID], managedIDs: Set<UUID>,
                                   ledgers: PotLedgers, limits: FirstDayLimits) -> [InterestPayment] {
         var stored: [UUID: PotEntry] = [:]
-        for e in potEntries where e.potID == pot.id && managedIDs.contains(e.id) && stored[e.id] == nil {
+        let counted = countedPotEntries
+        for e in counted where e.potID == pot.id && managedIDs.contains(e.id) && stored[e.id] == nil {
             stored[e.id] = e
         }
 
@@ -343,7 +344,7 @@ extension FinanceData {
 
         // Tot en met welke maand is er al rente uitbetaald? Opgeslagen rente telt altijd mee, ook van ná `last`.
         var settled: YearMonth?
-        for e in potEntries where e.potID == pot.id && e.kind == .interest && e.amount > 0 {
+        for e in counted where e.potID == pot.id && e.kind == .interest && e.amount > 0 {
             let covered = InterestRules.lastCoveredMonth(payoutMonth: YearMonth(date: e.date, calendar: cal),
                                                          day: DayMath.dayNumber(of: e.date, calendar: cal))
             settled = max(settled ?? covered, covered)

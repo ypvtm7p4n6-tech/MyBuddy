@@ -118,4 +118,34 @@ final class EmptyStartTests: XCTestCase {
     func testSampleDataIsNotEmpty() {
         XCTAssertFalse(FinanceData.sample(now: day(oct2026, 12)).isEmptyStart)
     }
+
+    // MARK: Een startdatum is geen gegevens (docs/work/plan.md, R8)
+
+    func testAStartDateAloneKeepsTheStartEmpty() {
+        var d = FinanceData(startMonth: oct2026)
+        d.setStart(CalendarDay(year: 2026, month: 10, day: 20))
+        XCTAssertTrue(d.isEmptyStart, "een startdatum is geen gegevens: de welkomstkaart blijft")
+        XCTAssertFalse(CloudSync.hasContent(d))
+        XCTAssertTrue(CloudSync.isPristine(d))
+        // Ook met een startdatum in een andere maand.
+        d.setStart(CalendarDay(year: 2027, month: 2, day: 1))
+        XCTAssertTrue(d.isEmptyStart)
+        XCTAssertFalse(CloudSync.hasContent(d))
+    }
+
+    func testAStartDateOnADeviceWithContentChangesNothingAboutTheContent() {
+        var d = FinanceData(startMonth: oct2026)
+        d.upsertLine(MoneyLine(name: "Huur", amount: 900), kind: .expense, in: oct2026)
+        XCTAssertFalse(d.isEmptyStart)
+        d.setStart(CalendarDay(year: 2026, month: 10, day: 20))
+        XCTAssertFalse(d.isEmptyStart)
+        XCTAssertTrue(CloudSync.hasContent(d))
+    }
+
+    func testASyncDecisionIgnoresAStartDateOnAnEmptyDevice() {
+        var local = FinanceData(startMonth: oct2026)
+        local.setStart(CalendarDay(year: 2026, month: 10, day: 20))
+        // Een apparaat met alleen een startdatum telt als leeg: er valt niets te uploaden.
+        XCTAssertEqual(CloudSync.reconcile(local: local, localLastSyncedAt: nil, remote: nil), .noop)
+    }
 }

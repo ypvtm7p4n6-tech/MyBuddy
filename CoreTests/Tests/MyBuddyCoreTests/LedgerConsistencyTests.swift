@@ -215,7 +215,11 @@ final class LedgerConsistencyTests: XCTestCase {
                     if case .percent(let rule) = d.allocationRule(id, in: month) {
                         let hundredths = Int((min(max(rule.percent, 0), 100) * 100).rounded())
                         let base = max(0, rule.basis == .salary ? salaryCents : incomeCents)
-                        f.eq(allocated, (base * hundredths + 5_000) / 10_000, "percentage van het inkomen: \(what)")
+                        // Met een startdatum telt een inleg in de startmaand alleen als zijn overschrijfdag op of na de startdag valt.
+                        var firstCounted = 1
+                        if let startDay = d.startDay, startDay.yearMonth == month { firstCounted = startDay.day }
+                        let counted = d.transferDay(for: id, in: month) >= firstCounted
+                        f.eq(allocated, counted ? (base * hundredths + 5_000) / 10_000 : 0, "percentage van het inkomen: \(what)")
                         coverage.percentMonths += 1
                         if rule.basis == .allIncome && incomeCents != salaryCents { coverage.percentMonthsWithBothBases += 1 }
                     }
@@ -238,7 +242,7 @@ final class LedgerConsistencyTests: XCTestCase {
             // voor stap met `Calendar`, in hele centen), en het maandtotaal is hun som, overal hetzelfde.
             if month >= d.startMonth {
                 let plan = d.plan(for: month)
-                let expected = referenceSalaryPayouts(d.salary, start: d.startMonth, month: month,
+                let expected = referenceSalaryPayouts(d.salary, start: d.startMonth, month: month, startDay: d.startDay,
                                                       salaryOverride: plan.salaryOverride, hoursOverride: plan.hoursOverride)
                 let payouts = d.salaryPayouts(in: month, plan: plan)
                 f.eq(payouts.map(\.day), expected.map(\.day), "dagen van de uitbetalingen: \(what)")
@@ -425,8 +429,9 @@ final class LedgerConsistencyTests: XCTestCase {
         }
 
         // Het moment zelf: boekingen van de dag die later vallen dan nu (alleen mogelijk in deze testdata) tellen nog niet.
-        let lateBank = d.bankEntries.filter { cal.isDate($0.date, inSameDayAs: today) && $0.date > today }
-        let lateSnapshot = d.bankSnapshots.contains { cal.isDate($0.date, inSameDayAs: today) && $0.date > today }
+        // Alleen wat meetelt: boekingen en saldi van vóór de startdag doen niet mee (`countedBankEntries` en volgende).
+        let lateBank = d.countedBankEntries.filter { cal.isDate($0.date, inSameDayAs: today) && $0.date > today }
+        let lateSnapshot = d.countedBankSnapshots.contains { cal.isDate($0.date, inSameDayAs: today) && $0.date > today }
         if !lateSnapshot, d.bankBalance(atMoment: today) != nil, let closing = day.bankBalance {
             let late = CentsMath.sum(lateBank.map { cents($0.amount) })
             f.eq(d.bankBalanceNow(current: month, today: today), CentsMath.value(cents(closing) - late), "bank nu: \(tag)")
@@ -434,7 +439,7 @@ final class LedgerConsistencyTests: XCTestCase {
         var latePots = 0
         for pot in d.pots {
             let managed = d.potFlows(pot, throughMonth: month).managedIDs
-            latePots += CentsMath.sum(d.potEntries.filter {
+            latePots += CentsMath.sum(d.countedPotEntries.filter {
                 $0.potID == pot.id && cal.isDate($0.date, inSameDayAs: today) && $0.date > today && !managed.contains($0.id)
             }.map { cents($0.amount) })
         }

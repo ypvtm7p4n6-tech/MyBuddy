@@ -72,8 +72,13 @@ extension FinanceData {
         plan(for: month).expenses.filter { $0.kind == kind }
     }
 
+    /// De uitgaven van een soort in `month` die meetellen: in de startmaand alleen die op of na de startdag.
+    func countedExpenseLines(in month: YearMonth, kind: ExpenseKind) -> [MoneyLine] {
+        plan(for: month).expenses.filter { $0.kind == kind && expenseCounts($0, in: month) }
+    }
+
     func expenseOverview(in month: YearMonth) -> ExpenseOverview {
-        let lines = month >= startMonth ? plan(for: month).expenses : []
+        let lines = month >= startMonth ? plan(for: month).expenses.filter { expenseCounts($0, in: month) } : []
         func total(_ kind: ExpenseKind) -> Double {
             CentsMath.value(CentsMath.sum(lines.filter { $0.kind == kind }.map { CentsMath.int($0.amount) }))
         }

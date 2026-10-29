@@ -344,13 +344,16 @@ extension FinanceData {
                       potKeys: [String], holdingKeys: [String], salaryCents given: Int? = nil) -> MonthFigures {
         var f = MonthFigures()
         var extra = 0
-        for line in p.extraIncome { extra = CentsMath.add(extra, CentsMath.int(line.amount)) }
+        // Alleen wat op of na de startdag valt telt mee (in een gewone maand is dat alles).
+        for line in p.extraIncome where incomeCounts(line, in: month) {
+            extra = CentsMath.add(extra, CentsMath.int(line.amount))
+        }
         let salaryCents = given ?? self.salaryCents(in: month, plan: p)
         f.income = CentsMath.add(salaryCents, extra)
         let bases = IncomeBases(salary: salaryCents, all: f.income)
         var expenses = 0
         var fromPots = 0
-        for line in p.expenses {
+        for line in p.expenses where expenseCounts(line, in: month) {
             expenses = CentsMath.add(expenses, CentsMath.int(line.amount))
             // Een uitgave zonder delen uit een pot komt helemaal van de bank (spaart een `expenseSplit`).
             if !line.potShares.isEmpty { fromPots = CentsMath.add(fromPots, expenseSplit(of: line).potsCents) }
@@ -378,6 +381,7 @@ extension FinanceData {
     /// Verdeling voor één pot of belegging in een maand, in euro's. Bij een percentage van het inkomen is dit het bedrag
     /// dat daar in deze maand uit volgt (zie `allocationCents`). Overal waar de app een verdeling leest, komt dit getal.
     func allocation(_ id: UUID, in month: YearMonth) -> Double {
+        guard transferCounts(id, in: month) else { return 0 }
         switch allocationRule(id, in: month) {
         // Een vast bedrag met meer dan twee decimalen (import, oud bestand) telt overal op hele centen, zoals de som.
         case .amount(let value): return CentsMath.value(CentsMath.int(value))
@@ -407,7 +411,8 @@ extension FinanceData {
 
     func extraIncomeTotal(in month: YearMonth) -> Double {
         guard month >= startMonth else { return 0 }
-        return CentsMath.value(CentsMath.sum(plan(for: month).extraIncome.map { CentsMath.int($0.amount) }))
+        return CentsMath.value(CentsMath.sum(plan(for: month).extraIncome
+            .filter { incomeCounts($0, in: month) }.map { CentsMath.int($0.amount) }))
     }
 
     func income(in month: YearMonth) -> Double {

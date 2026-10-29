@@ -70,7 +70,13 @@ struct BankActionSheet: View {
                 Text(headerText(bank: bank, potBalance: potBalance))
                     .textCase(nil)
             } footer: {
-                Text(footerText)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(footerText)
+                    // Een startdatum die nog moet komen: wat je nu invult valt ervoor en telt niet mee.
+                    if let warning = StartDateText.entryBeforeStartWarning(d, at: today) {
+                        MonthWarningLine(text: warning)
+                    }
+                }
             }
         }
         .onAppear {

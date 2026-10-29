@@ -299,7 +299,7 @@ enum BufferCalc {
 
     /// Zijn er voor deze maand uitgaven ingevuld?
     static func hasExpenses(in data: FinanceData, current: YearMonth) -> Bool {
-        let overview = data.expenseOverview(in: current)
+        let overview = data.forEstimates.expenseOverview(in: current)
         return overview.fixed + overview.variable > 0
     }
 
@@ -361,7 +361,7 @@ enum BufferCalc {
     /// nu (`today`).
     static func inputs(from data: FinanceData, setup: BufferSetup, current: YearMonth,
                        monthlySaving: Double, fillWithin: Int, today: Date = Date()) -> BufferInputs {
-        let overview = data.expenseOverview(in: current)
+        let overview = data.forEstimates.expenseOverview(in: current)
         let known = overview.fixed + overview.variable > 0
         return BufferInputs(months: setup.situation.recommendation.months,
                             fixedMonthly: known ? overview.fixed : max(0, setup.manualEssential),

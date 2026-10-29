@@ -127,7 +127,7 @@ final class NavigationRulesTests: XCTestCase {
     // MARK: Instellingenpagina's
 
     func testSettingsPagesHaveTitlesSymbolsAndParents() {
-        XCTAssertEqual(SettingsPage.allCases.count, 10)
+        XCTAssertEqual(SettingsPage.allCases.count, 11)
         let titles = SettingsPage.allCases.map { $0.title }
         XCTAssertEqual(Set(titles).count, titles.count, "elke pagina heeft een eigen titel")
         XCTAssertTrue(titles.allSatisfy { !$0.isEmpty })
@@ -137,6 +137,9 @@ final class NavigationRulesTests: XCTestCase {
         XCTAssertEqual(SettingsPage.deleteAccount.parent, .account)
         XCTAssertEqual(SettingsPage.conflictBackups.parent, .account)
         XCTAssertEqual(SettingsPage.importReview.parent, .data)
+        XCTAssertEqual(SettingsPage.startDate.parent, .data, "de startdatum is een subpagina van Gegevens")
+        XCTAssertEqual(SettingsPage.startDate.title, "Startdatum")
+        XCTAssertEqual(SettingsPage.startDate.symbol, "calendar.badge.plus")
         for page in SettingsPage.panes { XCTAssertNil(page.parent, "\(page) is een hoofdpagina") }
     }
 
@@ -147,6 +150,7 @@ final class NavigationRulesTests: XCTestCase {
         }
         XCTAssertEqual(SettingsPage.password.pane, .account)
         XCTAssertEqual(SettingsPage.importReview.pane, .data)
+        XCTAssertEqual(SettingsPage.startDate.pane, .data, "op de Mac een push in de pane Gegevens")
         XCTAssertEqual(SettingsPage.prices.pane, .prices)
     }
 
@@ -277,6 +281,10 @@ final class NavigationRulesTests: XCTestCase {
         XCTAssertEqual(NavigationRules.go(.settings(.importReview), from: .home, path: []).path,
                        [.settingsRoot, .settings(.data), .settings(.importReview)])
         XCTAssertEqual(NavigationRules.go(.settings(.prices), from: .home, path: []).path, [.settingsRoot, .settings(.prices)])
+        // De startdatum (ook vanuit de lege start van Home) staat onder Gegevens.
+        XCTAssertEqual(NavigationRules.go(.settings(.startDate), from: .home, path: []).path,
+                       [.settingsRoot, .settings(.data), .settings(.startDate)])
+        XCTAssertEqual(NavigationRules.go(.settings(.startDate), from: .home, path: []).tab, .home)
     }
 
     func testGoToSettingsKeepsTheExistingPathBelowInstellingen() {

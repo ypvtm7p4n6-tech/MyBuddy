@@ -238,7 +238,9 @@ extension FinanceData {
     func effectiveAllocation(_ id: UUID, in month: YearMonth) -> EffectiveAllocation {
         let rule = allocationRule(id, in: month)
         let standard = defaultAllocationRule(id, in: month) ?? .amount(0)
-        return EffectiveAllocation(rule: rule, amount: amount(of: rule, in: month), isOverride: rule != standard)
+        // Een inleg met een overschrijfdag vóór de startdag telt niet mee: het bedrag is dan 0, de regel blijft zoals hij is.
+        let counted = transferCounts(id, in: month)
+        return EffectiveAllocation(rule: rule, amount: counted ? amount(of: rule, in: month) : 0, isOverride: rule != standard)
     }
 
     /// Het bedrag in euro's van een regel in een maand.
@@ -273,7 +275,9 @@ extension FinanceData {
     /// Het inkomen van een maand uit een plan. Dezelfde som als in `monthFigures`.
     func incomeBases(of plan: MonthPlan, in month: YearMonth) -> IncomeBases {
         var extra = 0
-        for line in plan.extraIncome { extra = CentsMath.add(extra, CentsMath.int(line.amount)) }
+        for line in plan.extraIncome where incomeCounts(line, in: month) {
+            extra = CentsMath.add(extra, CentsMath.int(line.amount))
+        }
         let salary = salaryCents(in: month, plan: plan)
         return IncomeBases(salary: salary, all: CentsMath.add(salary, extra))
     }
@@ -290,6 +294,8 @@ extension FinanceData {
     /// uitgerekend als de regel een percentage is.
     func allocationCents<E: ContributionSource>(_ e: E, key: String, in month: YearMonth, storedPlan: MonthPlan?,
                                                 basesFor bases: () -> IncomeBases) -> Int {
+        // Een inleg telt alleen als zijn overschrijfdag op of na de startdag valt (in een gewone maand altijd).
+        guard transferCounts(e.id, in: month) else { return 0 }
         if let storedPlan {
             if let rule = storedPlan.percentAllocations[key] { return AllocationMath.cents(of: rule, bases: bases()) }
             if let value = storedPlan.allocations[key] { return CentsMath.int(value) }
@@ -309,6 +315,7 @@ extension FinanceData {
     /// Zoals `allocation(_:in:)`, met het inkomen van de maand uit `cache`: precies hetzelfde getal, maar zonder het
     /// maandplan bij elke aanroep opnieuw te bouwen (voor lussen over veel maanden).
     func allocation(_ id: UUID, in month: YearMonth, cache: IncomeBasesCache) -> Double {
+        guard transferCounts(id, in: month) else { return 0 }
         switch allocationRule(id, in: month) {
         case .amount(let value): return CentsMath.value(CentsMath.int(value))
         case .percent(let rule): return CentsMath.value(AllocationMath.cents(of: rule, bases: cache.bases(in: month)))
@@ -317,6 +324,7 @@ extension FinanceData {
 
     /// De verdeling van een pot of belegging (op id) in een maand in hele centen.
     func allocationCents(_ id: UUID, in month: YearMonth) -> Int {
+        guard transferCounts(id, in: month) else { return 0 }
         switch allocationRule(id, in: month) {
         case .amount(let value): return CentsMath.int(value)
         case .percent(let rule): return AllocationMath.cents(of: rule, bases: incomeBases(in: month))

@@ -311,7 +311,8 @@ extension PurchaseContext {
         context.isAverageMonth = !data.salary.isMonthly
         if income > 0 {
             context.remainingThisMonth = data.estimatedRemaining(in: current)
-            context.expensesExceedIncome = CentsMath.int(income) - CentsMath.int(data.expensesFromBank(in: current)) < 0
+            // De uitgaven van een HELE startmaand, net als het gemiddelde inkomen hierboven (`forEstimates`).
+            context.expensesExceedIncome = CentsMath.int(income) - CentsMath.int(data.forEstimates.expensesFromBank(in: current)) < 0
         }
         if let balance = data.bankBalanceNowIfKnown(current: current, today: today) {
             context.bankBalance = balance

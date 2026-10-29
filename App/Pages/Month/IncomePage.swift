@@ -66,6 +66,9 @@ private struct IncomeSummarySection: View {
                 RoundingNote()
             }
             MonthExplanation(text: SalaryScheduleText.capitalized(d.salaryScheduleSummary(asOf: store.today)))
+            if let note = StartDateText.partialMonthNote(d, month: month) {
+                MonthExplanation(text: note)
+            }
             NavigationRow(title: "Salaris instellen", symbol: "eurosign.circle", domain: .money, destination: .salary)
         } header: {
             SectionHeader("Samenvatting", symbol: "eurosign.circle", domain: .money)
@@ -101,8 +104,8 @@ private struct IncomeSalarySection: View {
                           detail: payout.isPlanned ? "Salaris · gepland" : "Salaris", color: Theme.positive,
                           symbol: "briefcase.fill")
             }
-            scheduleNote(d.salary, count: payouts.count, beforeStart: month < d.startMonth)
-            overrideRows(d.salary, plan: plan)
+            scheduleNote(d, count: payouts.count)
+            overrideRows(d, plan: plan)
             NavigationRow(title: "Dag voor dag", symbol: "list.bullet.rectangle", domain: .money, destination: .cashflow)
         } header: {
             SectionHeader("Salaris deze maand", symbol: "calendar", domain: .money)
@@ -121,7 +124,7 @@ private struct IncomeSalarySection: View {
     }
 
     private func subtitle(_ d: FinanceData, count: Int) -> String {
-        if month < d.startMonth { return "Voor je startmaand telt er geen salaris mee" }
+        if month < d.startMonth { return StartDateText.beforeStartSalaryNote(d) }
         switch count {
         case 0: return "Geen salaris deze maand"
         case 1: return "Komt binnen op \(d.salaryPayoutDaysText(in: month))"
@@ -129,10 +132,17 @@ private struct IncomeSalarySection: View {
         }
     }
 
-    /// Bij een schema om de zoveel weken of dagen: wat het aantal uitbetalingen van deze maand betekent.
+    /// Bij een schema om de zoveel weken of dagen: wat het aantal uitbetalingen van deze maand betekent. In de startmaand zegt een
+    /// regel dat uitbetalingen van vóór de startdatum niet meetellen.
     @ViewBuilder
-    private func scheduleNote(_ s: SalarySettings, count: Int, beforeStart: Bool) -> some View {
-        if !s.isMonthly {
+    private func scheduleNote(_ d: FinanceData, count: Int) -> some View {
+        let s = d.salary
+        let beforeStart = month < d.startMonth
+        let skippedBeforeStart = count == 0 && !beforeStart && !d.salaryPayDays(in: month).isEmpty
+            && d.countedSalaryPayDays(in: month).isEmpty
+        if skippedBeforeStart {
+            MonthExplanation(text: StartDateText.payoutsBeforeStart)
+        } else if !s.isMonthly {
             if count == 0 && !beforeStart {
                 MonthExplanation(text: "In \(Fmt.month(month)) valt er geen uitbetaling: je salaris komt \(s.cycleDescription) binnen en deze maand zit daar tussenin.")
             } else if count >= 2 {
@@ -144,7 +154,9 @@ private struct IncomeSalarySection: View {
     }
 
     @ViewBuilder
-    private func overrideRows(_ s: SalarySettings, plan: MonthPlan) -> some View {
+    private func overrideRows(_ d: FinanceData, plan: MonthPlan) -> some View {
+        let s = d.salary
+        let startNote = StartDateText.overrideStartNote(d, month: month)
         switch s.mode {
         case .fixed:
             Toggle("Afwijkend bedrag deze maand", isOn: overrideEnabled)
@@ -152,6 +164,9 @@ private struct IncomeSalarySection: View {
                 NumberRow(title: s.isMonthly ? "Salaris" : "Totaal van de maand", value: overrideAmount)
                 if !s.isMonthly {
                     MonthExplanation(text: "Dit totaal wordt gelijk verdeeld over de uitbetalingen van deze maand.")
+                }
+                if let startNote {
+                    MonthExplanation(text: startNote)
                 }
             }
         case .hourly:
@@ -161,6 +176,9 @@ private struct IncomeSalarySection: View {
                           value: hoursAmount, unit: .plain("uur"))
                 if !s.isMonthly {
                     MonthExplanation(text: "De uren worden gelijk verdeeld over de uitbetalingen van deze maand.")
+                }
+                if let startNote {
+                    MonthExplanation(text: startNote)
                 }
             }
         }

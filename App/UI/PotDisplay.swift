@@ -127,7 +127,7 @@ enum PotInterestStats {
         var total = 0
         var thisYear = 0
 
-        for entry in d.potEntries where entry.kind == .interest && entry.date < limit && wanted.contains(entry.potID) {
+        for entry in d.countedPotEntries where entry.kind == .interest && entry.date < limit && wanted.contains(entry.potID) {
             let cents = CentsMath.int(entry.amount)
             total = CentsMath.add(total, cents)
             if cal.component(.year, from: entry.date) == year { thisYear = CentsMath.add(thisYear, cents) }
@@ -156,7 +156,7 @@ struct PotHistoryContext {
 
     init(pot: Pot, data: FinanceData, through last: YearMonth) {
         potID = pot.id
-        storedInterest = Set(data.potEntries.filter { $0.potID == pot.id && $0.kind == .interest }.map { $0.id })
+        storedInterest = Set(data.countedPotEntries.filter { $0.potID == pot.id && $0.kind == .interest }.map { $0.id })
         managedInterest = Set(data.interestPayoutMonths(for: pot, through: last)
             .map { InterestRules.entryID(for: pot.id, month: $0) })
     }

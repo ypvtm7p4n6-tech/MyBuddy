@@ -362,6 +362,16 @@ extension FinanceData {
         return salary.payDays(in: month, anchor: salaryAnchor())
     }
 
+    /// De uitbetalingen van `month` die meetellen: die op of na de startdag (alleen de startmaand kan er een missen). Zoals
+    /// `salaryPayDays(in:)` voor de rest; de salarisdag voor wat geen eigen dag heeft (`salaryDay(in:)`) blijft het schema volgen,
+    /// ook als die dag vóór de startdag valt: wat toen gebeurde zit al in je beginsaldo.
+    func countedSalaryPayDays(in month: YearMonth) -> [Int] {
+        let days = salaryPayDays(in: month)
+        let cutoff = firstCountedDay(in: month)
+        if cutoff <= 1 { return days }
+        return days.filter { $0 >= cutoff }
+    }
+
     /// De uitbetaaldata van `month` (elk om 12:00 op de dag zelf), oplopend. Zie `salaryPayDays(in:)`.
     func salaryPayDates(in month: YearMonth) -> [Date] {
         let cal = YearMonth.calendar
@@ -389,11 +399,12 @@ extension FinanceData {
     }
 
     /// De eerstvolgende uitbetaling NA de dag van `date` (strikt later: wat vandaag valt is al gebeurd, zoals overal per
-    /// kalenderdag), om 12:00 op de dag zelf. Nooit vóór de startmaand. nil kan alleen bij een onleesbaar jaartal.
+    /// kalenderdag), om 12:00 op de dag zelf. Nooit vóór de startmaand en nooit vóór de startdag. nil kan alleen bij een onleesbaar
+    /// jaartal.
     func nextPayDate(after date: Date) -> Date? {
         let cal = YearMonth.calendar
         let today = CalendarDay(date: date, calendar: cal)
-        let next = salary.nextPayDay(onOrAfter: today.adding(days: 1), notBefore: startMonth, anchor: salaryAnchor())
+        let next = salary.nextPayDay(onOrAfter: max(today.adding(days: 1), firstDay), notBefore: startMonth, anchor: salaryAnchor())
         guard next > today else { return nil }
         return next.date(calendar: cal)
     }
@@ -423,17 +434,24 @@ extension FinanceData {
     func salaryPayoutCents(in month: YearMonth, plan p: MonthPlan) -> [(day: Int, cents: Int)] {
         guard month >= startMonth else { return [] }
         if salary.isMonthly {
-            // Het maandelijkse schema, precies zoals het altijd rekende: één uitbetaling op de salarisdag.
+            // Het maandelijkse schema, precies zoals het altijd rekende: één uitbetaling op de salarisdag. Valt die vóór de
+            // startdag (alleen in de startmaand), dan telt het salaris van deze maand niet mee: het zit al in je beginsaldo.
+            let day = min(salaryDay(), month.dayCount)
+            guard counts(day: day, in: month) else { return [] }
             let amount = p.salaryOverride.map { $0.cents } ?? salary.monthlyAmount(hoursOverride: p.hoursOverride)
-            return [(min(salaryDay(), month.dayCount), CentsMath.int(amount))]
+            return [(day, CentsMath.int(amount))]
         }
-        let days = salary.payDays(in: month, anchor: salaryAnchor())
+        // Alleen de uitbetalingen vanaf de startdag tellen; een eigen salaris of eigen uren is het totaal dat telt, verdeeld over
+        // die uitbetalingen.
+        let cutoff = firstCountedDay(in: month)
+        let days = salary.payDays(in: month, anchor: salaryAnchor()).filter { $0 >= cutoff }
         // Het totaal van de maand gelijk over de uitbetalingen: de restcenten gaan naar de eerste. Zonder uitbetaling in de
         // maand komt alleen een overschreven SALARIS (een bedrag dat de gebruiker er zelf neerzet) op de terugvaldag
         // binnen; uren zonder uitbetaling betalen niets.
         func spread(_ total: Int, fallbackDay: Bool) -> [(day: Int, cents: Int)] {
             guard !days.isEmpty else {
-                return fallbackDay && total != 0 ? [(min(salaryDay(), month.dayCount), total)] : []
+                let day = min(salaryDay(), month.dayCount)
+                return fallbackDay && total != 0 && counts(day: day, in: month) ? [(day, total)] : []
             }
             let share = CivilDays.floorDiv(total, days.count)
             let rest = total - share * days.count
@@ -451,7 +469,9 @@ extension FinanceData {
     /// `remaining`, het overzicht, de projectie en de dagboekhouding.
     func salaryCents(in month: YearMonth, plan p: MonthPlan) -> Int {
         guard month >= startMonth else { return 0 }
-        if salary.isMonthly {
+        // Het maandelijkse schema in een gewone maand: het maandbedrag. In de startmaand loopt het via de uitbetalingen, want
+        // valt de salarisdag vóór de startdag, dan is er die maand geen salaris.
+        if salary.isMonthly, firstCountedDay(in: month) <= 1 {
             let amount = p.salaryOverride.map { $0.cents } ?? salary.monthlyAmount(hoursOverride: p.hoursOverride)
             return CentsMath.int(amount)
         }
@@ -462,9 +482,11 @@ extension FinanceData {
     /// bedrag per uitbetaling. Een goede beginwaarde voor "ander bedrag in deze maand".
     func scheduledSalary(in month: YearMonth) -> Double {
         guard month >= startMonth else { return 0 }
-        if salary.isMonthly { return salary.payoutAmount() }
+        if salary.isMonthly {
+            return counts(day: min(salaryDay(), month.dayCount), in: month) ? salary.payoutAmount() : 0
+        }
         let each = CentsMath.int(salary.payoutAmount())
-        return CentsMath.value(CentsMath.sum(salaryPayDays(in: month).map { _ in each }))
+        return CentsMath.value(CentsMath.sum(countedSalaryPayDays(in: month).map { _ in each }))
     }
 
     /// Legt het salaris van alle maanden VOOR `current` vast (als eigen salaris van die maand), zodat een wijziging van de
@@ -502,8 +524,10 @@ extension FinanceData {
     func salaryHours(in month: YearMonth) -> Double {
         guard month >= startMonth else { return 0 }
         if let hours = months[month.key]?.hoursOverride { return hours }
-        if salary.isMonthly { return salary.defaultMonthlyHours }
-        return Double(salaryPayDays(in: month).count) * salary.hoursPerCycle
+        if salary.isMonthly {
+            return counts(day: min(salaryDay(), month.dayCount), in: month) ? salary.defaultMonthlyHours : 0
+        }
+        return Double(countedSalaryPayDays(in: month).count) * salary.hoursPerCycle
     }
 
     // MARK: Gemiddelde maand (voor schattingen)
@@ -512,6 +536,8 @@ extension FinanceData {
     /// dat het inkomen van `month` zelf (`incomeBases(in:)`). Anders is het salaris het gemiddelde per maand
     /// (`SalarySettings.averageMonthlyAmount`, zonder overschrijvingen) en komen de extra inkomsten van `month` erbij.
     func estimatedIncomeBases(in month: YearMonth) -> IncomeBases {
+        // Een schatting rekent met een HELE startmaand (`forEstimates`).
+        if firstCountedDay(in: month) > 1, month >= startMonth { return forEstimates.estimatedIncomeBases(in: month) }
         guard !salary.isMonthly else { return incomeBases(in: month) }
         guard month >= startMonth else { return IncomeBases() }
         var extra = 0
@@ -524,6 +550,7 @@ extension FinanceData {
     /// maand in plaats van de uitbetalingen van die ene maand (een maand met twee uitbetalingen is geen maat voor "elke
     /// maand"). Het percentage-inkomen volgt mee. Bij het maandelijkse schema precies `monthFigures(_:)`.
     func estimatedFigures(_ month: YearMonth) -> MonthFigures {
+        if firstCountedDay(in: month) > 1, month >= startMonth { return forEstimates.estimatedFigures(month) }
         guard !salary.isMonthly else { return monthFigures(month) }
         guard month >= startMonth else { return MonthFigures() }
         let stored = storedPlans
@@ -545,6 +572,7 @@ extension FinanceData {
     /// Het bedrag van een inlegregel in een gemiddelde maand: een vast bedrag is dat bedrag; een percentage rekent over het
     /// gemiddelde inkomen (`estimatedIncomeBases`). Bij het maandelijkse schema precies `amount(of:in:)`.
     func estimatedAmount(of rule: AllocationRule, in month: YearMonth) -> Double {
+        if firstCountedDay(in: month) > 1, month >= startMonth { return forEstimates.estimatedAmount(of: rule, in: month) }
         guard !salary.isMonthly else { return amount(of: rule, in: month) }
         switch rule {
         case .amount(let value): return CentsMath.value(CentsMath.int(value))
@@ -556,6 +584,7 @@ extension FinanceData {
     /// De inleg van een pot of belegging in een gemiddelde maand (met de overschrijving van die maand, als die er is). Bij
     /// het maandelijkse schema precies `allocation(_:in:)`.
     func estimatedAllocation(_ id: UUID, in month: YearMonth) -> Double {
+        if firstCountedDay(in: month) > 1, month >= startMonth { return forEstimates.estimatedAllocation(id, in: month) }
         guard !salary.isMonthly else { return allocation(id, in: month) }
         return estimatedAmount(of: allocationRule(id, in: month), in: month)
     }
@@ -563,6 +592,7 @@ extension FinanceData {
     /// De standaardinleg van een pot of belegging in een gemiddelde maand (zonder overschrijving van die maand). Bij het
     /// maandelijkse schema precies `defaultAllocation(_:in:)`.
     func estimatedDefaultAllocation(_ id: UUID, in month: YearMonth) -> Double {
+        if firstCountedDay(in: month) > 1, month >= startMonth { return forEstimates.estimatedDefaultAllocation(id, in: month) }
         guard !salary.isMonthly else { return defaultAllocation(id, in: month) }
         guard let rule = defaultAllocationRule(id, in: month) else { return 0 }
         return estimatedAmount(of: rule, in: month)

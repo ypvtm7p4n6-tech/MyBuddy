@@ -46,6 +46,7 @@ struct DataPage: View {
     var body: some View {
         ListScaffold(title: "Gegevens") {
             noticeRows
+            startDateSection
             backupSection
             importSection
             exportSection
@@ -80,6 +81,18 @@ struct DataPage: View {
     private func show(failure text: String) {
         notice = DataNotice(text: text, symbol: SettingsText.attentionSymbol)
         failureCount += 1
+    }
+
+    // MARK: Startdatum
+
+    /// De eerste rij: vanaf welke dag alles telt. Een eigen pagina (een subpagina van Gegevens), want je doet het eenmaal.
+    private var startDateSection: some View {
+        Section {
+            SettingsLinkRow(page: .startDate, title: StartDateText.pageTitle,
+                            subtitle: StartDateText.rowSubtitle(for: store.data))
+        } footer: {
+            SettingsFootnote("Begin je voor het eerst met invullen? Kies de dag waarop alles begint. Wat je daarvoor invulde telt niet mee.")
+        }
     }
 
     // MARK: Back-up
@@ -433,8 +446,6 @@ struct DataPage: View {
         // eraseEverything stempelt de wijziging zelf voor de cloud.
         store.eraseEverything()
         // Ook wat dit apparaat voor dit account onthoudt (spaardoel-concept, buffer, uurloon) gaat weg.
-        let account = accountPrefsID(auth: auth, cloud: cloud)
-        AccountPrefs.clearAll(account: account)
-        SavingsGoalDraft.clearStored(account: account)
+        clearRememberedChoices(auth: auth, cloud: cloud)
     }
 }

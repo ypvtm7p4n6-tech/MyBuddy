@@ -35,10 +35,10 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
 // MARK: - Pagina's van Instellingen
 
 /// De pagina's van Instellingen. Account is de eerste rij; wachtwoord, account verwijderen en de back-ups van conflicten
-/// zijn subpagina's van Account, het importoverzicht is een subpagina van Gegevens.
+/// zijn subpagina's van Account, het importoverzicht en de startdatum zijn subpagina's van Gegevens.
 enum SettingsPage: String, CaseIterable, Hashable {
     case account, password, deleteAccount, conflictBackups,
-         calculations, prices, data, layout, about, importReview
+         calculations, prices, data, layout, about, importReview, startDate
 
     var title: String {
         switch self {
@@ -52,6 +52,7 @@ enum SettingsPage: String, CaseIterable, Hashable {
         case .layout: return "Indeling"
         case .about: return "Over MyBuddy"
         case .importReview: return "Importoverzicht"
+        case .startDate: return "Startdatum"
         }
     }
 
@@ -67,6 +68,7 @@ enum SettingsPage: String, CaseIterable, Hashable {
         case .layout: return "arrow.up.arrow.down"
         case .about: return "info.circle"
         case .importReview: return "square.and.arrow.down"
+        case .startDate: return "calendar.badge.plus"
         }
     }
 
@@ -74,7 +76,7 @@ enum SettingsPage: String, CaseIterable, Hashable {
     var parent: SettingsPage? {
         switch self {
         case .password, .deleteAccount, .conflictBackups: return .account
-        case .importReview: return .data
+        case .importReview, .startDate: return .data
         case .account, .calculations, .prices, .data, .layout, .about: return nil
         }
     }

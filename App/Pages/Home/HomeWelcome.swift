@@ -62,22 +62,24 @@ struct HomeNotices: View {
 
 // MARK: - Lege start
 
-/// Wat je ziet zolang er niets is ingevuld: uitleg, "Salaris instellen" (de ene vervolgstap) en "Voorbeelddata laden". Het
-/// vervangt de hero en de planken. Voorbeelddata vervangt alles, ook in de cloud en op andere apparaten: eerst vragen.
+/// Wat je ziet zolang er niets is ingevuld: uitleg, "Salaris instellen" (de ene vervolgstap), "Beginnen op een datum" (de pagina
+/// Startdatum) en "Voorbeelddata laden". Het vervangt de hero en de planken. Staat er een startdatum, dan zegt een regel wanneer
+/// je begint. Voorbeelddata vervangt alles, ook in de cloud en op andere apparaten: eerst vragen.
 struct HomeWelcome: View {
     @Environment(AppStore.self) private var store
+    @Environment(Router.self) private var router
     @State private var confirmSample = false
 
     var body: some View {
         HeroCard(hue: .olive, eyebrow: "Welkom bij MyBuddy", symbol: "sparkles") {
-            Text("Begin met je salaris. Daarna maak je spaarpotten, voeg je beleggingen toe en verdeel je elke maand je geld.")
-                .font(.body)
-                .foregroundStyle(Theme.onTile)
-                .fixedSize(horizontal: false, vertical: true)
+            welcomeText
         } pills: {
             PillRow {
                 PillLink("Salaris instellen", symbol: "eurosign.circle", style: .onTile, destination: .salary,
                          showsCurrentMonth: true)
+                PillButton("Beginnen op een datum", symbol: "calendar.badge.plus", style: .onTile) {
+                    router.go(.settings(.startDate))
+                }
                 PillButton("Voorbeelddata laden", symbol: "wand.and.stars", style: .onTile) {
                     confirmSample = true
                 }
@@ -95,6 +97,22 @@ struct HomeWelcome: View {
                 Text("Je huidige gegevens worden vervangen, ook in de cloud en op je andere apparaten.")
             } else {
                 Text("Je huidige gegevens worden vervangen.")
+            }
+        }
+    }
+
+    /// De uitleg, en bij een ingestelde startdatum de dag waarop je begint.
+    private var welcomeText: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Begin met je salaris. Daarna maak je spaarpotten, voeg je beleggingen toe en verdeel je elke maand je geld.")
+                .font(.body)
+                .foregroundStyle(Theme.onTile)
+                .fixedSize(horizontal: false, vertical: true)
+            if let line = StartDateText.welcomeLine(for: store.data, today: store.today) {
+                Text(line)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.onTileSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

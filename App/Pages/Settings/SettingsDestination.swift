@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// De pagina bij een `SettingsPage`: de inhoud van alle tien bestemmingen onder `Destination.settings(_)`. Heeft geen eigen
+/// De pagina bij een `SettingsPage`: de inhoud van alle elf bestemmingen onder `Destination.settings(_)`. Heeft geen eigen
 /// `NavigationStack`: de stapel komt van `TabStack` (iPhone en iPad, achter de profielknop) of van `SettingsPane` (Mac). Het
 /// kleurverloop erachter is saliegrijs (`DestinationView` of `SettingsPane` zet het).
 struct SettingsDestination: View {
@@ -28,13 +28,15 @@ struct SettingsDestination: View {
             AboutPage()
         case .importReview:
             SpreadsheetImportPage()
+        case .startDate:
+            StartDatePage()
         }
     }
 }
 
 /// Een pane van het `Settings`-venster op de Mac (Account, Rekenen, Koersen, Gegevens, Indeling, Over MyBuddy). Elke pane
-/// heeft een eigen `NavigationStack`: Wachtwoord wijzigen, Account verwijderen, Back-ups van conflicten en het
-/// Importoverzicht zijn pushes in de stapel van de pane waar ze bij horen. Een diepe link naar zo'n subpagina
+/// heeft een eigen `NavigationStack`: Wachtwoord wijzigen, Account verwijderen, Back-ups van conflicten, het
+/// Importoverzicht en de Startdatum zijn pushes in de stapel van de pane waar ze bij horen. Een diepe link naar zo'n subpagina
 /// (`router.go(.settings(.password))`) komt hier als `subpageRequest` binnen: hoort de subpagina bij deze pane, dan gaat de
 /// pane ernaartoe en wordt het verzoek gewist.
 struct SettingsPane: View {

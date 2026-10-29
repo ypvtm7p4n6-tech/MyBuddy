@@ -59,7 +59,7 @@ struct ExpensesPage: View {
     private func lineSections(month: YearMonth, beforeStart: Bool, hasLines: Bool) -> some View {
         if beforeStart {
             Section {
-                MonthExplanation(text: "Maanden vóór je startmaand (\(Fmt.month(store.data.startMonth))) tellen niet mee: daar vul je niets in.")
+                MonthExplanation(text: StartDateText.beforeStartNote(store.data, .fillIn))
             }
         } else if hasLines {
             MoneyLinesSection(kind: .expense, expenseKind: .fixed, month: month,
@@ -128,6 +128,9 @@ private struct ExpensesSummarySection: View {
             }
             if let message {
                 MonthExplanation(text: message)
+            }
+            if let note = StartDateText.partialMonthNote(store.data, month: month) {
+                MonthExplanation(text: note)
             }
         } header: {
             SectionHeader("Samenvatting", symbol: "creditcard", domain: .money)

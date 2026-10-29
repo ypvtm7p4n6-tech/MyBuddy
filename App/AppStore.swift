@@ -222,12 +222,42 @@ final class AppStore {
     }
 
     func eraseEverything() {
-        var fresh = FinanceData(startMonth: now)
+        replaceWithFresh(FinanceData(startMonth: now))
+    }
+
+    /// Wist alles en begint opnieuw op `day`: nieuwe, lege gegevens met die startdatum (docs/work/plan.md par. 2.2). Wat dit
+    /// apparaat voor dit account onthoudt (`AccountPrefs`) wist de aanroeper, zoals bij `eraseEverything()`.
+    func eraseEverything(startingOn day: CalendarDay) {
+        var fresh = FinanceData(startMonth: day.yearMonth)
+        fresh.startDay = day
+        replaceWithFresh(fresh)
+    }
+
+    private func replaceWithFresh(_ empty: FinanceData) {
+        var fresh = empty
         fresh.materialize(upTo: now)
         fresh.modifiedAt = Date()
         data = fresh
         persist()
         lastPriceRefresh = nil
         onDataChanged?(fresh)
+    }
+
+    // MARK: Startdatum
+
+    /// Zet de startdatum: alles begint op die dag. Wat ervoor valt telt niet meer mee maar blijft bewaard. De maanden vanaf de
+    /// (nieuwe) startmaand worden vastgelegd, zoals bij het opstarten.
+    func setStart(_ day: CalendarDay) {
+        let current = now
+        mutate { draft in
+            draft.setStart(day)
+            draft.materialize(upTo: current)
+        }
+    }
+
+    /// Zet het beginsaldo op de startdag: het banksaldo (nil laat de bank met rust) en het saldo per spaarpot, beide aan het eind
+    /// van die dag. Zie `FinanceData.setOpeningBalances(on:bank:pots:now:)`.
+    func setOpeningBalances(on day: CalendarDay, bank: Double?, pots: [UUID: Double]) {
+        mutate { $0.setOpeningBalances(on: day, bank: bank, pots: pots, now: Date()) }
     }
 }

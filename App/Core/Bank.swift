@@ -72,7 +72,7 @@ struct BankTimeline {
         var earliest: Date?
         if !snaps.isEmpty {
             earliest = (snaps.last(where: { $0.date < firstLimit }) ?? snaps.first)?.date
-        } else if let first = data.bankEntries.map({ $0.date }).min() {
+        } else if let first = data.countedBankEntries.map({ $0.date }).min() {
             earliest = first.addingTimeInterval(-1)
         }
         guard let start = earliest, start < lastLimit else { return nil }
@@ -83,7 +83,9 @@ struct BankTimeline {
         let snaps = data.sortedBankSnapshots
         snapshots = snaps
         hasSnapshots = !snaps.isEmpty
-        firstEntryDate = data.bankEntries.map { $0.date }.min()
+        // Alleen de handmatige boekingen die meetellen (vanaf de startdag); zonder startdatum zijn het alle boekingen.
+        let counted = data.countedBankEntries
+        firstEntryDate = counted.map { $0.date }.min()
 
         var planItems: [(date: Date, cents: Int)] = []
         var entryItems: [(date: Date, cents: Int)] = []
@@ -109,7 +111,7 @@ struct BankTimeline {
                 }
                 let from = firstSummarized.firstDay
                 let until = next.firstDay
-                for entry in data.bankEntries where entry.date >= from && entry.date < until {
+                for entry in counted where entry.date >= from && entry.date < until {
                     let cents = CentsMath.int(entry.amount)
                     if cents != 0 { entryItems.append((date: entry.date, cents: cents)) }
                 }
@@ -175,14 +177,15 @@ struct BankTimeline {
 }
 
 extension FinanceData {
+    /// De ingevulde saldi die meetellen, op datum (saldi van vóór de startdag tellen niet).
     var sortedBankSnapshots: [BankSnapshot] {
-        bankSnapshots.sorted { $0.date < $1.date }
+        countedBankSnapshots.sorted { $0.date < $1.date }
     }
 
     /// Is er ooit een meetpunt of boeking ingevuld? Dat zegt niet dat het saldo van NU bekend is: een meetpunt dat in de
     /// toekomst ligt geeft nog geen saldo. Voor "toon het saldo van nu, anders onbekend" is `hasBankBalanceNow` (of
     /// `bankBalanceNowIfKnown`) het juiste antwoord.
-    var hasBankBalance: Bool { !bankSnapshots.isEmpty || !bankEntries.isEmpty }
+    var hasBankBalance: Bool { !countedBankSnapshots.isEmpty || !countedBankEntries.isEmpty }
 
     /// Saldo aan het eind van `month`: het saldo aan het eind van de laatste dag van die maand.
     /// nil als er voor die maand nog geen saldo bekend is.
@@ -315,9 +318,11 @@ extension FinanceData {
     /// Gemiddelde uitgaven per maand (de laatste drie maanden t/m nu, anders de huidige plannen).
     /// Telt alle uitgaven mee, ook wat uit spaarpotten betaald wordt: een buffer moet ze allemaal dekken.
     func averageMonthlyExpenses(current: YearMonth) -> Double {
+        // Een schatting rekent met een HELE startmaand (`forEstimates`).
+        let whole = forEstimates
         let recent = current.adding(-2).range(count: 3).filter { $0 >= startMonth }
         let list = recent.isEmpty ? [current] : recent
-        let total = CentsMath.sum(list.map { CentsMath.int(expensesTotal(in: $0)) })
+        let total = CentsMath.sum(list.map { CentsMath.int(whole.expensesTotal(in: $0)) })
         return (CentsMath.value(total) / Double(list.count)).cents
     }
 

@@ -49,6 +49,10 @@ struct PotHistorySection: View {
                     withAnimation(reduceMotion ? nil : Theme.motion) { showAll.toggle() }
                 }
             }
+            if let hiddenNote = StartDateText.hiddenPotNote(d, potID: pot.id) {
+                NavigationRow(title: StartDateText.pageTitle, symbol: "calendar", domain: .settings, subtitle: hiddenNote,
+                              destination: .settings(.startDate))
+            }
         } header: {
             SectionHeader("Geschiedenis", symbol: "clock.arrow.circlepath", domain: .saving)
         }
@@ -98,7 +102,7 @@ struct PotHistorySection: View {
     /// De tekst voor de bevestiging, of nil als de boeking los staat (dan is verwijderen veilig).
     private func deleteMessage(forEntry id: UUID) -> String? {
         let d = store.data
-        guard let entry = d.potEntries.first(where: { $0.id == id }) else { return nil }
+        guard let entry = d.potEntries.first(where: { $0.id == id }) else { return nil } // raw: zoeken op id
         // Een overboeking met `pairID`: `deletePotEntry` verwijdert beide helften, dus dat zeggen we vooraf.
         if !d.pairedEntries(ofPot: id).isEmpty {
             return "Dit verwijdert ook de bijbehorende boeking op de bankrekening of bij de andere spaarpot."

@@ -117,6 +117,16 @@ enum Fmt {
         return f.string(from: d)
     }
 
+    /// "3 november 2026": een dag zonder tijdstip, voluit.
+    static func longDate(_ day: CalendarDay) -> String {
+        "\(day.day) \(monthNames[min(max(day.month, 1), 12) - 1]) \(day.year)"
+    }
+
+    /// "3 november": dezelfde dag zonder jaar, voor een dag in het lopende jaar.
+    static func longDayMonth(_ day: CalendarDay) -> String {
+        "\(day.day) \(monthNames[min(max(day.month, 1), 12) - 1])"
+    }
+
     static func dateTime(_ d: Date) -> String {
         let f = DateFormatter()
         f.locale = locale

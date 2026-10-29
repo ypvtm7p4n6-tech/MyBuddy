@@ -247,7 +247,7 @@ extension FinanceData {
 
         // Handmatige bankboekingen van de maand (dezelfde selectie als `bankEntryEvents`).
         var entryItems: [(day: Int, date: Date, cents: Int)] = []
-        for entry in bankEntries where entry.date >= monthStart && entry.date < monthEnd {
+        for entry in countedBankEntries where entry.date >= monthStart && entry.date < monthEnd {
             let cents = CentsMath.int(entry.amount)
             guard cents != 0 else { continue }
             let i = min(max(DayMath.dayNumber(of: entry.date, calendar: cal), 1), n) - 1
@@ -267,7 +267,7 @@ extension FinanceData {
 
         // Handmatige potboekingen van de maand zonder rente (rente staat in `interest`). Rente-boekingen van het
         // rooster zitten in de uitbetalingen en tellen daar al mee.
-        for entry in potEntries where entry.date >= monthStart && entry.date < monthEnd {
+        for entry in countedPotEntries where entry.date >= monthStart && entry.date < monthEnd {
             guard flows[entry.potID] != nil, entry.kind != .interest,
                   !(flows[entry.potID]?.managedIDs.contains(entry.id) ?? false) else { continue }
             let i = min(max(DayMath.dayNumber(of: entry.date, calendar: cal), 1), n) - 1

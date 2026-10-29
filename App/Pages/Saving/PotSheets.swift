@@ -55,9 +55,7 @@ struct PotEntrySheet: View {
             } header: {
                 Text("Huidig saldo \(Fmt.euro(balance))")
             } footer: {
-                if action == .setBalance {
-                    Text("Het verschil wordt als correctie in de geschiedenis gezet.")
-                }
+                entryFooter
             }
         }
         .onAppear {
@@ -68,6 +66,23 @@ struct PotEntrySheet: View {
             if targetID == nil {
                 targetID = others.first?.id
                 startTarget = targetID
+            }
+        }
+    }
+
+    /// Onder het formulier: bij "Saldo aanpassen" waar het verschil heen gaat, en bij een startdatum die nog moet komen de
+    /// waarschuwing dat wat je nu invult ervoor valt en niet meetelt.
+    @ViewBuilder
+    private var entryFooter: some View {
+        let warning = StartDateText.entryBeforeStartWarning(store.data, at: store.today)
+        if action == .setBalance || warning != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                if action == .setBalance {
+                    Text("Het verschil wordt als correctie in de geschiedenis gezet.")
+                }
+                if let warning {
+                    MonthWarningLine(text: warning)
+                }
             }
         }
     }
