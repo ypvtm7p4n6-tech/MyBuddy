@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+@testable import MyBuddyCore
 
 // Tests van de paginacatalogus (App/Navigation/PageCatalog.swift, Foundation-only): elke bestemming staat erin of is een wortel of
 // heeft een ouder, elke pagina is bereikbaar vanaf een Bibliotheekrij of een wortel (zonder lus), de Bibliotheek heeft 13 rijen
@@ -89,6 +90,36 @@ final class PageCatalogTests: XCTestCase {
         XCTAssertTrue(PageCatalog.info(.home)?.terms.contains("nog te verdelen") == true)
         XCTAssertTrue(PageCatalog.info(.bank)?.terms.contains("minimumsaldo") == true)
         XCTAssertTrue(PageCatalog.info(.portfolio)?.terms.contains("kies beleggingen") == true)
+    }
+
+    func testTheNewTermsOfRound2AreThere() {
+        XCTAssertTrue(PageCatalog.info(.distribute)?.terms.contains("extra bedrag") == true)
+        XCTAssertTrue(PageCatalog.info(.distribute)?.terms.contains("bankrekening") == true)
+        XCTAssertTrue(PageCatalog.info(.distribute)?.terms.contains("rest naar bankrekening") == true)
+        XCTAssertTrue(PageCatalog.info(.distribute)?.terms.contains("extra overschrijfdagen") == true)
+        XCTAssertTrue(PageCatalog.info(.distribute)?.terms.contains("overschrijfdata") == true)
+        XCTAssertTrue(PageCatalog.info(.salary)?.terms.contains("loon per maand") == true)
+        XCTAssertTrue(PageCatalog.info(.salary)?.terms.contains("loonsverhoging") == true)
+        XCTAssertTrue(PageCatalog.info(.salary)?.terms.contains("uurloon wijzigen") == true)
+        XCTAssertTrue(PageCatalog.info(.salary)?.terms.contains("vanaf een maand") == true)
+        XCTAssertTrue(PageCatalog.info(.pots)?.terms.contains("opnemen naar") == true)
+        XCTAssertTrue(PageCatalog.info(.pots)?.terms.contains("overboeken") == true)
+        XCTAssertTrue(PageCatalog.info(.pots)?.terms.contains("bestemming") == true)
+        XCTAssertTrue(PageCatalog.info(.goals)?.terms.contains("meer spaarpotten") == true)
+        // De oude termen van die pagina's zijn bewaard.
+        XCTAssertTrue(PageCatalog.info(.distribute)?.terms.contains("overschrijfdag") == true)
+        XCTAssertTrue(PageCatalog.info(.salary)?.terms.contains("uurloon") == true)
+        XCTAssertTrue(PageCatalog.info(.pots)?.terms.contains("kies potten") == true)
+        XCTAssertTrue(PageCatalog.info(.goals)?.terms.contains("spaardoel") == true)
+        // Het zoeken vindt ze ook, en dit zijn geen nieuwe pagina's.
+        let data = FinanceData(startMonth: YearMonth(year: 2026, month: 10))
+        func found(_ query: String) -> [Destination] { SearchIndex.results(for: query, in: data).map { $0.destination } }
+        XCTAssertTrue(found("loon per maand").contains(.salary), "\(found("loon per maand"))")
+        XCTAssertTrue(found("extra overschrijfdagen").contains(.distribute))
+        XCTAssertTrue(found("rest naar bankrekening").contains(.distribute))
+        XCTAssertTrue(found("opnemen naar").contains(.pots))
+        XCTAssertTrue(found("meer spaarpotten").contains(.goals))
+        XCTAssertEqual(PageCatalog.all.count, 19)
     }
 
     // MARK: De Bibliotheek

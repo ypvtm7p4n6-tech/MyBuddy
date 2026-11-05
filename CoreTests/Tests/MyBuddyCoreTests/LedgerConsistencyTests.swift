@@ -22,6 +22,9 @@ final class LedgerConsistencyTests: XCTestCase {
         var daysWithSeveralInflows = 0
         var scenariosWithFeature: [String: Int] = [:]
         var percentMonths = 0
+        var splitTransfers = 0
+        var extraAmountMonths = 0
+        var bankShareMonths = 0
         var percentMonthsWithBothBases = 0
         var scheduleMonths = 0
         var monthsWithSeveralPayouts = 0
@@ -59,7 +62,9 @@ final class LedgerConsistencyTests: XCTestCase {
         for feature in ["meer uitbetalingen", "pot van voor de start", "boekingen op de randen van een dag",
                         "saldo op de rand van een dag", "potsaldo gezet", "plan in één keer veranderd", "pot verwijderd",
                         "percentage-inleg", "percentage per maand", "reeks overgeslagen", "reeks gestopt", "reeks bewerkt",
-                        "reeks later toegevoegd", "salaris om de zoveel weken of dagen", "salarisoverschrijving"] {
+                        "reeks later toegevoegd", "salaris om de zoveel weken of dagen", "salarisoverschrijving",
+                        "percentage met extra bedrag", "percentage met extra bedrag per maand", "extra overschrijfdata",
+                        "extra overschrijfdata per maand", "bankrekening in de verdeling", "opnemen met bestemming"] {
             XCTAssertGreaterThan(coverage.scenariosWithFeature[feature] ?? 0, 8, "datasets met: \(feature)")
         }
         XCTAssertGreaterThan(coverage.scheduleMonths, 600, "maanden met een salaris om de zoveel weken of dagen")
@@ -68,6 +73,9 @@ final class LedgerConsistencyTests: XCTestCase {
         XCTAssertGreaterThan(coverage.overriddenSalaryMonths, 20, "schemamaanden met een eigen salaris of eigen uren")
         XCTAssertGreaterThan(coverage.percentMonths, 300, "pot- of beleggingsmaanden met een inleg als percentage")
         XCTAssertGreaterThan(coverage.percentMonthsWithBothBases, 20, "maanden met extra inkomsten naast een percentage")
+        XCTAssertGreaterThan(coverage.splitTransfers, 60, "pot- of beleggingsmaanden met overschrijvingen op meer dan één dag")
+        XCTAssertGreaterThan(coverage.extraAmountMonths, 60, "percentagemaanden met een extra bedrag")
+        XCTAssertGreaterThan(coverage.bankShareMonths, 40, "maanden met een bedrag voor de bankrekening")
     }
 
     /// Verzamelt mislukte vergelijkingen zonder per vergelijking de XCTest-machinerie aan te roepen (dat is in een
@@ -156,6 +164,8 @@ final class LedgerConsistencyTests: XCTestCase {
             f.eq(summary.saved, ledger.planToPots, what)
             f.eq(summary.invested, ledger.toHoldings, what)
             f.eq(summary.remaining, ledger.remaining, what)
+            f.eq(summary.toBank, ledger.toBank, "bankdeel: \(what)")
+            f.eq(cents(summary.unassigned), cents(ledger.unassigned), "nog te verdelen: \(what)")
             f.eq(d.remaining(in: month), ledger.remaining, what)
             f.eq(d.income(in: month), ledger.income, what)
             f.eq(d.expensesTotal(in: month), ledger.expensesTotal, what)
@@ -209,17 +219,23 @@ final class LedgerConsistencyTests: XCTestCase {
                     let transfers = list.filter { ($0.kind == .toPot && $0.potID == id) || ($0.kind == .toHolding && $0.holdingID == id) }
                     f.eq(CentsMath.sum(transfers.map { $0.kind == .toPot ? cents($0.potAmount) : -cents($0.bankAmount) }), allocated,
                          "overschrijving = verdeling: \(what)")
-                    f.ok(transfers.allSatisfy { $0.day == d.transferDay(for: id, in: month) }, "overschrijfdag: \(what)")
+                    // De dagen en bedragen van de overschrijvingen volgens een onafhankelijke berekening (gewone lussen, zonder
+                    // `TransferMath`): de rest op de overschrijfdag en elk deel op zijn dag, alleen wat meetelt.
+                    let expected = referenceTransferSlices(d, id: id, month: month)
+                    let actual = transfers.map { (day: $0.day, cents: $0.kind == .toPot ? cents($0.potAmount) : -cents($0.bankAmount)) }
+                    f.eq(actual.map { $0.day }, expected.map { $0.day }, "dagen van de overschrijvingen: \(what)")
+                    f.eq(actual.map { $0.cents }, expected.map { $0.cents }, "bedragen van de overschrijvingen: \(what)")
+                    if expected.count > 1 { coverage.splitTransfers += 1 }
                     f.eq(d.allocationCents(id, in: month), allocated, "allocationCents: \(what)")
                     f.ok(allocated >= 0 || d.months[month.key]?.allocations[id.uuidString] != nil, "geen negatief percentage: \(what)")
                     if case .percent(let rule) = d.allocationRule(id, in: month) {
                         let hundredths = Int((min(max(rule.percent, 0), 100) * 100).rounded())
                         let base = max(0, rule.basis == .salary ? salaryCents : incomeCents)
-                        // Met een startdatum telt een inleg in de startmaand alleen als zijn overschrijfdag op of na de startdag valt.
-                        var firstCounted = 1
-                        if let startDay = d.startDay, startDay.yearMonth == month { firstCounted = startDay.day }
-                        let counted = d.transferDay(for: id, in: month) >= firstCounted
-                        f.eq(allocated, counted ? (base * hundredths + 5_000) / 10_000 : 0, "percentage van het inkomen: \(what)")
+                        // Het percentage plus het extra bedrag; met een startdatum telt in de startmaand alleen wat op of na de
+                        // startdag wordt overgeschreven.
+                        let total = (base * hundredths + 5_000) / 10_000 + max(0, Int((max(0, rule.extra) * 100).rounded()))
+                        f.eq(allocated, referenceCountedTotal(d, id: id, month: month, total: total), "percentage van het inkomen: \(what)")
+                        if rule.extra > 0 { coverage.extraAmountMonths += 1 }
                         coverage.percentMonths += 1
                         if rule.basis == .allIncome && incomeCents != salaryCents { coverage.percentMonthsWithBothBases += 1 }
                     }
@@ -230,12 +246,26 @@ final class LedgerConsistencyTests: XCTestCase {
                 // Bij één grondslag: de som van de percentages boven 100% geeft een waarschuwing. (Bij een mengeling van beide
                 // grondslagen telt wat ze van het inkomen werkelijk vragen: `PercentPropertyTests` rekent dat na.)
                 var bases = Set<IncomeBasis>()
-                for id in d.pots.map(\.id) + d.holdings.map(\.id) {
+                for id in d.pots.map(\.id) + d.holdings.map(\.id) + [BankShare.id] {
                     if case .percent(let rule) = d.allocationRule(id, in: month) { bases.insert(rule.basis) }
                 }
                 if bases.count < 2, d.percentTotal(in: month) > 100 {
                     f.ok(warnings.contains { if case .percentagesOver100 = $0 { return true } else { return false } }, "meer dan 100%: \(what)")
                 }
+            }
+
+            // De bankrekening als bestemming: een toewijzing zonder beweging. Het bedrag staat in de cijfers van de maand en is
+            // het deel van wat er op de rekening blijft dat is toegewezen; "nog te verdelen" is wat daarna overblijft.
+            if month >= d.startMonth {
+                let figures = d.monthFigures(month)
+                f.eq(figures.unassigned, figures.remaining - figures.toBank, "nog te verdelen: \(what)")
+                f.eq(cents(d.bankShareAmount(in: month)), figures.toBank, "bankdeel: \(what)")
+                f.eq(CentsMath.value(figures.toBank), d.summary(of: month, current: todayMonth).toBank, "bankdeel in de samenvatting: \(what)")
+                f.eq(cents(d.summary(of: month, current: todayMonth).unassigned), figures.unassigned, "nog te verdelen in de samenvatting: \(what)")
+                // Het bankdeel volgt de regel van de maand (op id, zoals elke pot) en is nooit negatief: een negatief bedrag telt als 0.
+                f.eq(figures.toBank, max(0, d.allocationCents(BankShare.id, in: month)), "bankdeel volgens de regel van de maand: \(what)")
+                f.ok(figures.toBank >= 0, "bankdeel is nooit negatief: \(what)")
+                if figures.toBank != 0 { coverage.bankShareMonths += 1 }
             }
 
             // Het salaris: de uitbetalingen vallen op hun eigen dag, met het bedrag dat een onafhankelijke berekening geeft (stap

@@ -95,7 +95,7 @@ enum CloudSync {
         if !data.pots.isEmpty || !data.potEntries.isEmpty || !data.holdings.isEmpty { return true }
         if !data.bankSnapshots.isEmpty || !data.bankEntries.isEmpty || !data.goals.isEmpty { return true }
         if !data.appliedAccelerators.isEmpty { return true }
-        if data.salary != SalarySettings() { return true }
+        if data.salary != SalarySettings() || data.hasBankShare { return true }
         for plan in data.months.values {
             if !plan.expenses.isEmpty || !plan.extraIncome.isEmpty { return true }
             if plan.salaryOverride != nil || plan.hoursOverride != nil || plan.transferDay != nil { return true }

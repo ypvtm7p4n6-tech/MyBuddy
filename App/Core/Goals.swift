@@ -156,11 +156,14 @@ extension FinanceData {
         case .portfolio:
             start = portfolioValue(current: current, today: today)
             monthly = monthlyInvestment(current: current)
-        case .pot(let id):
-            start = potBalanceNow(id, current: current, today: today)
-            monthly = estimatedAllocation(id, in: current)
+        case .pot:
+            // Eén pot of meer: het saldo van nu en de maandinleg van alle potten samen (hele centen). Een pot die niet meer
+            // bestaat telt niet mee. Zonder bestaande pot is het "Spaarpot" met 0, zoals altijd.
+            let existing = goal.fundingPotIDs.filter { pot($0) != nil }
+            start = CentsMath.value(CentsMath.sum(existing.map { CentsMath.int(potBalanceNow($0, current: current, today: today)) }))
+            monthly = CentsMath.value(CentsMath.sum(existing.map { CentsMath.int(estimatedAllocation($0, in: current)) }))
             nominal = 0
-            name = pot(id)?.name ?? "Spaarpot"
+            name = existing.count > 1 ? "\(existing.count) spaarpotten" : (existing.first.flatMap { pot($0)?.name } ?? "Spaarpot")
         case .custom(let s, let m, let r):
             start = s
             monthly = m
@@ -203,6 +206,11 @@ extension FinanceData {
 
     // MARK: Wijzigen
 
+    /// De doelen die geld uit deze spaarpot tellen (een pot kan voor meer doelen meetellen: het saldo telt dan voor elk doel).
+    func goals(usingPot potID: UUID) -> [LifeGoal] {
+        goals.filter { $0.isFunded(by: potID) }
+    }
+
     mutating func addGoal(_ goal: LifeGoal) { goals.append(goal) }
 
     mutating func updateGoal(_ goal: LifeGoal) {
@@ -230,5 +238,37 @@ extension FinanceData {
             g.inflationAdjusted = false
         }
         return g
+    }
+}
+
+// MARK: - Een doel uit meer spaarpotten
+
+extension LifeGoal {
+    /// De spaarpotten waaruit het doel wordt gefinancierd, op volgorde: de pot van `funding == .pot` eerst, dan `morePotIDs`
+    /// (zonder dubbelen). Leeg bij een andere financiering.
+    var fundingPotIDs: [UUID] {
+        guard case .pot(let first) = funding else { return [] }
+        var ids = [first]
+        for id in morePotIDs ?? [] where !ids.contains(id) { ids.append(id) }
+        return ids
+    }
+
+    /// Financiert dit doel (mede) uit deze spaarpot?
+    func isFunded(by potID: UUID) -> Bool {
+        fundingPotIDs.contains(potID)
+    }
+
+    /// Zet de spaarpotten van het doel: geen pot is "Beleggingen" (`.portfolio`), één pot is `.pot(id)` (zoals altijd bewaard),
+    /// meer potten zijn `.pot(eerste)` plus `morePotIDs`.
+    mutating func setFundingPots(_ ids: [UUID]) {
+        var unique: [UUID] = []
+        for id in ids where !unique.contains(id) { unique.append(id) }
+        guard let first = unique.first else {
+            funding = .portfolio
+            morePotIDs = nil
+            return
+        }
+        funding = .pot(first)
+        morePotIDs = unique.count > 1 ? Array(unique.dropFirst()) : nil
     }
 }

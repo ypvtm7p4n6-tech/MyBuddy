@@ -295,6 +295,9 @@ struct ContributionFields: View {
     var footnote: String? = nil
     /// Waar het over gaat (de naam van de pot of belegging): VoiceOver leest hem bij de keuzes voor.
     var subject: String? = nil
+    /// Het extra bedrag bovenop het percentage (D1). nil = geen veld (de bankrekening en oude aanroepen).
+    var extra: Binding<Double>? = nil
+    var extraTitle = ExtraAmountText.title
 
     private func label(_ text: String) -> String {
         guard let subject, !subject.isEmpty else { return text }
@@ -321,6 +324,9 @@ struct ContributionFields: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                if let extra {
+                    NumberRow(title: extraTitle, value: extra)
+                }
                 if let resolvedAmount {
                     HStack(spacing: 8) {
                         if let resolvedNote {

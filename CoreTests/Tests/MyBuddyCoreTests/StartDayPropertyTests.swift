@@ -219,18 +219,24 @@ final class StartDayPropertyTests: XCTestCase {
         f.expenses = sum(events, kinds: [.expense], fromDay: startDay) { -($0.bankAmount + $0.potAmount) }
         f.fromPots = sum(events, kinds: [.expense], fromDay: startDay) { -$0.potAmount }
         let bases = IncomeBases(salary: salary, all: f.income)
-        func contribution(_ id: UUID, transferDay: Int) -> Int {
-            guard transferDay >= startDay else { return 0 }
+        // Elke overschrijving (de rest op de overschrijfdag en elk deel op zijn dag) telt alleen vanaf de startdag. Het totaal van
+        // de inleg komt uit startdag 1; de stukken uit de onafhankelijke berekening van `referenceSlices`.
+        func contribution(_ id: UUID) -> Int {
+            let total: Int
             switch d1.allocationRule(id, in: month) {
-            case .amount(let value): return CentsMath.int(value)
-            case .percent(let rule): return AllocationMath.cents(of: rule, bases: bases)
+            case .amount(let value): total = CentsMath.int(value)
+            case .percent(let rule): total = AllocationMath.cents(of: rule, bases: bases)
             }
+            return referenceSlices(total: total, parts: referenceTransferParts(d1, id: id, month: month),
+                                   standardDay: d1.transferDay(for: id, in: month), month: month)
+                .filter { $0.day >= startDay }.reduce(0) { $0 + $1.cents }
         }
-        for pot in d.pots {
-            f.saved = CentsMath.add(f.saved, contribution(pot.id, transferDay: d1.transferDay(for: pot.id, in: month)))
-        }
-        for holding in d.holdings {
-            f.invested = CentsMath.add(f.invested, contribution(holding.id, transferDay: d1.transferDay(for: holding.id, in: month)))
+        for pot in d.pots { f.saved = CentsMath.add(f.saved, contribution(pot.id)) }
+        for holding in d.holdings { f.invested = CentsMath.add(f.invested, contribution(holding.id)) }
+        // De bankrekening is een toewijzing zonder overschrijving: ze heeft geen dag en telt in de hele startmaand.
+        switch d1.allocationRule(BankShare.id, in: month) {
+        case .amount(let value): f.toBank = max(0, CentsMath.int(value))
+        case .percent(let rule): f.toBank = AllocationMath.cents(of: rule, bases: bases)
         }
         return f
     }

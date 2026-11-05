@@ -238,7 +238,7 @@ enum AllocationEdit {
     /// belegging als die een percentage is (en niet 0), anders het percentage van het salaris dat het huidige bedrag is.
     /// Zo springt het bedrag niet (op de afronding na). Zonder inkomen begint het op 0%.
     static func startingPercent(_ data: FinanceData, id: UUID, month: YearMonth) -> PercentRule {
-        if case .percent(let standard)? = data.defaultAllocationRule(id, in: month), standard.percent > 0 {
+        if case .percent(let standard)? = data.defaultAllocationRule(id, in: month), standard.percent > 0 || standard.extra > 0 {
             return standard
         }
         let amount = data.allocation(id, in: month)
@@ -257,7 +257,7 @@ enum AllocationEdit {
         case .percentage:
             guard !current.isPercent else { return }
             let start = startingPercent(data, id: id, month: month)
-            data.setAllocationPercent(id, in: month, percent: start.percent, basis: start.basis)
+            data.setAllocationPercent(id, in: month, percent: start.percent, basis: start.basis, extra: start.extra)
         }
     }
 
@@ -265,22 +265,35 @@ enum AllocationEdit {
         data.setAllocation(id, in: month, amount: amount)
     }
 
-    /// Een ander percentage voor deze maand; de grondslag van de maand blijft.
+    /// Een ander percentage voor deze maand; de grondslag en het extra bedrag van de maand blijven.
     static func setPercent(_ data: inout FinanceData, id: UUID, month: YearMonth, percent: Double) {
         var basis: IncomeBasis?
         if case .percent(let rule) = data.allocationRule(id, in: month) { basis = rule.basis }
         data.setAllocationPercent(id, in: month, percent: percent, basis: basis)
     }
 
+    /// Een ander extra bedrag (bovenop het percentage) voor deze maand; het percentage en de grondslag van de maand blijven. Doet
+    /// niets als de maand geen percentage heeft.
+    static func setExtra(_ data: inout FinanceData, id: UUID, month: YearMonth, extra: Double) {
+        guard case .percent(let rule) = data.allocationRule(id, in: month) else { return }
+        data.setAllocationPercent(id, in: month, percent: rule.percent, basis: rule.basis, extra: extra)
+    }
+
     /// Een andere grondslag (alleen salaris of alle inkomsten) voor het percentage van deze maand.
     static func setBasis(_ data: inout FinanceData, id: UUID, month: YearMonth, to basis: IncomeBasis) {
         guard case .percent(let rule) = data.allocationRule(id, in: month) else { return }
-        data.setAllocationPercent(id, in: month, percent: rule.percent, basis: basis)
+        data.setAllocationPercent(id, in: month, percent: rule.percent, basis: basis, extra: rule.extra)
     }
 
-    /// Haalt de afwijking van deze maand weg: de standaard van de pot of belegging geldt weer.
+    /// Haalt de afwijking van deze maand weg: de standaard van de pot of belegging geldt weer (ook de extra overschrijfdata).
     static func resetToStandard(_ data: inout FinanceData, id: UUID, month: YearMonth) {
         data.clearAllocationOverride(id, in: month)
+        data.clearTransferParts(id, in: month)
+    }
+
+    /// Wijkt deze maand af van de standaard van de pot of belegging: een eigen bedrag of percentage, of eigen extra data?
+    static func differsFromStandard(_ data: FinanceData, id: UUID, month: YearMonth) -> Bool {
+        data.effectiveAllocation(id, in: month).isOverride || data.hasTransferPartsOverride(id, in: month)
     }
 
     /// Maakt de regel van deze maand (bedrag of percentage) de standaard voor elke maand. De lopende maand krijgt hem
@@ -291,7 +304,12 @@ enum AllocationEdit {
         case .amount(let value):
             data.setContributionAmount(id, amount: value, current: current)
         case .percent(let rule):
-            data.setContributionPercent(id, percent: rule.percent, basis: rule.basis, current: current)
+            data.setContributionPercent(id, percent: rule.percent, basis: rule.basis, extra: rule.extra, current: current)
+        }
+        // De extra data van deze maand worden ook de standaard; een maand vanaf de lopende volgt daarna de standaard.
+        if data.hasTransferPartsOverride(id, in: month) {
+            data.setStandardTransferParts(id, parts: data.transferParts(for: id, in: month), current: current)
+            if month >= current { data.clearTransferParts(id, in: month) }
         }
         if month > current { data.clearAllocationOverride(id, in: month) }
     }
@@ -317,6 +335,13 @@ enum DistributeText {
         let source = transferSource(data, id: id, month: month)
         if data.allocationCents(id, in: month) == 0 {
             return "Overschrijfdag: \(DayText.ordinal(day)) · \(source)"
+        }
+        // Met extra overschrijfdata: elk stuk met zijn dag, "Wordt overgeschreven: € 50 op de 10e en € 150 op de 25e · salarisdag".
+        let slices = data.transferSlices(for: id, in: month)
+        if slices.count > 1 {
+            let planned = slices.map { DayMath.isPlanned(month.date(day: $0.day), asOf: today) }
+            let verb = planned.allSatisfy { $0 } ? "Wordt overgeschreven:" : (planned.contains(true) ? "Deels overgeschreven:" : "Overgeschreven:")
+            return "\(verb) \(TransferPartsText.summary(slices: slices, standardDay: day)) · \(source)"
         }
         let planned = DayMath.isPlanned(month.date(day: day), asOf: today)
         let verb = planned ? "Wordt overgeschreven op" : "Overgeschreven op"

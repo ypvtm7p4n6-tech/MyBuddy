@@ -76,7 +76,7 @@ extension FinanceData {
         if !pots.isEmpty || !potEntries.isEmpty || !holdings.isEmpty { return false }
         if !bankSnapshots.isEmpty || !bankEntries.isEmpty || !goals.isEmpty { return false }
         if !appliedAccelerators.isEmpty { return false }
-        if salary != SalarySettings() { return false }
+        if salary != SalarySettings() || hasBankShare { return false }
         for plan in months.values {
             if !plan.expenses.isEmpty || !plan.extraIncome.isEmpty || !plan.allocations.isEmpty { return false }
             if plan.salaryOverride != nil || plan.hoursOverride != nil || plan.transferDay != nil { return false }

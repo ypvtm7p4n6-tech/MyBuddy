@@ -348,6 +348,73 @@ func ledgerScenario(seed: UInt64) -> LedgerScenario {
         let hidden = d.entriesBefore(first)
         if hidden.bank + hidden.pots + hidden.balances > 0 { features.insert("boekingen vóór de start") }
     }
+
+    // Een zesde reeks ingrepen (weer een eigen zaadwaarde, AAN HET EIND: de vijf reeksen hierboven blijven voor elke zaadwaarde
+    // gelijk): een percentage met een extra bedrag, extra overschrijfdata (standaard en per maand, ook op dag 31, op de overschrijfdag
+    // zelf en meer dan de inleg), de bankrekening als bestemming van de verdeling en geld opnemen of storten met een bestemming of
+    // herkomst (docs/work/plan2.md). Het dagboek moet ook dan op elke dag sluiten.
+    var w = EngRandom(seed: seed &+ 41_000)
+    func wPercent() -> Double { w.chance(40) ? Double(w.int(0...20)) * 5 : Double(w.int(0...10_000)) / 100 }
+    func wBasis() -> IncomeBasis { w.chance(50) ? .salary : .allIncome }
+    func wParts() -> [TransferPart] {
+        (0..<w.int(0...3)).map { _ in TransferPart(day: w.chance(15) ? 31 : w.int(1...31), amount: w.chance(10) ? w.amount(300, 900) : w.amount(5, 200)) }
+    }
+    let lineIDs = d.pots.map(\.id) + d.holdings.map(\.id)
+    if w.chance(45), !lineIDs.isEmpty {
+        features.insert("percentage met extra bedrag")
+        for _ in 0..<w.int(1...3) {
+            d.setContributionPercent(lineIDs[w.int(0...lineIDs.count - 1)], percent: wPercent(), basis: wBasis(),
+                                     extra: w.chance(15) ? 0 : w.amount(0, 150), current: start.adding(w.int(0...span)))
+        }
+    }
+    if w.chance(30), !lineIDs.isEmpty {
+        features.insert("percentage met extra bedrag per maand")
+        for _ in 0..<w.int(1...3) {
+            d.setAllocationPercent(lineIDs[w.int(0...lineIDs.count - 1)], in: start.adding(w.int(0...span)), percent: wPercent(),
+                                   basis: wBasis(), extra: w.amount(0, 120))
+        }
+    }
+    if w.chance(55), !lineIDs.isEmpty {
+        features.insert("extra overschrijfdata")
+        for _ in 0..<w.int(1...3) {
+            d.setStandardTransferParts(lineIDs[w.int(0...lineIDs.count - 1)], parts: wParts(), current: start.adding(w.int(0...span)))
+        }
+    }
+    if w.chance(40), !lineIDs.isEmpty {
+        features.insert("extra overschrijfdata per maand")
+        for _ in 0..<w.int(1...3) {
+            let id = lineIDs[w.int(0...lineIDs.count - 1)]
+            let month = start.adding(w.int(0...span))
+            if w.chance(25) { d.clearTransferParts(id, in: month) } else { d.setTransferParts(id, in: month, parts: wParts()) }
+        }
+    }
+    if w.chance(45) {
+        features.insert("bankrekening in de verdeling")
+        let month = start.adding(w.int(0...span))
+        switch w.int(0...4) {
+        case 0: d.setContributionAmount(BankShare.id, amount: w.amount(0, 500), current: start.adding(w.int(0...span)))
+        case 1: d.setContributionPercent(BankShare.id, percent: wPercent(), basis: wBasis(), extra: w.amount(0, 100),
+                                         current: start.adding(w.int(0...span)))
+        case 2: d.setAllocation(BankShare.id, in: month, amount: w.amount(0, 800))
+        case 3: d.setAllocationPercent(BankShare.id, in: month, percent: wPercent(), basis: wBasis(), extra: w.amount(0, 100))
+        default: d.sendRemainingToBank(in: month)
+        }
+    }
+    if w.chance(40), !d.pots.isEmpty {
+        features.insert("opnemen met bestemming")
+        for _ in 0..<w.int(1...3) {
+            let source = d.pots[w.int(0...d.pots.count - 1)]
+            let others = d.pots.filter { $0.id != source.id }
+            var destination: MoneyEnd = w.chance(40) ? .bank : .outside
+            if !others.isEmpty, w.chance(40) { destination = .pot(others[w.int(0...others.count - 1)].id) }
+            let when = moment(start.adding(w.int(0...span)))
+            if w.chance(30) {
+                d.deposit(toPot: source.id, amount: w.amount(5, 250), from: destination, date: when)
+            } else {
+                d.withdraw(fromPot: source.id, amount: w.amount(5, 250), to: destination, date: when)
+            }
+        }
+    }
     return LedgerScenario(data: d, today: today, months: start.adding(-2).range(count: span + 5), seed: seed, start: start,
                           features: features)
 }
@@ -498,4 +565,59 @@ enum MachineSpeed {
     static func limit(_ seconds: Double) -> Double { seconds * slowdown }
 
     static var skipsTiming: Bool { ProcessInfo.processInfo.environment["SKIP_PERF_TESTS"] == "1" }
+}
+
+// MARK: - Onafhankelijke berekening van de overschrijvingen (extra overschrijfdata)
+
+/// De delen die in `month` voor `id` gelden, rechtstreeks uit de gegevens: de delen van de maand (ook een lege lijst), anders die van
+/// de pot of belegging zelf.
+func referenceTransferParts(_ d: FinanceData, id: UUID, month: YearMonth) -> [TransferPart] {
+    if let own = d.months[month.key]?.transferParts[id.uuidString] { return own }
+    if let pot = d.pots.first(where: { $0.id == id }) { return pot.extraTransfers }
+    return d.holdings.first(where: { $0.id == id })?.extraTransfers ?? []
+}
+
+/// De stukken van een inleg van `total` centen: delen op hun dag (de dag geklemd op de lengte van de maand, delen op volgorde van
+/// dag afgekapt zodat ze samen niet meer zijn dan het totaal), de rest op `standardDay`, stukken op dezelfde dag samengevoegd.
+/// Geschreven met gewone lussen en woordenboeken, niet met `TransferMath`.
+func referenceSlices(total: Int, parts: [TransferPart], standardDay: Int, month: YearMonth) -> [(day: Int, cents: Int)] {
+    let standard = min(max(standardDay, 1), month.dayCount)
+    if total == 0 { return [] }
+    if total < 0 { return [(standard, total)] }
+    var left = total
+    var amounts: [Int: Int] = [:]
+    for part in parts.sorted(by: { $0.day < $1.day }) {
+        let wanted = max(0, Int((part.amount * 100).rounded()))
+        let take = min(wanted, left)
+        if take <= 0 { continue }
+        let day = min(max(part.day, 1), month.dayCount)
+        amounts[day, default: 0] += take
+        left -= take
+    }
+    amounts[standard, default: 0] += left
+    var result: [(day: Int, cents: Int)] = []
+    for day in 1...month.dayCount {
+        if let cents = amounts[day], cents != 0 { result.append((day, cents)) }
+    }
+    return result
+}
+
+/// De overschrijvingen die meetellen van `id` in `month`: het totaal uit de verdeling van de maand, verdeeld over de dagen, zonder
+/// de stukken vóór de startdag.
+func referenceTransferSlices(_ d: FinanceData, id: UUID, month: YearMonth) -> [(day: Int, cents: Int)] {
+    guard month >= d.startMonth else { return [] }
+    let total = d.rawCents(of: d.allocationRule(id, in: month), in: month)
+    var first = 1
+    if let startDay = d.startDay, startDay.yearMonth == month { first = startDay.day }
+    return referenceSlices(total: total, parts: referenceTransferParts(d, id: id, month: month),
+                           standardDay: d.transferDay(for: id, in: month), month: month).filter { $0.day >= first }
+}
+
+/// Het deel van `total` dat meetelt in `month` (de stukken op of na de startdag).
+func referenceCountedTotal(_ d: FinanceData, id: UUID, month: YearMonth, total: Int) -> Int {
+    var first = 1
+    if let startDay = d.startDay, startDay.yearMonth == month { first = startDay.day }
+    return referenceSlices(total: total, parts: referenceTransferParts(d, id: id, month: month),
+                           standardDay: d.transferDay(for: id, in: month), month: month)
+        .filter { $0.day >= first }.reduce(0) { $0 + $1.cents }
 }

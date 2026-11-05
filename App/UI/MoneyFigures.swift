@@ -104,8 +104,16 @@ struct MonthBoard: Equatable {
     var expensesFromBank: Double { CentsMath.value(figures.expenses - figures.fromPots) }
     var saved: Double { CentsMath.value(figures.saved) }
     var invested: Double { CentsMath.value(figures.invested) }
-    /// Wat er over spaarpotten en beleggingen is verdeeld, in centen opgeteld.
+    /// Het deel van `remaining` dat aan de bankrekening is toegewezen (BankShare.swift).
+    var toBank: Double { CentsMath.value(figures.toBank) }
+    /// Wat er nog te verdelen is: wat er op de rekening blijft min wat je aan de bankrekening toewees. Dit is het getal bij het
+    /// label "Nog te verdelen" (zie `MoneyLabels.left`).
+    var unassigned: Double { CentsMath.value(figures.unassigned) }
+    /// Wat er over spaarpotten en beleggingen is verdeeld, in centen opgeteld. Dit is wat van de rekening gaat: inkomen min
+    /// uitgaven van de bank min dit is wat er op de rekening blijft (`remaining`).
     var allocated: Double { CentsMath.value(CentsMath.add(figures.saved, figures.invested)) }
+    /// Alles wat is verdeeld: `allocated` plus wat je aan de bankrekening toewees. Dit is het getal bij "Verdeeld" op de pagina Verdelen.
+    var distributed: Double { CentsMath.value(CentsMath.add(CentsMath.add(figures.saved, figures.invested), figures.toBank)) }
     /// Wat er te verdelen was voordat er iets is verdeeld: inkomen min uitgaven van de bank.
     var available: Double { CentsMath.value(figures.available) }
     /// Wat er nog te verdelen is (zoals `remaining(in:)`). Negatief als je meer hebt verdeeld of uitgegeven dan je hebt.
@@ -114,6 +122,38 @@ struct MonthBoard: Equatable {
     var overAllocated: Double { CentsMath.value(figures.overAllocated) }
 
     var isNegative: Bool { figures.remaining < 0 }
+
+    /// Het getal bij het label `MoneyLabels.remainingLabel` voor dit bord, in euro's (`MoneyLabels.left`): voor de huidige en de
+    /// komende maanden wat er nog niet is toegewezen, voor het verleden en voor een periode wat er op de rekening blijft.
+    func left(current: YearMonth, isPeriod: Bool = false) -> Double {
+        CentsMath.value(MoneyLabels.left(figures, of: month, current: current, isPeriod: isPeriod))
+    }
+
+    /// Is dat getal negatief (rood, "je hebt meer verdeeld dan er was")?
+    func leftIsNegative(current: YearMonth, isPeriod: Bool = false) -> Bool {
+        MoneyLabels.left(figures, of: month, current: current, isPeriod: isPeriod) < 0
+    }
+
+    /// Het getal bij "Verdeeld" dat bij `left(current:isPeriod:)` hoort, in euro's: de bankrekening telt mee als het getal "Nog te
+    /// verdelen" is (dan is inkomen − uitgaven van de bank − verdeeld = het getoonde getal), anders niet.
+    func distributedShown(current: YearMonth, isPeriod: Bool = false) -> Double {
+        CentsMath.value(distributedShownCents(current: current, isPeriod: isPeriod))
+    }
+
+    /// Tellen de getoonde (op hele euro's afgeronde) bedragen inkomen, uitgaven van de bank en verdeeld niet precies op tot het
+    /// getoonde getal bij het label? Dan staat er een korte uitleg bij (`DisplayRounding.note`). Zoals `roundingHidesSum`, voor de
+    /// getallen die bij `left(current:isPeriod:)` horen.
+    func roundingHidesLeftSum(current: YearMonth, isPeriod: Bool = false) -> Bool {
+        !DisplayRounding.closes(parts: [figures.income, -(figures.expenses - figures.fromPots),
+                                        -distributedShownCents(current: current, isPeriod: isPeriod)],
+                                total: MoneyLabels.left(figures, of: month, current: current, isPeriod: isPeriod))
+    }
+
+    private func distributedShownCents(current: YearMonth, isPeriod: Bool) -> Int {
+        let base = CentsMath.add(figures.saved, figures.invested)
+        return (isPeriod || month < current) ? base : CentsMath.add(base, figures.toBank)
+    }
+
     /// Zijn de uitgaven van de bank al hoger dan het inkomen? Dan komt een negatief restant niet door te veel verdelen.
     var spendingExceedsIncome: Bool { figures.available < 0 }
     var hasPotExpenses: Bool { figures.fromPots > 0 }
@@ -147,7 +187,15 @@ extension PeriodSummary {
     /// rekenregels (`available`, `remaining`, `overAllocated`) en rekent geen scherm zelf met Doubles.
     var figures: MonthFigures {
         MonthFigures(income: CentsMath.int(income), expenses: CentsMath.int(expenses), fromPots: CentsMath.int(fromPots),
-                     saved: CentsMath.int(saved), invested: CentsMath.int(invested))
+                     saved: CentsMath.int(saved), invested: CentsMath.int(invested), toBank: CentsMath.int(toBank))
+    }
+}
+
+extension MonthSummary {
+    /// Het getal bij het label `MoneyLabels.remainingLabel` voor deze maand, in euro's (zie `MoneyLabels.left`): voor de huidige en
+    /// de komende maanden `unassigned`, voor het verleden `remaining`.
+    func left(current: YearMonth) -> Double {
+        month < current ? remaining : unassigned
     }
 }
 
@@ -163,6 +211,14 @@ enum MoneyLabels {
     /// "Nog te verdelen", voor het verleden en voor een periode "Overgehouden".
     static func remainingLabel(of month: YearMonth, current: YearMonth, isPeriod: Bool = false) -> String {
         (isPeriod || month < current) ? leftOver : remaining
+    }
+
+    /// Het getal dat bij `remainingLabel` hoort, in centen: voor de huidige en komende maanden "Nog te verdelen"
+    /// (`MonthFigures.unassigned`: wat er op de rekening blijft min wat je aan de bankrekening toewees), voor het verleden en voor
+    /// periodes "Overgehouden" (`MonthFigures.remaining`: alles wat er op de rekening blijft). Zonder bankdeel zijn ze gelijk.
+    /// Elk scherm dat een van deze labels toont leest het getal hier, zodat de pagina's hetzelfde zeggen.
+    static func left(_ figures: MonthFigures, of month: YearMonth, current: YearMonth, isPeriod: Bool = false) -> Int {
+        (isPeriod || month < current) ? figures.remaining : figures.unassigned
     }
 
     /// "Vermogen eind oktober": bank, spaarpotten en beleggingen aan het eind van de maand, dus met wat er die maand nog
@@ -209,6 +265,9 @@ struct ContributionInfo: Equatable {
     var transferDay: Int
     /// Waar die dag vandaan komt: de verdeling van de maand, een eigen dag, of de salarisdag.
     var transferOrigin: TransferDayOrigin
+    /// De overschrijvingen van `month` (zie `FinanceData.transferSlices`): één bij een inleg zonder extra overschrijfdata, anders
+    /// een stuk per dag.
+    var slices: [TransferSlice]
 
     /// nil als het id geen spaarpot of belegging is.
     init?(_ data: FinanceData, id: UUID, month: YearMonth) {
@@ -218,6 +277,7 @@ struct ContributionInfo: Equatable {
         self.standard = standard
         let effective = data.effectiveAllocation(id, in: month)
         self.effective = effective
+        slices = data.transferSlices(for: id, in: month)
         if case .percent(let rule) = effective.rule {
             base = CentsMath.value(data.incomeBases(in: month).cents(for: rule.basis))
             averageAmount = data.salary.isMonthly ? nil : data.estimatedAmount(of: effective.rule, in: month)
@@ -249,6 +309,16 @@ struct ContributionInfo: Equatable {
     /// salarisdag de eerste uitbetaling van de maand, en zonder uitbetaling die maand de ingestelde salarisdag.
     func transferNote(to target: String) -> String? {
         guard hasContribution else { return nil }
+        if hasParts {
+            // Met extra overschrijfdata: "De inleg gaat naar deze pot: € 50 op de 10e en € 150 op de 25e." en waar de rest vandaan komt.
+            let base = "De inleg gaat \(target): \(TransferPartsText.summary(slices: slices, standardDay: transferDay))."
+            switch transferOrigin {
+            case .month, .own: return base
+            case .salaryDay: return base + " De overschrijfdag is je salarisdag."
+            case .firstSalaryDay: return base + " De overschrijfdag is de eerste salarisdag van de maand."
+            case .salaryDayFallback: return base + " De overschrijfdag is je ingestelde salarisdag. Deze maand komt er geen salaris binnen."
+            }
+        }
         let base = "De inleg gaat op de \(transferDay)e \(target)"
         switch transferOrigin {
         case .month, .own: return base + "."
@@ -257,6 +327,9 @@ struct ContributionInfo: Equatable {
         case .salaryDayFallback: return base + ", je ingestelde salarisdag. Deze maand komt er geen salaris binnen."
         }
     }
+
+    /// Gaat de inleg van deze maand op meer dan één dag over?
+    var hasParts: Bool { slices.count > 1 }
 
     /// Het bedrag van deze maand in euro's.
     var amount: Double { effective.amount }
@@ -268,19 +341,25 @@ struct ContributionInfo: Equatable {
     /// De regel van deze maand, zoals `standardText`.
     var ruleText: String { effective.rule.summary }
 
-    /// De waarde van de standaardregel voor een tegel: "€ 300" of "10%".
+    /// De waarde van de standaardregel voor een tegel: "€ 300", "10%" of, met een extra bedrag, "10% + € 25".
     var standardValue: String {
         switch standard {
         case .amount(let value): return Fmt.euro(value)
-        case .percent(let rule): return Fmt.percent(rule.percent / 100, digits: 2)
+        case .percent(let rule):
+            let percent = Fmt.percent(rule.percent / 100, digits: 2)
+            let extra = AllocationMath.extraCents(rule.extra)
+            return extra == 0 ? percent : percent + " + " + Fmt.euro(CentsMath.value(extra))
         }
     }
 
-    /// Wat er onder `standardValue` staat: "Vast bedrag per maand", "Van je salaris" of "Van al je inkomsten".
+    /// Wat er onder `standardValue` staat: "Vast bedrag per maand", "Van je salaris" of "Van al je inkomsten" (met een extra
+    /// bedrag erbij: "Van je salaris, plus een vast bedrag").
     var standardCaption: String {
         switch standard {
         case .amount: return "Vast bedrag per maand"
-        case .percent(let rule): return rule.basis == .salary ? "Van je salaris" : "Van al je inkomsten"
+        case .percent(let rule):
+            let base = rule.basis == .salary ? "Van je salaris" : "Van al je inkomsten"
+            return AllocationMath.extraCents(rule.extra) == 0 ? base : base + ", plus een vast bedrag"
         }
     }
 
@@ -290,11 +369,13 @@ struct ContributionInfo: Equatable {
         return isOverride ? "Afwijkend van je standaard" : nil
     }
 
-    /// "10% van € 3.000 salaris in oktober". nil bij een vast bedrag.
+    /// "10% van € 3.000 salaris in oktober", met een extra bedrag "… plus € 25". nil bij een vast bedrag.
     var baseText: String? {
         guard case .percent(let rule) = effective.rule, let base else { return nil }
         let what = rule.basis == .salary ? "salaris" : "inkomsten"
-        return "\(Fmt.percent(rule.percent / 100, digits: 2)) van \(Fmt.euro(base)) \(what) in \(Fmt.monthNames[min(max(month.month, 1), 12) - 1])"
+        let text = "\(Fmt.percent(rule.percent / 100, digits: 2)) van \(Fmt.euro(base)) \(what) in \(Fmt.monthNames[min(max(month.month, 1), 12) - 1])"
+        let extra = AllocationMath.extraCents(rule.extra)
+        return extra == 0 ? text : text + " plus " + Fmt.euro(CentsMath.value(extra))
     }
 
     /// Het inkomen waarover een percentage rekent is er niet (bijvoorbeeld geen salaris in die maand): het percentage is dan € 0.
@@ -327,24 +408,28 @@ enum ContributionPreview {
         var footnote: String?
     }
 
-    static func resolve(_ data: FinanceData, percent: Double, basis: IncomeBasis, month: YearMonth) -> Result {
+    static func resolve(_ data: FinanceData, percent: Double, basis: IncomeBasis, extra: Double = 0, month: YearMonth) -> Result {
         let clean = AllocationMath.cleanPercent(percent)
-        let amount = data.percentAmount(clean, of: basis, in: month)
+        let cleanExtra = AllocationMath.cleanExtra(extra)
+        let amount = data.percentAmount(clean, of: basis, extra: cleanExtra, in: month)
         let baseCents = data.incomeBases(in: month).cents(for: basis)
         let base = CentsMath.value(baseCents)
         let what = basis == .salary ? "salaris" : "inkomsten"
         let monthName = Fmt.monthNames[min(max(month.month, 1), 12) - 1]
-        let note = "Per maand: \(Fmt.percent(clean / 100, digits: 2)) van \(Fmt.euro(base)) \(what) in \(monthName)"
+        var note = "Per maand: \(Fmt.percent(clean / 100, digits: 2)) van \(Fmt.euro(base)) \(what) in \(monthName)"
+        if AllocationMath.extraCents(cleanExtra) != 0 { note += " plus " + Fmt.euro(cleanExtra) }
 
         var parts: [String] = []
         if baseCents <= 0 {
             let missing = basis == .salary ? "salaris" : "inkomen"
-            parts.append("Er is in \(Fmt.month(month)) geen \(missing): het percentage geeft nu € 0.")
+            parts.append(cleanExtra > 0
+                ? "Er is in \(Fmt.month(month)) geen \(missing): alleen het extra bedrag blijft over."
+                : "Er is in \(Fmt.month(month)) geen \(missing): het percentage geeft nu € 0.")
         }
         if !data.salary.isMonthly {
             // Bij een salaris om de zoveel weken of dagen schommelt het inkomen per maand. Toekomstschattingen rekenen met
             // een gemiddelde maand (`estimatedAmount`); zeg dat erbij.
-            let average = data.estimatedAmount(of: .percent(PercentRule(percent: clean, basis: basis)), in: month)
+            let average = data.estimatedAmount(of: .percent(PercentRule(percent: clean, basis: basis, extra: cleanExtra)), in: month)
             parts.append("Je salaris komt niet elke maand even vaak binnen. In een gemiddelde maand is het \(Fmt.euro(average)).")
         }
         return Result(amount: amount, note: note, footnote: parts.isEmpty ? nil : parts.joined(separator: " "))

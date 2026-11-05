@@ -123,18 +123,27 @@ extension FinanceData {
             bases = made
             return made
         }
+        // Elke overschrijving is een eigen gebeurtenis op haar eigen dag: de rest op de overschrijfdag (met het id van altijd) en
+        // elk deel op zijn eigen dag (`TransferMath.slices`). Een stuk vóór de startdag valt weg in `add`.
         for pot in pots {
-            let cents = allocationCents(pot, key: pot.id.uuidString, in: month, storedPlan: storedPlan, basesFor: incomeOfMonth)
-            guard cents != 0 else { continue }
-            add(id: "toPot-\(pot.id.uuidString)-\(month.key)", day: transferDay(for: pot.id, in: month),
-                title: "Naar \(pot.name)", kind: .toPot, bank: -cents, pot: cents, potID: pot.id)
+            let key = pot.id.uuidString
+            let total = allocationTotalCents(pot, key: key, in: month, storedPlan: storedPlan, basesFor: incomeOfMonth)
+            guard total != 0 else { continue }
+            let parts = storedPlan?.transferParts[key] ?? pot.extraTransfers
+            for slice in TransferMath.slices(totalCents: total, parts: parts, standardDay: transferDay(for: pot.id, in: month), month: month) {
+                add(id: FinanceData.transferEventID(prefix: "toPot", id: pot.id, month: month, slice: slice), day: slice.day,
+                    title: "Naar \(pot.name)", kind: .toPot, bank: -slice.cents, pot: slice.cents, potID: pot.id)
+            }
         }
         for holding in holdings {
-            let cents = allocationCents(holding, key: holding.id.uuidString, in: month, storedPlan: storedPlan,
-                                        basesFor: incomeOfMonth)
-            guard cents != 0 else { continue }
-            add(id: "toHolding-\(holding.id.uuidString)-\(month.key)", day: transferDay(for: holding.id, in: month),
-                title: "Naar \(holding.name)", kind: .toHolding, bank: -cents, holdingID: holding.id)
+            let key = holding.id.uuidString
+            let total = allocationTotalCents(holding, key: key, in: month, storedPlan: storedPlan, basesFor: incomeOfMonth)
+            guard total != 0 else { continue }
+            let parts = storedPlan?.transferParts[key] ?? holding.extraTransfers
+            for slice in TransferMath.slices(totalCents: total, parts: parts, standardDay: transferDay(for: holding.id, in: month), month: month) {
+                add(id: FinanceData.transferEventID(prefix: "toHolding", id: holding.id, month: month, slice: slice), day: slice.day,
+                    title: "Naar \(holding.name)", kind: .toHolding, bank: -slice.cents, holdingID: holding.id)
+            }
         }
         return out
     }

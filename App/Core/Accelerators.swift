@@ -172,8 +172,9 @@ extension FinanceData {
         var candidates: [(id: String, title: String, detail: String, symbol: String, change: ScenarioChange)] = []
 
         // 1. Vrije ruimte van deze maand. Een schatting voor elke maand: bij een salaris om de zoveel weken of dagen is dat
-        // een gemiddelde maand (`estimatedRemaining`), anders precies `remaining(in:)`.
-        let free = estimatedRemaining(in: current)
+        // een gemiddelde maand (`estimatedUnassigned`), anders precies `unassigned(in:)` (wat er nog niet is toegewezen: het
+        // bankdeel van Verdelen is al verdeeld).
+        let free = estimatedUnassigned(in: current)
         if free >= 10 {
             // Bij een salaris om de zoveel weken of dagen is `free` een gemiddelde maand: zeg dat, anders spreekt het getal
             // "Nog te verdelen" van deze ene maand tegen.
@@ -223,7 +224,7 @@ extension FinanceData {
 
         // 5. Spaarpotten boven hun doel
         for pot in pots {
-            if case .pot(let fundingID) = goal.funding, fundingID == pot.id { continue }
+            if goal.isFunded(by: pot.id) { continue }
             guard let g = pot.goalAmount, g > 0 else { continue }
             // Het overschot van nu: toepassen boekt het bedrag nu af, dus de inleg die later deze maand volgt telt niet mee.
             let over = (potBalanceNow(pot.id, current: current, today: today) - g).cents
@@ -447,6 +448,7 @@ fileprivate extension Pot {
             contributionMode = old.contributionMode
             contributionPercent = old.contributionPercent
             contributionBasis = old.contributionBasis
+            contributionExtra = old.contributionExtra
         }
     }
 }
@@ -469,6 +471,7 @@ fileprivate extension Holding {
             contributionMode = old.contributionMode
             contributionPercent = old.contributionPercent
             contributionBasis = old.contributionBasis
+            contributionExtra = old.contributionExtra
         }
         if fields.contains(.cost) { annualCost = old.annualCost }
         if fields.contains(.value) {
@@ -500,7 +503,10 @@ fileprivate extension LifeGoal {
             monthlySpending = old.monthlySpending
             monthlyGapOverride = old.monthlyGapOverride
         }
-        if fields.contains(.funding) { funding = old.funding }
+        if fields.contains(.funding) {
+            funding = old.funding
+            morePotIDs = old.morePotIDs
+        }
     }
 }
 
@@ -900,7 +906,7 @@ extension FinanceData {
     fileprivate mutating func performAccelerator(_ acc: Accelerator, goal g: LifeGoal, current: YearMonth,
                                                  now: Date, recordID: UUID) -> AcceleratorRun {
         var run = AcceleratorRun()
-        let remainingBefore = remaining(in: current)
+        let remainingBefore = unassigned(in: current)
 
         switch AcceleratorKind(id: acc.id) {
         case .free, .income5:
@@ -941,7 +947,7 @@ extension FinanceData {
         }
 
         if !run.lines.isEmpty {
-            let after = remaining(in: current)
+            let after = unassigned(in: current)
             if after < 0, after < remainingBefore {
                 run.notes.append("Let op: je verdeelt dan \(Fmt.euro(-after)) meer dan je inkomen van deze maand.")
             }

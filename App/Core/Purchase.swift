@@ -310,7 +310,8 @@ extension PurchaseContext {
         // salaris gewoon nog niet ingevuld. Dan laten we het maandplan buiten de uitspraak.
         context.isAverageMonth = !data.salary.isMonthly
         if income > 0 {
-            context.remainingThisMonth = data.estimatedRemaining(in: current)
+            // Wat er nog niet is toegewezen: hetzelfde getal als "Nog te verdelen" (het bankdeel van Verdelen telt als verdeeld).
+            context.remainingThisMonth = data.estimatedUnassigned(in: current)
             // De uitgaven van een HELE startmaand, net als het gemiddelde inkomen hierboven (`forEstimates`).
             context.expensesExceedIncome = CentsMath.int(income) - CentsMath.int(data.forEstimates.expensesFromBank(in: current)) < 0
         }

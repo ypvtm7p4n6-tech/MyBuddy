@@ -156,7 +156,8 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertTrue(found.contains(.distribute))
         XCTAssertTrue(found.contains(.home))
         XCTAssertFalse(found.contains(.pots))
-        XCTAssertTrue(SearchIndex.results(for: "nog bankrekening", in: data).isEmpty)
+        // Verdelen heeft sinds de bankrekening in de verdeling zit de term "bankrekening": een vraag zonder uitkomst is nu "nog rente".
+        XCTAssertTrue(SearchIndex.results(for: "nog rente", in: data).isEmpty)
     }
 
     func testResultsHaveUniqueIDs() {

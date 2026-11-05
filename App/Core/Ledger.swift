@@ -167,8 +167,13 @@ struct MonthLedger: Identifiable, Equatable {
     /// `expensesFromBank(in:)` en `expensesFromPots(in:)`.
     var expensesFromBank: Double = 0
     var expensesFromPots: Double = 0
+    /// Het deel van `remaining` dat aan de bankrekening is toegewezen (`MonthFigures.toBank`): een toewijzing, het dagboek ziet er
+    /// geen beweging van (zie BankShare.swift).
+    var toBank: Double = 0
 
     var id: String { month.key }
+    /// Wat er nog te verdelen is: wat er op de rekening blijft min wat je aan de bankrekening toewees (`MonthFigures.unassigned`).
+    var unassigned: Double { CentsMath.value(CentsMath.int(remaining) - CentsMath.int(toBank)) }
 
     /// Alles sluit: bank, spaarpotten en maandoverzicht.
     var allReconciles: Bool { bankReconciles && potsReconciles && overviewReconciles }
@@ -454,6 +459,7 @@ extension FinanceData {
             saved: CentsMath.value(figures.saved),
             invested: CentsMath.value(figures.invested),
             expensesFromBank: CentsMath.value(CentsMath.add(figures.expenses, -figures.fromPots)),
-            expensesFromPots: CentsMath.value(figures.fromPots))
+            expensesFromPots: CentsMath.value(figures.fromPots),
+            toBank: CentsMath.value(figures.toBank))
     }
 }

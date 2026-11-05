@@ -58,14 +58,8 @@ extension FinanceData {
     private func derivedOpening(_ h: Holding, current: YearMonth, cache: IncomeBasesCache, today: Date?) -> ValueSnapshot? {
         var later = 0.0
         var m = h.startMonth.adding(1)
-        let todayMonth = today.map { YearMonth(date: $0) }
         while m <= current {
-            if let today, let todayMonth, m >= todayMonth,
-               DayMath.isPlanned(m.date(day: transferDay(for: h.id, in: m)), asOf: today) {
-                m = m.adding(1)
-                continue
-            }
-            later += allocation(h.id, in: m, cache: cache)
+            later += settledAllocation(h.id, in: m, today: today, cache: cache)
             m = m.adding(1)
         }
         let hasPlan = h.monthlyContribution != 0 || (h.contributionMode == .percentage && h.contributionPercent > 0)
@@ -102,21 +96,31 @@ extension FinanceData {
         guard let snap = basis.snapshots.last(where: { $0.date < limit }) else { return nil }
         var value = snap.value
         var invested = snap.invested
-        let todayMonth = today.map { YearMonth(date: $0) }
         var m = YearMonth(date: snap.date).adding(1)
         while m <= month {
-            // Alleen de maand van `today` (en later) kan een overschrijving hebben die nog moet komen.
-            if let today, let todayMonth, m >= todayMonth,
-               DayMath.isPlanned(m.date(day: transferDay(for: h.id, in: m)), asOf: today) {
-                m = m.adding(1)
-                continue
-            }
-            let a = allocation(h.id, in: m, cache: cache)
+            // Alleen de maand van `today` (en later) kan overschrijvingen hebben die nog moeten komen.
+            let a = settledAllocation(h.id, in: m, today: today, cache: cache)
             value += a
             invested += a
             m = m.adding(1)
         }
         return HoldingState(value: value.cents, invested: invested.cents, isProjected: false, isEstimated: basis.isEstimated)
+    }
+
+    /// Wat van de inleg van `id` in `m` al is overgeschreven op het moment `today`, in euro's. Per kalenderdag: een overschrijving
+    /// telt vanaf het begin van haar dag, de overschrijfdag zowel als elk deel op een eigen dag (`TransferMath.slices`). Zonder
+    /// `today`, of voor een maand vóór die van `today`, is het de hele inleg van de maand (`allocation(_:in:cache:)`).
+    func settledAllocation(_ id: UUID, in m: YearMonth, today: Date?, cache: IncomeBasesCache) -> Double {
+        guard let today, m >= YearMonth(date: today) else { return allocation(id, in: m, cache: cache) }
+        let total: Int
+        switch allocationRule(id, in: m) {
+        case .amount(let value): total = CentsMath.int(value)
+        case .percent(let rule): total = AllocationMath.cents(of: rule, bases: cache.bases(in: m))
+        }
+        let slices = TransferMath.slices(totalCents: total, parts: transferParts(for: id, in: m),
+                                         standardDay: transferDay(for: id, in: m), month: m)
+        let settled = slices.filter { counts(day: $0.day, in: m) && !DayMath.isPlanned(m.date(day: $0.day), asOf: today) }
+        return CentsMath.value(CentsMath.sum(settled.map { $0.cents }))
     }
 
     /// Waarde aan het eind van `month`. Na de huidige maand: verwachte groei plus geplande inleg.
@@ -312,6 +316,9 @@ extension FinanceData {
     mutating func updateHolding(_ updated: Holding, current: YearMonth, now: Date = Date()) {
         guard let i = holdings.firstIndex(where: { $0.id == updated.id }) else { return }
         let old = holdings[i]
+        if old.extraTransfers != updated.extraTransfers {
+            freezePastTransferParts(updated.id, parts: old.extraTransfers, start: old.startMonth, before: current)
+        }
         holdings[i] = updated
         // Een nieuwe standaardinleg geldt ook meteen voor de lopende maand (zoals bij `updatePot`): een ander vast bedrag,
         // maar ook een andere inlegwijze (vast bedrag of percentage), een ander percentage of een andere grondslag. Een
@@ -335,6 +342,7 @@ extension FinanceData {
             months[key]?.allocations.removeValue(forKey: id.uuidString)
             // Ook een eigen percentage van een maand (variabel percentage) hoort bij de belegging en verdwijnt met haar.
             months[key]?.percentAllocations.removeValue(forKey: id.uuidString)
+            months[key]?.transferParts.removeValue(forKey: id.uuidString)
         }
         homeHoldingIDs = homeHoldingIDs?.filter { $0 != id }
     }

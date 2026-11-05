@@ -48,6 +48,8 @@ struct MonthSummary: Identifiable, Equatable {
     var saved: Double      // verdeeld over spaarpotten
     var invested: Double   // verdeeld over beleggingen
     var isProjected: Bool  // ligt na de huidige maand
+    /// Het deel van `remaining` dat aan de bankrekening is toegewezen (blijft op de rekening, telt als verdeeld).
+    var toBank: Double = 0
 
     var id: String { month.key }
     /// Wat er nog te verdelen is (kan negatief zijn: je hebt meer verdeeld dan je hebt).
@@ -61,8 +63,11 @@ struct MonthSummary: Identifiable, Equatable {
     var overAllocated: Double {
         CentsMath.value(MonthFigures(income: CentsMath.int(income), expenses: CentsMath.int(expenses),
                                      fromPots: CentsMath.int(fromPots), saved: CentsMath.int(saved),
-                                     invested: CentsMath.int(invested)).overAllocated)
+                                     invested: CentsMath.int(invested), toBank: CentsMath.int(toBank)).overAllocated)
     }
+
+    /// Wat er nog te verdelen is: wat er op de rekening blijft min wat je aan de bankrekening toewees (`MonthFigures.unassigned`).
+    var unassigned: Double { CentsMath.value(CentsMath.int(remaining) - CentsMath.int(toBank)) }
 }
 
 struct PeriodSummary: Equatable {
@@ -77,6 +82,9 @@ struct PeriodSummary: Equatable {
     var fromPots: Double { sum { $0.fromPots } }
     var saved: Double { sum { $0.saved } }
     var invested: Double { sum { $0.invested } }
+    var toBank: Double { sum { $0.toBank } }
+    /// Wat er nog te verdelen is over de hele periode (zie `MonthFigures.unassigned`).
+    var unassigned: Double { CentsMath.value(CentsMath.int(remaining) - CentsMath.int(toBank)) }
     /// Dezelfde formule als bij één maand, over de hele periode.
     var remaining: Double {
         let bankExpenses = CentsMath.int(expenses) - CentsMath.int(fromPots)
@@ -95,8 +103,11 @@ struct MonthFigures: Equatable {
     var fromPots = 0
     var saved = 0
     var invested = 0
+    /// Het deel van `remaining` dat je aan de bankrekening toewees: het blijft op de rekening en telt als verdeeld (zie BankShare.swift).
+    var toBank = 0
 
-    /// inkomen − uitgaven van de bank − verdeeld over potten − belegd.
+    /// inkomen − uitgaven van de bank − verdeeld over potten − belegd. Dit is wat er op de rekening blijft, ook het deel dat je aan
+    /// de bankrekening toewees (`toBank`); "Nog te verdelen" is `unassigned`.
     var remaining: Int { income - (expenses - fromPots) - saved - invested }
 
     /// Wat er te verdelen is voordat er iets is verdeeld: inkomen − uitgaven van de bank (kan negatief zijn).
@@ -105,7 +116,7 @@ struct MonthFigures: Equatable {
     /// Hoeveel er meer wordt verdeeld (potten en beleggingen) dan er te verdelen is. 0 als het past of als er niets
     /// wordt verdeeld. Voor de waarschuwing bij een verdeling die groter is dan het inkomen.
     var overAllocated: Int {
-        let allocated = saved + invested
+        let allocated = saved + invested + toBank
         guard allocated > 0 else { return 0 }
         return max(0, allocated - max(0, available))
     }
@@ -177,6 +188,7 @@ extension FinanceData {
         var plan = MonthPlan()
         for pot in pots where month >= pot.startMonth { putDefault(pot, in: month, into: &plan) }
         for h in holdings where month >= h.startMonth { putDefault(h, in: month, into: &plan) }
+        if bankShare != BankShare() { putDefault(bankShare, in: month, into: &plan) }
         return completedPlan(plan, in: month, using: stored)
     }
 
@@ -231,6 +243,10 @@ extension FinanceData {
                 }
                 for h in holdings where m >= h.startMonth && !hasAllocation(h.id, in: existing) {
                     putDefault(h, in: m, into: &existing)
+                    changed = true
+                }
+                if bankShare != BankShare(), !hasAllocation(BankShare.id, in: existing) {
+                    putDefault(bankShare, in: m, into: &existing)
                     changed = true
                 }
                 if changed { months[m.key] = existing }
@@ -370,6 +386,9 @@ extension FinanceData {
             invested = CentsMath.add(invested, allocationCents(holding, key: holdingKeys[i], in: month, storedPlan: storedPlan, bases: bases))
         }
         f.invested = invested
+        // De bankrekening als bestemming: een toewijzing, geen overboeking (BankShare.swift). Een negatief bedrag heeft geen
+        // betekenis (het geld staat al op de rekening) en telt als 0.
+        f.toBank = max(0, allocationCents(bankShare, key: BankShare.key, in: month, storedPlan: storedPlan, bases: bases))
         return f
     }
 
@@ -381,12 +400,9 @@ extension FinanceData {
     /// Verdeling voor één pot of belegging in een maand, in euro's. Bij een percentage van het inkomen is dit het bedrag
     /// dat daar in deze maand uit volgt (zie `allocationCents`). Overal waar de app een verdeling leest, komt dit getal.
     func allocation(_ id: UUID, in month: YearMonth) -> Double {
-        guard transferCounts(id, in: month) else { return 0 }
-        switch allocationRule(id, in: month) {
-        // Een vast bedrag met meer dan twee decimalen (import, oud bestand) telt overal op hele centen, zoals de som.
-        case .amount(let value): return CentsMath.value(CentsMath.int(value))
-        case .percent(let rule): return CentsMath.value(AllocationMath.cents(of: rule, bases: incomeBases(in: month)))
-        }
+        // Een vast bedrag met meer dan twee decimalen (import, oud bestand) telt overal op hele centen, zoals de som; wat vóór de
+        // startdag wordt overgeschreven telt niet mee (`countedTransferCents`).
+        CentsMath.value(allocationCents(id, in: month))
     }
 
     /// Zet de verdeling van een maand op een vast bedrag (een eventuele overschrijving met een percentage vervalt).
@@ -446,7 +462,8 @@ extension FinanceData {
                             fromPots: CentsMath.value(f.fromPots),
                             saved: CentsMath.value(f.saved),
                             invested: CentsMath.value(f.invested),
-                            isProjected: month > current)
+                            isProjected: month > current,
+                            toBank: CentsMath.value(f.toBank))
     }
 
     func periodSummary(_ mode: PeriodMode, containing focus: YearMonth, current: YearMonth) -> PeriodSummary {
@@ -481,15 +498,18 @@ extension FinanceData {
         var fresh = MonthPlan()
         for pot in pots { putDefault(pot, in: month, into: &fresh, zeroBeforeStart: true) }
         for h in holdings { putDefault(h, in: month, into: &fresh, zeroBeforeStart: true) }
+        if bankShare != BankShare() { putDefault(bankShare, in: month, into: &fresh, zeroBeforeStart: true) }
         editPlan(month) {
             $0.allocations = fresh.allocations
             $0.percentAllocations = fresh.percentAllocations
+            // De extra overschrijfdata van deze maand vallen weg: de standaard van elke pot en belegging geldt weer.
+            $0.transferParts = [:]
         }
     }
 
     /// Zet de verdeling van een maand op nul (ook een percentage: de overschrijving wordt een bedrag van nul).
     mutating func clearAllocations(in month: YearMonth) {
-        let ids = pots.map(\.id) + holdings.map(\.id)
+        let ids = pots.map(\.id) + holdings.map(\.id) + [BankShare.id]
         editPlan(month) { plan in
             for id in ids {
                 plan.allocations[id.uuidString] = 0
@@ -501,7 +521,8 @@ extension FinanceData {
     /// Verdeelt wat er over is gelijk over alle spaarpotten (alleen als er iets over is).
     /// Er blijft geen cent liggen: de resterende centen gaan naar de eerste potten.
     mutating func spreadRemainingOverPots(in month: YearMonth) {
-        let left = monthFigures(month).remaining
+        // Wat nog te verdelen is: wat je aan de bankrekening toewees is al verdeeld.
+        let left = monthFigures(month).unassigned
         guard left > 0, !pots.isEmpty else { return }
         let count = pots.count
         let base = left / count

@@ -36,18 +36,23 @@ struct PercentRule: Codable, Equatable {
     /// 0...100, maximaal twee decimalen (zie `AllocationMath.cleanPercent`).
     var percent: Double
     var basis: IncomeBasis = .salary
+    /// Een vast bedrag in euro's dat er elke keer BOVENOP het percentage komt (in dezelfde pot of belegging). 0 = geen.
+    /// Het bedrag van de maand is het percentage van het inkomen plus dit bedrag (zie `AllocationMath.cents(of:bases:)`).
+    var extra: Double = 0
 
-    init(percent: Double, basis: IncomeBasis = .salary) {
+    init(percent: Double, basis: IncomeBasis = .salary, extra: Double = 0) {
         self.percent = percent
         self.basis = basis
+        self.extra = extra
     }
 
-    enum CodingKeys: String, CodingKey { case percent, basis }
+    enum CodingKeys: String, CodingKey { case percent, basis, extra }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         percent = try c.decodeIfPresent(Double.self, forKey: .percent) ?? 0
         basis = c.decodeLenient(IncomeBasis.self, forKey: .basis, default: .salary)
+        extra = c.decodeLenient(Double.self, forKey: .extra, default: 0)
     }
 
     /// Een percentage dat geen getal is (NaN of oneindig) wordt als 0 bewaard: de JSON-encoder weigert zulke waarden, en dan
@@ -56,6 +61,8 @@ struct PercentRule: Codable, Equatable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(percent.isFinite ? percent : 0, forKey: .percent)
         try c.encode(basis, forKey: .basis)
+        // Alleen als er een bedrag bovenop komt: een bestand zonder dit bedrag blijft byte voor byte gelijk.
+        if AllocationMath.extraCents(extra) != 0 { try c.encode(AllocationMath.cleanExtra(extra), forKey: .extra) }
     }
 }
 
@@ -85,7 +92,9 @@ enum AllocationRule: Equatable {
             return Fmt.euro(value)
         case .percent(let rule):
             let base = rule.basis == .salary ? "je salaris" : "al je inkomsten"
-            return "\(Fmt.percent(rule.percent / 100, digits: 2)) van \(base)"
+            let text = "\(Fmt.percent(rule.percent / 100, digits: 2)) van \(base)"
+            let extra = AllocationMath.extraCents(rule.extra)
+            return extra == 0 ? text : text + " plus " + Fmt.euro(CentsMath.value(extra))
         }
     }
 }
@@ -129,6 +138,10 @@ protocol ContributionSource {
     var contributionMode: ContributionMode { get }
     var contributionPercent: Double { get }
     var contributionBasis: IncomeBasis { get }
+    /// Bij een percentage: het vaste bedrag dat er bovenop komt (euro's, 0 = geen).
+    var contributionExtra: Double { get }
+    /// De extra overschrijfdata van de standaardinleg (zie `TransferPart`); leeg = alles op de standaarddag.
+    var extraTransfers: [TransferPart] { get }
 }
 
 extension Pot: ContributionSource {}
@@ -140,7 +153,9 @@ extension ContributionSource {
     var contributionRule: AllocationRule {
         switch contributionMode {
         case .fixed: return .amount(monthlyContribution)
-        case .percentage: return .percent(PercentRule(percent: AllocationMath.cleanPercent(contributionPercent), basis: contributionBasis))
+        case .percentage:
+            return .percent(PercentRule(percent: AllocationMath.cleanPercent(contributionPercent), basis: contributionBasis,
+                                        extra: AllocationMath.cleanExtra(contributionExtra)))
         }
     }
 
@@ -165,6 +180,17 @@ enum AllocationMath {
         return Int(scaled)
     }
 
+    /// Het extra bedrag bovenop een percentage zoals het wordt gebruikt: op hele centen, nooit negatief of oneindig.
+    static func cleanExtra(_ extra: Double) -> Double {
+        CentsMath.value(extraCents(extra))
+    }
+
+    /// Het extra bedrag in hele centen (0 bij onzin: NaN, oneindig, negatief).
+    static func extraCents(_ extra: Double) -> Int {
+        guard extra.isFinite, extra > 0 else { return 0 }
+        return CentsMath.int(extra)
+    }
+
     /// Het bedrag in centen: `incomeCents` × percentage, op hele centen (half omhoog). Een negatief inkomen geeft 0.
     /// Rekent met gehele getallen en kan niet overlopen: eerst het deel in tienduizenden, dan de rest.
     static func percentCents(of incomeCents: Int, hundredths p: Int) -> Int {
@@ -177,7 +203,8 @@ enum AllocationMath {
 
     /// Het bedrag in centen van een regel bij dit inkomen.
     static func cents(of rule: PercentRule, bases: IncomeBases) -> Int {
-        percentCents(of: bases.cents(for: rule.basis), hundredths: hundredths(rule.percent))
+        let percentPart = percentCents(of: bases.cents(for: rule.basis), hundredths: hundredths(rule.percent))
+        return CentsMath.add(percentPart, extraCents(rule.extra))
     }
 }
 
@@ -220,6 +247,7 @@ extension FinanceData {
         let before = month < startMonth
         if let pot = pots.first(where: { $0.id == id }) { return before ? .amount(0) : pot.defaultRule(in: month) }
         if let holding = holdings.first(where: { $0.id == id }) { return before ? .amount(0) : holding.defaultRule(in: month) }
+        if id == BankShare.id { return before ? .amount(0) : bankShare.defaultRule(in: month) }
         return nil
     }
 
@@ -238,9 +266,17 @@ extension FinanceData {
     func effectiveAllocation(_ id: UUID, in month: YearMonth) -> EffectiveAllocation {
         let rule = allocationRule(id, in: month)
         let standard = defaultAllocationRule(id, in: month) ?? .amount(0)
-        // Een inleg met een overschrijfdag vóór de startdag telt niet mee: het bedrag is dan 0, de regel blijft zoals hij is.
-        let counted = transferCounts(id, in: month)
-        return EffectiveAllocation(rule: rule, amount: counted ? amount(of: rule, in: month) : 0, isOverride: rule != standard)
+        // Een deel van de inleg dat vóór de startdag valt telt niet mee: het bedrag is dan lager, de regel blijft zoals hij is.
+        let cents = countedTransferCents(rawCents(of: rule, in: month), id: id, in: month, parts: transferParts(for: id, in: month))
+        return EffectiveAllocation(rule: rule, amount: CentsMath.value(cents), isOverride: rule != standard)
+    }
+
+    /// Het bedrag van een regel in een maand in hele centen, zonder rekening te houden met de startdatum.
+    func rawCents(of rule: AllocationRule, in month: YearMonth) -> Int {
+        switch rule {
+        case .amount(let value): return CentsMath.int(value)
+        case .percent(let percent): return AllocationMath.cents(of: percent, bases: incomeBases(in: month))
+        }
     }
 
     /// Het bedrag in euro's van een regel in een maand.
@@ -294,8 +330,15 @@ extension FinanceData {
     /// uitgerekend als de regel een percentage is.
     func allocationCents<E: ContributionSource>(_ e: E, key: String, in month: YearMonth, storedPlan: MonthPlan?,
                                                 basesFor bases: () -> IncomeBases) -> Int {
-        // Een inleg telt alleen als zijn overschrijfdag op of na de startdag valt (in een gewone maand altijd).
-        guard transferCounts(e.id, in: month) else { return 0 }
+        let total = allocationTotalCents(e, key: key, in: month, storedPlan: storedPlan, basesFor: bases)
+        // Alleen wat op of na de startdag wordt overgeschreven telt mee (in een gewone maand alles, zonder de dagen uit te rekenen).
+        return countedTransferCents(total, id: e.id, in: month, parts: storedPlan?.transferParts[key] ?? e.extraTransfers)
+    }
+
+    /// De inleg als geheel in een maand in hele centen, ook het deel dat vóór de startdag zou vallen. De overschrijvingen van de
+    /// dagen (`planEvents`, de potten) verdelen dit bedrag over de dagen (`TransferMath.slices`) en laten wat niet meetelt vallen.
+    func allocationTotalCents<E: ContributionSource>(_ e: E, key: String, in month: YearMonth, storedPlan: MonthPlan?,
+                                                     basesFor bases: () -> IncomeBases) -> Int {
         if let storedPlan {
             if let rule = storedPlan.percentAllocations[key] { return AllocationMath.cents(of: rule, bases: bases()) }
             if let value = storedPlan.allocations[key] { return CentsMath.int(value) }
@@ -315,20 +358,18 @@ extension FinanceData {
     /// Zoals `allocation(_:in:)`, met het inkomen van de maand uit `cache`: precies hetzelfde getal, maar zonder het
     /// maandplan bij elke aanroep opnieuw te bouwen (voor lussen over veel maanden).
     func allocation(_ id: UUID, in month: YearMonth, cache: IncomeBasesCache) -> Double {
-        guard transferCounts(id, in: month) else { return 0 }
+        let total: Int
         switch allocationRule(id, in: month) {
-        case .amount(let value): return CentsMath.value(CentsMath.int(value))
-        case .percent(let rule): return CentsMath.value(AllocationMath.cents(of: rule, bases: cache.bases(in: month)))
+        case .amount(let value): total = CentsMath.int(value)
+        case .percent(let rule): total = AllocationMath.cents(of: rule, bases: cache.bases(in: month))
         }
+        return CentsMath.value(countedTransferCents(total, id: id, in: month, parts: transferParts(for: id, in: month)))
     }
 
     /// De verdeling van een pot of belegging (op id) in een maand in hele centen.
     func allocationCents(_ id: UUID, in month: YearMonth) -> Int {
-        guard transferCounts(id, in: month) else { return 0 }
-        switch allocationRule(id, in: month) {
-        case .amount(let value): return CentsMath.int(value)
-        case .percent(let rule): return AllocationMath.cents(of: rule, bases: incomeBases(in: month))
-        }
+        countedTransferCents(rawCents(of: allocationRule(id, in: month), in: month), id: id, in: month,
+                             parts: transferParts(for: id, in: month))
     }
 
     // MARK: Plannen vullen
@@ -356,9 +397,15 @@ extension FinanceData {
     /// Overschrijft de verdeling van één maand met een percentage van het inkomen (variabel percentage). Zonder `basis`
     /// geldt de grondslag van de pot of belegging. Een eventuele overschrijving met een bedrag vervalt. Het percentage
     /// wordt 0...100 op twee decimalen.
-    mutating func setAllocationPercent(_ id: UUID, in month: YearMonth, percent: Double, basis: IncomeBasis? = nil) {
-        let chosen = basis ?? pot(id)?.contributionBasis ?? holdings.first(where: { $0.id == id })?.contributionBasis ?? .salary
-        let rule = PercentRule(percent: AllocationMath.cleanPercent(percent), basis: chosen)
+    mutating func setAllocationPercent(_ id: UUID, in month: YearMonth, percent: Double, basis: IncomeBasis? = nil,
+                                       extra: Double? = nil) {
+        let chosen = basis ?? pot(id)?.contributionBasis ?? holdings.first(where: { $0.id == id })?.contributionBasis
+            ?? (id == BankShare.id ? bankShare.contributionBasis : .salary)
+        // Zonder `extra` blijft het extra bedrag dat de maand al had; een maand zonder percentage begint zonder extra bedrag.
+        var kept = 0.0
+        if case .percent(let current) = allocationRule(id, in: month) { kept = current.extra }
+        let rule = PercentRule(percent: AllocationMath.cleanPercent(percent), basis: chosen,
+                               extra: AllocationMath.cleanExtra(extra ?? kept))
         editPlan(month) {
             $0.percentAllocations[id.uuidString] = rule
             $0.allocations.removeValue(forKey: id.uuidString)
@@ -379,29 +426,40 @@ extension FinanceData {
     mutating func setAllocationRule(_ id: UUID, in month: YearMonth, rule: AllocationRule) {
         switch rule {
         case .amount(let value): setAllocation(id, in: month, amount: value)
-        case .percent(let percent): setAllocationPercent(id, in: month, percent: percent.percent, basis: percent.basis)
+        case .percent(let percent):
+            setAllocationPercent(id, in: month, percent: percent.percent, basis: percent.basis, extra: percent.extra)
         }
     }
 
     /// De inlegwijze van een pot of belegging (vast bedrag of percentage), los van een maand. nil als het id niet bestaat.
     func contributionRule(of id: UUID) -> AllocationRule? {
         if let pot = pot(id) { return pot.contributionRule }
+        if id == BankShare.id { return bankShare.contributionRule }
         return holdings.first(where: { $0.id == id })?.contributionRule
     }
 
     /// Zet de standaardinleg van een pot of belegging op een percentage van het inkomen (vast percentage: elke maand
     /// hetzelfde). Voor de lopende maand geldt het ook meteen, zoals bij een nieuwe standaardinleg met een bedrag.
-    mutating func setContributionPercent(_ id: UUID, percent: Double, basis: IncomeBasis, current: YearMonth) {
+    mutating func setContributionPercent(_ id: UUID, percent: Double, basis: IncomeBasis, extra: Double? = nil,
+                                         current: YearMonth) {
         let clean = AllocationMath.cleanPercent(percent)
         let before = contributionRule(of: id)
         if let i = pots.firstIndex(where: { $0.id == id }) {
             pots[i].contributionMode = .percentage
             pots[i].contributionPercent = clean
             pots[i].contributionBasis = basis
+            if let extra { pots[i].contributionExtra = AllocationMath.cleanExtra(extra) }
         } else if let i = holdings.firstIndex(where: { $0.id == id }) {
             holdings[i].contributionMode = .percentage
             holdings[i].contributionPercent = clean
             holdings[i].contributionBasis = basis
+            if let extra { holdings[i].contributionExtra = AllocationMath.cleanExtra(extra) }
+        } else if id == BankShare.id {
+            freezePastBankShare(rule: bankShare.contributionRule, before: current)
+            bankShare.contributionMode = .percentage
+            bankShare.contributionPercent = clean
+            bankShare.contributionBasis = basis
+            if let extra { bankShare.contributionExtra = AllocationMath.cleanExtra(extra) }
         } else {
             return
         }
@@ -418,6 +476,10 @@ extension FinanceData {
         } else if let i = holdings.firstIndex(where: { $0.id == id }) {
             holdings[i].contributionMode = .fixed
             holdings[i].monthlyContribution = amount.cents
+        } else if id == BankShare.id {
+            freezePastBankShare(rule: bankShare.contributionRule, before: current)
+            bankShare.contributionMode = .fixed
+            bankShare.monthlyContribution = amount.cents
         } else {
             return
         }
@@ -437,7 +499,7 @@ extension FinanceData {
     /// dit aan om de lopende maand mee te laten gaan.
     mutating func syncCurrentMonth(_ id: UUID, with before: AllocationRule?, current: YearMonth) {
         guard let after = contributionRule(of: id), after != before else { return }
-        let start = pot(id)?.startMonth ?? holdings.first(where: { $0.id == id })?.startMonth
+        let start = pot(id)?.startMonth ?? holdings.first(where: { $0.id == id })?.startMonth ?? (id == BankShare.id ? startMonth : nil)
         guard let start, current >= start else { return }
         editPlan(current) { plan in
             plan.allocations.removeValue(forKey: id.uuidString)
@@ -472,6 +534,7 @@ extension FinanceData {
             return CentsMath.int(x) == CentsMath.int(y)
         case (.percent(let x), .percent(let y)):
             return x.basis == y.basis && AllocationMath.hundredths(x.percent) == AllocationMath.hundredths(y.percent)
+                && AllocationMath.extraCents(x.extra) == AllocationMath.extraCents(y.extra)
         default:
             return false
         }
@@ -481,8 +544,8 @@ extension FinanceData {
 
     /// Wat `percent` van het inkomen van `month` is in euro's, precies zoals de verdeling het uitrekent ("dit percentage
     /// is nu X euro").
-    func percentAmount(_ percent: Double, of basis: IncomeBasis = .salary, in month: YearMonth) -> Double {
-        let rule = PercentRule(percent: percent, basis: basis)
+    func percentAmount(_ percent: Double, of basis: IncomeBasis = .salary, extra: Double = 0, in month: YearMonth) -> Double {
+        let rule = PercentRule(percent: percent, basis: basis, extra: extra)
         return CentsMath.value(AllocationMath.cents(of: rule, bases: incomeBases(in: month)))
     }
 
@@ -502,7 +565,7 @@ extension FinanceData {
         guard month >= startMonth else { return (0, 0) }
         var salary = 0
         var allIncome = 0
-        for id in pots.map(\.id) + holdings.map(\.id) {
+        for id in pots.map(\.id) + holdings.map(\.id) + [BankShare.id] {
             guard case .percent(let rule) = allocationRule(id, in: month) else { continue }
             if rule.basis == .salary { salary += AllocationMath.hundredths(rule.percent) } else { allIncome += AllocationMath.hundredths(rule.percent) }
         }

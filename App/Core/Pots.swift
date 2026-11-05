@@ -168,9 +168,15 @@ extension FinanceData {
                 return made
             }
             for (i, pot) in targets.enumerated() {
-                let cents = allocationCents(pot, key: potKeys[i], in: month, storedPlan: storedPlan, basesFor: incomeOfMonth)
-                if cents != 0 {
-                    planItems[i].append((date(day: min(transferDay(for: pot.id, in: month), dayCount)), cents))
+                // De inleg als geheel, verdeeld over de dagen waarop hij wordt overgeschreven (de overschrijfdag en de extra
+                // data, `TransferMath.slices`); een stuk vóór de startdag telt niet mee.
+                let total = allocationTotalCents(pot, key: potKeys[i], in: month, storedPlan: storedPlan, basesFor: incomeOfMonth)
+                guard total != 0 else { continue }
+                let parts = storedPlan?.transferParts[potKeys[i]] ?? pot.extraTransfers
+                for slice in TransferMath.slices(totalCents: total, parts: parts,
+                                                 standardDay: transferDay(for: pot.id, in: month), month: month)
+                where counts(day: slice.day, in: month) {
+                    planItems[i].append((date(day: min(slice.day, dayCount)), slice.cents))
                 }
             }
             if anyShares {
@@ -338,13 +344,18 @@ extension FinanceData {
             // inleg komt uit dezelfde som als overal (`allocationCents`).
             let monthPlan = plan(for: m, using: stored)
             let month = m
-            let cents = allocationCents(pot, key: key, in: m, storedPlan: stored.plan(at: m),
-                                        basesFor: { incomeBases(of: monthPlan, in: month) })
-            if cents != 0 {
-                items.append(PotTimelineItem(id: "alloc-\(m.key)",
-                                             date: m.date(day: transferDay(for: potID, in: m), calendar: cal),
-                                             title: "Maandverdeling \(Fmt.month(m))", note: "",
-                                             amount: CentsMath.value(cents), isMonthlyAllocation: true, kind: .allocation))
+            let storedMonth = stored.plan(at: m)
+            let total = allocationTotalCents(pot, key: key, in: m, storedPlan: storedMonth,
+                                             basesFor: { incomeBases(of: monthPlan, in: month) })
+            if total != 0 {
+                let parts = storedMonth?.transferParts[key] ?? pot.extraTransfers
+                for slice in TransferMath.slices(totalCents: total, parts: parts, standardDay: transferDay(for: potID, in: m), month: m)
+                where counts(day: slice.day, in: m) {
+                    items.append(PotTimelineItem(id: slice.isStandard ? "alloc-\(m.key)" : "alloc-\(m.key)-\(slice.day)",
+                                                 date: m.date(day: slice.day, calendar: cal),
+                                                 title: "Maandverdeling \(Fmt.month(m))", note: "",
+                                                 amount: CentsMath.value(slice.cents), isMonthlyAllocation: true, kind: .allocation))
+                }
             }
             for line in monthPlan.expenses where !line.potShares.isEmpty && expenseCounts(line, in: m) {
                 for payment in expenseSplit(of: line).pots where payment.potID == potID {
@@ -380,6 +391,10 @@ extension FinanceData {
     mutating func updatePot(_ updated: Pot, current: YearMonth) {
         guard let i = pots.firstIndex(where: { $0.id == updated.id }) else { return }
         let old = pots[i]
+        // Nieuwe standaarddelen gelden vanaf de lopende maand: wat de standaard tot nu toe was blijft in eerdere maanden staan.
+        if old.extraTransfers != updated.extraTransfers {
+            freezePastTransferParts(updated.id, parts: old.extraTransfers, start: old.startMonth, before: current)
+        }
         pots[i] = updated
         // Een nieuwe standaardinleg geldt ook meteen voor de lopende maand: een ander vast bedrag, maar ook een andere
         // inlegwijze (vast bedrag of percentage), een ander percentage of een andere grondslag. De lopende maand is
@@ -432,6 +447,7 @@ extension FinanceData {
             months[key]?.allocations.removeValue(forKey: id.uuidString)
             // Ook een eigen percentage van een maand (variabel percentage) hoort bij de pot en verdwijnt met hem.
             months[key]?.percentAllocations.removeValue(forKey: id.uuidString)
+            months[key]?.transferParts.removeValue(forKey: id.uuidString)
             // Uitgaven die deels uit deze pot kwamen: de bank betaalt dat deel dan zelf.
             if let plan = months[key], plan.expenses.contains(where: { $0.potShares.contains { $0.potID == id } }) {
                 months[key]?.expenses = plan.expenses.map { line in
@@ -442,8 +458,9 @@ extension FinanceData {
             }
         }
         homePotIDs = homePotIDs?.filter { $0 != id }
-        for i in goals.indices {
-            if case .pot(let potID) = goals[i].funding, potID == id { goals[i].funding = .portfolio }
+        // Een doel dat deze pot gebruikte houdt zijn andere potten; zonder pot rekent het weer met de beleggingen (zoals altijd).
+        for i in goals.indices where goals[i].isFunded(by: id) {
+            goals[i].setFundingPots(goals[i].fundingPotIDs.filter { $0 != id })
         }
     }
 
