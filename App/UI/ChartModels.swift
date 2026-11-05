@@ -1311,6 +1311,16 @@ struct BarEntry: Identifiable, Equatable {
     let isProjected: Bool
     /// De zin voor VoiceOver en bij een tik.
     let text: String
+    /// Het deel van `free` dat aan de bankrekening is toegewezen. Alleen gevuld in een maand die "Nog te verdelen" heet (een
+    /// verwachte maand, of de huidige maand als de aanroeper hem noemt; zie `StackedBarModel.months`) en dan alleen met een
+    /// bankdeel. De staaf blijft op het inkomen sluiten: dit deel zit in `free`.
+    var toBank: Double = 0
+
+    /// Wat er nog niet is toegewezen (het getal bij "Nog te verdelen", `MonthFigures.unassigned`): wat over is, of het tekort
+    /// (negatief), min het bankdeel. Kan negatief zijn.
+    var unassigned: Double {
+        CentsMath.value(CentsMath.int(shortfall > 0 ? -shortfall : free) - CentsMath.int(toBank))
+    }
 }
 
 struct StackedBarModel: Equatable {
@@ -1336,7 +1346,13 @@ struct StackedBarModel: Equatable {
     /// Alleen maanden vanaf de startmaand van de gegevens (daarvoor is er niets en tekende de app lege staven). Bij een tekort steekt
     /// de stapel (uitgaven, gespaard, belegd) boven de inkomenslijn uit en staat het tekort in de tekst; "Overgehouden" blijft op
     /// `max(0, remaining)`. Een verwachte maand heeft "(verwacht)" in zijn tekst.
-    static func months(_ summaries: [MonthSummary], startMonth: YearMonth) -> StackedBarModel {
+    ///
+    /// Een bankdeel (wat je aan de bankrekening toewees) zit in "over": de staaf sluit nog steeds op het inkomen. Wel zeggen de
+    /// zin en `BarEntry.detailRows` van een maand die "Nog te verdelen" heet hoeveel er aan de bankrekening is toegewezen en wat
+    /// er daarna nog te verdelen is, hetzelfde getal als op Verdelen (`MonthFigures.unassigned`). Dat zijn een verwachte maand en,
+    /// als de aanroeper hem noemt (`current`), de huidige maand met een bankdeel. Een maand die voorbij is blijft "Overgehouden"
+    /// (`MoneyLabels.left`); zonder bankdeel verandert er niets.
+    static func months(_ summaries: [MonthSummary], startMonth: YearMonth, current: YearMonth? = nil) -> StackedBarModel {
         let shown = summaries.filter { $0.month >= startMonth }
         let hasData = shown.contains { $0.income != 0 || $0.expenses != 0 || $0.saved != 0 || $0.invested != 0 }
         guard hasData else {
@@ -1354,9 +1370,11 @@ struct StackedBarModel: Equatable {
             let fromIncome = max(0, s.expenses - s.fromPots)
             let saved = max(0, s.saved)
             let invested = max(0, s.invested)
-            let remaining = s.remaining
+            let remaining = s.remaining // remaining: de staaf sluit op het inkomen, dus ze loopt op wat er op de rekening blijft (met het bankdeel erin)
             let free = max(0, remaining)
             let shortfall = max(0, -remaining)
+            let namesUnassigned: Bool = s.isProjected || s.month == current
+            let toBank: Double = namesUnassigned && s.toBank.isFinite ? max(0, s.toBank) : 0
             let amounts: [(FlowKind, Double)] = [(.expenses, fromIncome), (.saved, saved), (.invested, invested), (.free, free)]
             for (kind, amount) in amounts where amount > 0 && amount.isFinite {
                 bars.append(BarSegment(id: "\(monthID)-\(kind.rawValue)", monthID: monthID, kind: kind, amount: amount,
@@ -1368,13 +1386,15 @@ struct StackedBarModel: Equatable {
             var text = "\(ChartText.monthTitle(s.month))\(projectedNote): inkomen \(ChartText.euro(s.income)), uitgaven \(ChartText.euro(fromIncome)), gespaard \(ChartText.euro(saved)), belegd \(ChartText.euro(invested))"
             if shortfall > 0 {
                 text += ", tekort \(ChartText.euro(shortfall))."
+            } else if toBank > 0 {
+                text += bankSentence(free: free, toBank: toBank)
             } else {
                 text += ", \(leftWord) \(ChartText.euro(free))."
             }
             entries.append(BarEntry(id: monthID, date: s.month.firstDay, label: ChartAxis.monthLabel(s.month.firstDay),
                                     title: ChartText.monthTitle(s.month),
                                     income: s.income, expenses: fromIncome, saved: saved, invested: invested, free: free,
-                                    shortfall: shortfall, isProjected: s.isProjected, text: text))
+                                    shortfall: shortfall, isProjected: s.isProjected, text: text, toBank: toBank))
         }
         let kinds = FlowKind.allCases.filter { kind in bars.contains { $0.kind == kind } }
         var summary = "Waar gaat je geld heen, per maand."
@@ -1388,6 +1408,16 @@ struct StackedBarModel: Equatable {
         }
         return StackedBarModel(bars: bars, incomeMarks: marks, kinds: kinds, entries: entries, summary: summary, empty: nil)
     }
+
+    /// Het eind van de zin van een maand met een bankdeel: wat er nog te verdelen is en wat aan de bankrekening is toegewezen. Is het
+    /// bankdeel groter dan wat er over is, dan zegt de zin dat.
+    private static func bankSentence(free: Double, toBank: Double) -> String {
+        let open = CentsMath.value(CentsMath.int(free) - CentsMath.int(toBank))
+        if open >= 0 {
+            return ", nog te verdelen \(ChartText.euro(open)), aan je bankrekening toegewezen \(ChartText.euro(toBank))."
+        }
+        return ", aan je bankrekening toegewezen \(ChartText.euro(toBank)), dat is \(ChartText.euro(-open)) meer dan er over is."
+    }
 }
 
 /// Een regel in de annotatie bij een gekozen maand: een naam en een bedrag.
@@ -1399,7 +1429,8 @@ struct BarDetailRow: Identifiable, Equatable {
 
 extension BarEntry {
     /// De bedragen van de maand als rijen, in de volgorde van de staaf: inkomen, uitgaven, gespaard, belegd en dan wat er over is
-    /// ("Overgehouden", of "Nog te verdelen" voor een maand die nog komt) of het tekort.
+    /// ("Overgehouden", of "Nog te verdelen" voor een maand die nog komt) of het tekort. Met een bankdeel staat daar eerst
+    /// "Aan bankrekening toegewezen" en dan "Nog te verdelen" (wat er daarna nog niet is toegewezen; kan negatief zijn).
     var detailRows: [BarDetailRow] {
         var rows: [BarDetailRow] = [
             BarDetailRow(id: "income", label: "Inkomen", value: income),
@@ -1409,6 +1440,9 @@ extension BarEntry {
         ]
         if shortfall > 0 {
             rows.append(BarDetailRow(id: "shortfall", label: "Tekort", value: shortfall))
+        } else if toBank > 0 {
+            rows.append(BarDetailRow(id: "toBank", label: "Aan bankrekening toegewezen", value: toBank))
+            rows.append(BarDetailRow(id: FlowKind.free.rawValue, label: "Nog te verdelen", value: unassigned))
         } else {
             let label: String = isProjected ? "Nog te verdelen" : FlowKind.free.title
             rows.append(BarDetailRow(id: FlowKind.free.rawValue, label: label, value: free))

@@ -89,6 +89,17 @@ enum CashflowText {
         month >= current ? "Nog te verdelen" : "Overgehouden"
     }
 
+    /// De uitleg onder "Te verdelen t/m deze dag" op Dag voor dag. Die rij bouwt op over de maand en is op de laatste dag wat er op de
+    /// rekening blijft (`MonthLedger.remaining`). Heb je in die maand een deel aan de bankrekening toegewezen (`toBank`, in euro's),
+    /// dan is dat totaal niet het getal bij "Nog te verdelen" van de maand: de tekst zegt hoeveel er is toegewezen. Zonder bankdeel
+    /// de bestaande tekst.
+    static func remainingSoFarDetail(toBank: Double) -> String {
+        guard CentsMath.int(toBank) > 0 else {
+            return "Opgebouwd in de maand; het totaal van de maand staat bij Nog te verdelen."
+        }
+        return "Opgebouwd in de maand. Van het totaal aan het eind van de maand heb je \(Fmt.euro(toBank)) aan je bankrekening toegewezen."
+    }
+
     /// Het saldo aan het eind van een maand: "Verwacht eind oktober" (deze en komende maanden) of "Saldo eind september".
     static func monthEndTitle(_ month: YearMonth, current: YearMonth) -> String {
         let name = Fmt.monthNames[min(max(month.month, 1), 12) - 1]
@@ -434,9 +445,10 @@ struct LedgerCheck: Equatable {
         remaining = CentsMath.add(remaining, -CentsMath.int(l.planOutflow))
         remaining = CentsMath.add(remaining, -CentsMath.int(l.planToPots))
         remaining = CentsMath.add(remaining, -CentsMath.int(l.toHoldings))
-        compare("Nog te verdelen", overview: l.remaining, days: CentsMath.value(remaining))
+        // Dit gaat over wat er op de rekening blijft (`remaining`), ook het deel dat je aan de bankrekening toewees: dus niet "Nog te verdelen".
+        compare("Over op je rekening", overview: l.remaining, days: CentsMath.value(remaining)) // remaining: controle van het dagboek, het getal is wat er op de rekening blijft
         if let last = l.days.last {
-            compare("Nog te verdelen op de laatste dag", overview: l.remaining, days: last.remainingSoFar)
+            compare("Over op je rekening op de laatste dag", overview: l.remaining, days: last.remainingSoFar) // remaining: idem, op de laatste dag
         }
         if out.isEmpty {
             out.append(Issue(id: "overview", text: "De dagen sluiten niet met de maandcijfers van deze maand."))
@@ -623,8 +635,12 @@ struct BankLowPointNote: Equatable {
 
 /// De cijfers van "Binnen en eruit" voor een maand, allemaal uit dezelfde bronnen als de rest van de app: `expenseOverview`
 /// (inkomen, uitgaven, inleg) en het bankdeel van elke uitgavenregel (`fromBank(of:)`). Er wordt hier niets zelf uitgerekend.
-/// Inkomen min wat van de bank gaat min inleg is `leftAfterTransfers`, hetzelfde getal als `remaining(in:)`.
+/// Inkomen min wat van de bank gaat min inleg is `leftAfterTransfers`, hetzelfde getal als `remaining(in:)`: wat er op de rekening
+/// blijft. Het getal bij het label (`left(current:)`) is voor de huidige en de komende maanden wat er daarna nog niet aan de
+/// bankrekening is toegewezen (`MoneyLabels.left`), zodat dit scherm hetzelfde zegt als Verdelen.
 struct BankFlowFigures: Equatable {
+    /// De maand waar deze cijfers bij horen.
+    let month: YearMonth
     let income: Double
     /// Alle vaste en variabele uitgaven, ook wat uit spaarpotten komt.
     let fixed: Double
@@ -637,10 +653,21 @@ struct BankFlowFigures: Equatable {
     let toPots: Double
     let toInvestments: Double
     let leftAfterExpenses: Double
+    /// Wat er op de rekening blijft (`MonthFigures.remaining`), ook het deel dat je aan de bankrekening toewees.
     let leftAfterTransfers: Double
+    /// Het deel van de verdeling dat je aan de bankrekening toewees (`MonthFigures.toBank`): het blijft op je rekening en telt als verdeeld.
+    let toBank: Double
+    /// Wat er nog niet is toegewezen (`MonthFigures.unassigned`; kan negatief zijn): `leftAfterTransfers` min `toBank`.
+    let unassigned: Double
+    private let figures: MonthFigures
 
     init(_ d: FinanceData, month: YearMonth) {
         let overview = d.expenseOverview(in: month)
+        let figures = d.monthFigures(month)
+        self.figures = figures
+        self.month = month
+        toBank = CentsMath.value(figures.toBank)
+        unassigned = CentsMath.value(figures.unassigned)
         income = overview.income
         fixed = overview.fixed
         variable = overview.variable
@@ -661,9 +688,22 @@ struct BankFlowFigures: Equatable {
         return CentsMath.value(CentsMath.sum(cents))
     }
 
-    /// Er komt niets binnen, er gaat niets uit en er is niets ingelegd: dan is er niets om te tonen.
+    /// Er komt niets binnen, er gaat niets uit en er is niets ingelegd of toegewezen: dan is er niets om te tonen.
     var isEmpty: Bool {
-        income == 0 && fixed == 0 && variable == 0 && toPots == 0 && toInvestments == 0
+        income == 0 && fixed == 0 && variable == 0 && toPots == 0 && toInvestments == 0 && toBank == 0
+    }
+
+    /// Het getal bij het label `CashflowText.leftoverTitle(month:current:)` in euro's (`MoneyLabels.left`): voor de huidige en de
+    /// komende maanden wat er nog niet is toegewezen, voor een maand die voorbij is wat er op de rekening bleef.
+    func left(current: YearMonth) -> Double {
+        CentsMath.value(MoneyLabels.left(figures, of: month, current: current))
+    }
+
+    /// Het deel van `toBank` dat tussen "Na uitgaven en inleg" en het getal van `left(current:)` zit: in een maand die "Nog te
+    /// verdelen" heet het hele bankdeel, in een maand die voorbij is niets (daar is het getal wat er op de rekening bleef). Zo
+    /// sluit de som van de regels altijd op het getal onderaan.
+    func shownToBank(current: YearMonth) -> Double {
+        CentsMath.value(CentsMath.int(leftAfterTransfers) - CentsMath.int(left(current: current)))
     }
 }
 

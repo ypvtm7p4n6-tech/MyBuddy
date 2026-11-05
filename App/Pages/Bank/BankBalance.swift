@@ -218,41 +218,58 @@ struct BankFlowSection: View {
 
     var body: some View {
         let d = store.data
+        let now = store.now
         let figures = BankFlowFigures(d, month: month)
-        let leftover = CashflowText.leftoverTitle(month: month, current: store.now)
+        let leftover = CashflowText.leftoverTitle(month: month, current: now)
         Section {
             if figures.isEmpty {
                 EmptyHint(symbol: "arrow.left.arrow.right", title: "Nog niets in \(Fmt.month(month))",
                           message: "Stel je salaris en je uitgaven in. Dan zie je hier wat er binnenkomt en uitgaat.",
                           actionTitle: "Salaris instellen", action: { router.open(.salary) })
             } else {
-                meter(figures, leftover: leftover)
-                flowRows(figures, leftover: leftover)
-                flowNotes(d, figures: figures)
+                meter(figures, leftover: leftover, now: now)
+                flowRows(figures, leftover: leftover, now: now)
+                flowNotes(d, figures: figures, now: now)
             }
         } header: {
             SectionHeader("Binnen en eruit", symbol: "arrow.left.arrow.right", domain: .money)
         }
     }
 
-    private func meter(_ f: BankFlowFigures, leftover: String) -> some View {
-        let spoken = "Vaste uitgaven \(ChartText.euro(f.fixedFromBank)), variabele uitgaven \(ChartText.euro(f.variableFromBank)), "
+    /// De balk met de stukken van het inkomen. Het stuk "Bankrekening" (wat je aan je rekening toewees) staat er alleen in een maand
+    /// die "Nog te verdelen" heet; het stuk onderaan is het getal bij het label (`BankFlowFigures.left(current:)`).
+    private func meter(_ f: BankFlowFigures, leftover: String, now: YearMonth) -> some View {
+        let bank = f.shownToBank(current: now)
+        let left = f.left(current: now)
+        var spoken = "Vaste uitgaven \(ChartText.euro(f.fixedFromBank)), variabele uitgaven \(ChartText.euro(f.variableFromBank)), "
             + "inleg in spaarpotten \(ChartText.euro(f.toPots)), inleg in beleggingen \(ChartText.euro(f.toInvestments)), "
-            + "\(leftover.lowercased()) \(ChartText.euro(f.leftAfterTransfers))"
+        if bank > 0 {
+            spoken += "\(BankShareText.title.lowercased()) \(ChartText.euro(bank)), "
+        }
+        spoken += "\(leftover.lowercased()) \(ChartText.euro(left))"
         return SegmentedMeter(
-            segments: [
-                SegmentedMeter.Segment(id: "fixed", title: "Vaste uitgaven", value: f.fixedFromBank, color: Theme.chartExpenses),
-                SegmentedMeter.Segment(id: "variable", title: "Variabele uitgaven", value: f.variableFromBank, color: Theme.chartVariable),
-                SegmentedMeter.Segment(id: "pots", title: "Inleg in spaarpotten", value: f.toPots, color: Theme.chartSaved),
-                SegmentedMeter.Segment(id: "invest", title: "Inleg in beleggingen", value: f.toInvestments, color: Theme.chartInvested),
-                SegmentedMeter.Segment(id: "free", title: leftover, value: max(0, f.leftAfterTransfers), color: Theme.chartFree)
-            ],
+            segments: meterSegments(f, bank: bank, left: left, leftover: leftover),
             label: "Binnen en eruit in \(Fmt.month(month))",
             valueText: spoken)
     }
 
+    private func meterSegments(_ f: BankFlowFigures, bank: Double, left: Double, leftover: String) -> [SegmentedMeter.Segment] {
+        var segments = [
+            SegmentedMeter.Segment(id: "fixed", title: "Vaste uitgaven", value: f.fixedFromBank, color: Theme.chartExpenses),
+            SegmentedMeter.Segment(id: "variable", title: "Variabele uitgaven", value: f.variableFromBank, color: Theme.chartVariable),
+            SegmentedMeter.Segment(id: "pots", title: "Inleg in spaarpotten", value: f.toPots, color: Theme.chartSaved),
+            SegmentedMeter.Segment(id: "invest", title: "Inleg in beleggingen", value: f.toInvestments, color: Theme.chartInvested)
+        ]
+        if bank > 0 {
+            segments.append(SegmentedMeter.Segment(id: "bank", title: BankShareText.title, value: bank, color: Theme.chartFree.opacity(0.5)))
+        }
+        segments.append(SegmentedMeter.Segment(id: "free", title: leftover, value: max(0, left), color: Theme.chartFree))
+        return segments
+    }
+
     @ViewBuilder
-    private func flowRows(_ f: BankFlowFigures, leftover: String) -> some View {
+    private func flowRows(_ f: BankFlowFigures, leftover: String, now: YearMonth) -> some View {
+        let left = f.left(current: now)
         BankFlowLine(title: "Inkomen", value: CashflowText.signed(f.income), color: Theme.positive,
                      action: { router.open(.income) })
         BankFlowLine(title: "Vaste uitgaven", value: CashflowText.signed(-f.fixed), dot: Theme.chartExpenses,
@@ -269,19 +286,24 @@ struct BankFlowSection: View {
                      action: { router.open(.pots) })
         BankFlowLine(title: "Inleg in beleggingen", value: CashflowText.signed(-f.toInvestments), dot: Theme.chartInvested,
                      action: { router.open(.portfolio) })
-        BankFlowLine(title: leftover, value: Fmt.euro(f.leftAfterTransfers),
-                     color: f.leftAfterTransfers < 0 ? Theme.negative : Theme.positive, dot: Theme.chartFree, bold: true,
+        // Wat je aan de bankrekening toewees blijft op je rekening en telt als verdeeld: zo sluit de som op het getal onderaan.
+        if f.shownToBank(current: now) > 0 {
+            BankFlowLine(title: BankShareText.title, value: CashflowText.signed(-f.shownToBank(current: now)),
+                         dot: Theme.chartFree.opacity(0.5), action: { router.open(.distribute) })
+        }
+        BankFlowLine(title: leftover, value: Fmt.euro(left),
+                     color: left < 0 ? Theme.negative : Theme.positive, dot: Theme.chartFree, bold: true,
                      action: { router.open(.distribute) })
     }
 
     @ViewBuilder
-    private func flowNotes(_ d: FinanceData, figures: BankFlowFigures) -> some View {
+    private func flowNotes(_ d: FinanceData, figures: BankFlowFigures, now: YearMonth) -> some View {
         if let note = payoutNote(d) {
             Text(note)
                 .font(.footnote)
                 .foregroundStyle(Theme.textSecondary)
         }
-        if figures.leftAfterTransfers < 0 {
+        if figures.left(current: now) < 0 {
             Label("Je geeft meer uit en verdeelt meer dan je inkomen. Pas je uitgaven of je verdeling aan.",
                   systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote)

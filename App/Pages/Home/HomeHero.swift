@@ -44,7 +44,8 @@ private struct HomeHeroCard: View {
 // MARK: - Kaart 1: Nog te verdelen
 
 /// Wat er van het inkomen van de huidige maand nog te verdelen is. Alle cijfers komen uit `MonthBoard`, hetzelfde getal als op
-/// Verdelen en in de Bibliotheek. De pil opent Verdelen op de huidige maand.
+/// Verdelen en in de Bibliotheek (`MonthBoard.left(current:)`: wat je aan de bankrekening toewees telt als verdeeld). De pil opent
+/// Verdelen op de huidige maand.
 struct HomeDistributeHero: View {
     @Environment(AppStore.self) private var store
 
@@ -53,9 +54,9 @@ struct HomeDistributeHero: View {
         let month = store.now
         let board = MonthBoard(d, month: month)
         let percentWarning = d.allocationWarnings(in: month).first { $0.isPercentageWarning }
-        let notes = HomeHeroNotes.list(board: board, percentWarning: percentWarning)
+        let notes = HomeHeroNotes.list(board: board, current: month, percentWarning: percentWarning)
         HeroCard(hue: .olive, eyebrow: "\(MoneyLabels.remaining) in \(Fmt.month(month))", symbol: "square.split.2x2") {
-            BigAmount(value: board.remaining, font: Theme.heroAmount, color: Theme.onTile, label: MoneyLabels.remaining)
+            BigAmount(value: board.left(current: month), font: Theme.heroAmount, color: Theme.onTile, label: MoneyLabels.remaining)
             if !notes.isEmpty {
                 HomeHeroNoteList(notes: notes)
             }
@@ -72,16 +73,21 @@ struct HomeHeroNote: Identifiable {
     let symbol: String?
 }
 
-/// Wat er bij "Nog te verdelen" hoort: waarom het negatief is, het salarisschema, wat uit een spaarpot komt en een waarschuwing
-/// over de percentages. Dezelfde regels en teksten als de oude Home; zonder een van die dingen staat er niets.
+/// Wat er bij "Nog te verdelen" hoort: waarom het negatief is, wat je aan de bankrekening toewees, het salarisschema, wat uit een
+/// spaarpot komt en een waarschuwing over de percentages. Dezelfde regels en teksten als de oude Home; zonder een van die dingen
+/// staat er niets. `current` is de huidige maand: het getal en het teken volgen `MonthBoard.left(current:)`.
 enum HomeHeroNotes {
-    static func list(board: MonthBoard, percentWarning: AllocationWarning?) -> [HomeHeroNote] {
+    static func list(board: MonthBoard, current: YearMonth, percentWarning: AllocationWarning?) -> [HomeHeroNote] {
         var notes: [HomeHeroNote] = []
-        if board.isNegative {
+        if board.leftIsNegative(current: current) {
             // De tekst volgt de oorzaak: te hoge uitgaven (bijvoorbeeld nog geen salaris) of te veel verdeeld.
             let text = board.spendingExceedsIncome ? "Je uitgaven zijn hoger dan je inkomen deze maand."
                                                    : "Je hebt meer verdeeld dan er te verdelen was deze maand."
             notes.append(HomeHeroNote(id: "negative", text: text, symbol: "exclamationmark.triangle.fill"))
+        }
+        // Wat aan de bankrekening is toegewezen telt als verdeeld: zeg dat erbij (alleen in een maand die "Nog te verdelen" heet).
+        if board.month >= current, let text = BankShareText.summaryNote(toBankCents: board.figures.toBank) {
+            notes.append(HomeHeroNote(id: "bank", text: text, symbol: BankShareText.symbol))
         }
         // Bij een salaris om de zoveel weken of dagen is het inkomen de som van de uitbetalingen van deze maand.
         if let salaryNote = board.salaryNote {

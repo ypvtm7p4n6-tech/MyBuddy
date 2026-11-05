@@ -256,8 +256,10 @@ final class CashflowDisplayTests: XCTestCase {
         left.remaining += 3
         left.overviewReconciles = false
         let leftIssues = LedgerCheck(left).issues.map { $0.text }
-        XCTAssertTrue(leftIssues.contains { $0.hasPrefix("Nog te verdelen:") && $0.contains("3,00") }, leftIssues.joined(separator: "|"))
-        XCTAssertTrue(leftIssues.contains { $0.hasPrefix("Nog te verdelen op de laatste dag:") }, leftIssues.joined(separator: "|"))
+        // Het dagboek controleert wat er op de rekening blijft (`remaining`), ook met een deel dat aan de bankrekening is toegewezen:
+        // dat is niet "Nog te verdelen" (D3.7 van docs/work/plan2.md).
+        XCTAssertTrue(leftIssues.contains { $0.hasPrefix("Over op je rekening:") && $0.contains("3,00") }, leftIssues.joined(separator: "|"))
+        XCTAssertTrue(leftIssues.contains { $0.hasPrefix("Over op je rekening op de laatste dag:") }, leftIssues.joined(separator: "|"))
         var fromPots = base
         fromPots.expensesFromPots += 2
         fromPots.overviewReconciles = false
@@ -828,5 +830,104 @@ final class CashflowDisplayTests: XCTestCase {
         XCTAssertEqual(lookup.expenses.count, 1)
         XCTAssertEqual(lookup.income.count, 1)
         XCTAssertNil(lookup.income[line.id])
+    }
+
+    // MARK: Het deel dat aan de bankrekening is toegewezen (docs/work/plan2.md D3.7)
+
+    /// De basisgegevens met 300 euro per maand aan de bankrekening toegewezen vanaf oktober 2026 ("nu"); eerdere maanden houden niets.
+    private func dataWithBankShare(_ amount: Double = 300) -> (data: FinanceData, today: Date) {
+        let sample = sampleData()
+        var d = sample.data
+        d.materialize(upTo: oct2026)
+        d.setContributionAmount(BankShare.id, amount: amount, current: oct2026)
+        return (d, sample.today)
+    }
+
+    func testFlowFiguresCarryTheBankShareAndTheNumberAtTheLabel() {
+        let (d, _) = dataWithBankShare()
+        let f = BankFlowFigures(d, month: oct2026)
+        XCTAssertEqual(f.month, oct2026)
+        XCTAssertEqual(f.toBank, 300)
+        XCTAssertEqual(f.leftAfterTransfers, 1_900, "wat er op de rekening blijft verandert niet")
+        XCTAssertEqual(f.unassigned, 1_600)
+        XCTAssertEqual(f.unassigned, f.leftAfterTransfers - f.toBank)
+        // Het getal bij het label: nog te verdelen voor deze en komende maanden, overgehouden voor een maand die voorbij is.
+        XCTAssertEqual(f.left(current: oct2026), 1_600)
+        XCTAssertEqual(f.left(current: sep2026), 1_600, "een maand die nog komt")
+        XCTAssertEqual(f.left(current: engNov2026), 1_900, "oktober is voorbij: Overgehouden")
+        XCTAssertEqual(CashflowText.leftoverTitle(month: oct2026, current: oct2026), "Nog te verdelen")
+        XCTAssertEqual(CashflowText.leftoverTitle(month: oct2026, current: engNov2026), "Overgehouden")
+        // Gelijk aan Verdelen: dezelfde functie kiest het getal.
+        let figures = d.monthFigures(oct2026)
+        XCTAssertEqual(f.left(current: oct2026), CentsMath.value(MoneyLabels.left(figures, of: oct2026, current: oct2026)))
+        XCTAssertEqual(f.left(current: engNov2026), CentsMath.value(MoneyLabels.left(figures, of: oct2026, current: engNov2026)))
+        // Zonder bankdeel zijn ze gelijk.
+        let plain = BankFlowFigures(sampleData().data, month: oct2026)
+        XCTAssertEqual(plain.toBank, 0)
+        XCTAssertEqual(plain.left(current: oct2026), plain.leftAfterTransfers)
+        XCTAssertEqual(plain.left(current: engNov2026), plain.leftAfterTransfers)
+    }
+
+    /// De regels van "Binnen en eruit" (met de regel "Bankrekening" erbij) sluiten altijd op het getal onderaan.
+    func testFlowLinesWithTheBankShareCloseOnTheNumberAtTheLabel() {
+        var checked = 0
+        for seed in 1...200 {
+            let sc = ledgerScenario(seed: UInt64(seed))
+            let current = YearMonth(date: sc.today)
+            for month in sc.months {
+                let f = BankFlowFigures(sc.data, month: month)
+                let bank = CentsMath.int(f.fixedFromBank) + CentsMath.int(f.variableFromBank)
+                let shown = CentsMath.int(f.shownToBank(current: current))
+                let closing = CentsMath.int(f.income) - bank - CentsMath.int(f.toPots) - CentsMath.int(f.toInvestments) - shown
+                XCTAssertEqual(closing, CentsMath.int(f.left(current: current)), "seed \(seed) \(month.key)")
+                // Het bankdeel staat alleen in een maand die "Nog te verdelen" heet.
+                XCTAssertEqual(shown, month >= current ? CentsMath.int(f.toBank) : 0, "seed \(seed) \(month.key)")
+                if f.toBank != 0 { checked += 1 }
+            }
+        }
+        XCTAssertGreaterThan(checked, 50, "genoeg maanden met een bankdeel")
+    }
+
+    func testFlowFiguresAreNotEmptyWithOnlyABankShare() {
+        var d = FinanceData(startMonth: oct2026)
+        XCTAssertTrue(BankFlowFigures(d, month: oct2026).isEmpty)
+        d.setContributionAmount(BankShare.id, amount: 250, current: oct2026)
+        let f = BankFlowFigures(d, month: oct2026)
+        XCTAssertEqual(f.toBank, 250)
+        XCTAssertFalse(f.isEmpty, "een bankdeel is iets om te tonen")
+        XCTAssertEqual(f.unassigned, -250, "zonder inkomen past het bankdeel niet")
+        XCTAssertEqual(f.left(current: oct2026), -250)
+    }
+
+    func testTheDayBalanceTextSaysWhatIsAssignedToTheBank() {
+        XCTAssertEqual(CashflowText.remainingSoFarDetail(toBank: 0),
+                       "Opgebouwd in de maand; het totaal van de maand staat bij Nog te verdelen.")
+        let withBank = CashflowText.remainingSoFarDetail(toBank: 300)
+        XCTAssertEqual(withBank, "Opgebouwd in de maand. Van het totaal aan het eind van de maand heb je \(Fmt.euro(300)) aan je bankrekening toegewezen.")
+        XCTAssertTrue(withBank.contains("bankrekening toegewezen"), withBank)
+        XCTAssertFalse(withBank.contains("staat bij Nog te verdelen"), "dat totaal is niet het getal bij Nog te verdelen")
+        // Een negatief bedrag of een bedrag onder een cent is geen bankdeel.
+        XCTAssertEqual(CashflowText.remainingSoFarDetail(toBank: -50), CashflowText.remainingSoFarDetail(toBank: 0))
+        XCTAssertEqual(CashflowText.remainingSoFarDetail(toBank: 0.004), CashflowText.remainingSoFarDetail(toBank: 0))
+        // Het bedrag komt uit het dagboek van de maand (`MonthLedger.toBank`).
+        let (d, today) = dataWithBankShare()
+        let ledger = LedgerBook(d, today: today).ledger(oct2026)
+        XCTAssertEqual(ledger.toBank, 300)
+        XCTAssertEqual(CashflowText.remainingSoFarDetail(toBank: ledger.toBank), CashflowText.remainingSoFarDetail(toBank: 300))
+        let last = ledger.days.last
+        XCTAssertEqual(last?.remainingSoFar, ledger.remaining, "op de laatste dag is het opgebouwde getal wat er op de rekening blijft")
+    }
+
+    func testTheLedgerCheckSpeaksOfWhatStaysOnTheAccountAndStaysOKWithABankShare() {
+        let (d, today) = dataWithBankShare()
+        let ledger = LedgerBook(d, today: today).ledger(oct2026)
+        XCTAssertTrue(LedgerCheck(ledger).isOK, "een bankdeel beweegt niets: het dagboek sluit")
+        var broken = ledger
+        broken.remaining += 3
+        broken.overviewReconciles = false
+        let texts = LedgerCheck(broken).issues.map { $0.text }
+        XCTAssertTrue(texts.contains { $0.hasPrefix("Over op je rekening:") && $0.contains("3,00") }, texts.joined(separator: "|"))
+        XCTAssertTrue(texts.contains { $0.hasPrefix("Over op je rekening op de laatste dag:") }, texts.joined(separator: "|"))
+        XCTAssertFalse(texts.contains { $0.hasPrefix("Nog te verdelen") }, "dit gaat niet over wat er nog te verdelen is: \(texts.joined(separator: "|"))")
     }
 }

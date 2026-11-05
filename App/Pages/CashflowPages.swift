@@ -134,6 +134,8 @@ struct DayBalanceRows: View {
     var showsBank = true
     var showsPots = true
     var showsRemaining = true
+    /// Wat je in deze maand aan de bankrekening toewees (`MonthLedger.toBank`, in euro's). 0 = niets: dan staat er de gewone uitleg.
+    var toBank: Double = 0
 
     private func caption(opening: Double?) -> String {
         guard let opening else { return "Aan het eind van de dag" }
@@ -149,11 +151,11 @@ struct DayBalanceRows: View {
                 potRows
             }
             if showsRemaining {
-                // Opgebouwd over de maand tot en met deze dag: pas op de laatste dag is dit "Nog te verdelen" van de hele maand.
-                // Een andere naam voorkomt dat het twee verschillende getallen onder één naam zijn.
+                // Opgebouwd over de maand: pas op de laatste dag is dit wat er van de hele maand op de rekening blijft. Een andere naam
+                // voorkomt twee getallen onder één naam; de uitleg (met een bankdeel) komt van `CashflowText.remainingSoFarDetail`.
                 AmountRow(title: "Te verdelen t/m deze dag",
                           value: Fmt.euro(day.remainingSoFar),
-                          detail: "Opgebouwd in de maand; het totaal van de maand staat bij Nog te verdelen.",
+                          detail: CashflowText.remainingSoFarDetail(toBank: toBank),
                           color: day.remainingSoFar < 0 ? Theme.negative : Color.primary)
             }
         }

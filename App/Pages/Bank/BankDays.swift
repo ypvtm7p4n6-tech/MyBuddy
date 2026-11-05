@@ -117,7 +117,7 @@ struct BankDayListSections: View {
         } else {
             ForEach(days, id: \.day) { day in
                 BankDaySection(day: day, lookup: lookup, month: month, multipleSalaries: multipleSalaries,
-                               hasPots: !d.pots.isEmpty, sheet: $sheet)
+                               hasPots: !d.pots.isEmpty, toBank: ledger.toBank, sheet: $sheet)
             }
         }
     }
@@ -174,6 +174,8 @@ struct BankDaySection: View {
     let month: YearMonth
     let multipleSalaries: Bool
     let hasPots: Bool
+    /// Wat je in deze maand aan de bankrekening toewees (`MonthLedger.toBank`): de uitleg bij "Te verdelen t/m deze dag" noemt het.
+    let toBank: Double
     @Binding var sheet: BankSheet?
     @Environment(Router.self) private var router
 
@@ -181,7 +183,7 @@ struct BankDaySection: View {
         Section {
             DayFlowTiles(day: day)
             eventRows
-            DayBalanceRows(day: day, showsPots: hasPots)
+            DayBalanceRows(day: day, showsPots: hasPots, toBank: toBank)
         } header: {
             BankDayHeader(day: day)
         }

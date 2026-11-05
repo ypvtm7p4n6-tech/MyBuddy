@@ -295,7 +295,7 @@ struct ContributionFields: View {
     var footnote: String? = nil
     /// Waar het over gaat (de naam van de pot of belegging): VoiceOver leest hem bij de keuzes voor.
     var subject: String? = nil
-    /// Het extra bedrag bovenop het percentage (D1). nil = geen veld (de bankrekening en oude aanroepen).
+    /// Het extra bedrag bovenop het percentage (D1). nil = geen veld (oude aanroepen); ook de bankrij van Verdelen geeft een binding mee.
     var extra: Binding<Double>? = nil
     var extraTitle = ExtraAmountText.title
 

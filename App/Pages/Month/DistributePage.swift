@@ -1,8 +1,10 @@
 import SwiftUI
 
-// Verdelen: wat er van het inkomen van de gekozen maand naar spaarpotten en beleggingen gaat. Een rekenpagina met kaarten:
-// elke pot of belegging is een mini-formulier (bedrag of percentage), geen rij in een lijst. De logica zonder SwiftUI staat in
-// App/UI/SavingsDisplay.swift (`AllocationEdit`, `DistributeText`), zodat de tests in CoreTests haar meedraaien.
+// Verdelen: wat er van het inkomen van de gekozen maand naar spaarpotten, beleggingen en de bankrekening gaat. Een rekenpagina met
+// kaarten: elke pot, belegging of de bankrekening is een mini-formulier (bedrag, of percentage met een extra bedrag), geen rij in een
+// lijst. De rij zelf en de uitklapper met de extra overschrijfdagen staan in DistributeParts.swift. De logica zonder SwiftUI staat in
+// App/UI/SavingsDisplay.swift (`AllocationEdit`, `DistributeText`), DistributionText.swift (`BankShareText` en meer) en MoneyFigures.swift
+// (`MonthBoard`, `MoneyLabels.left`), zodat de tests in CoreTests haar meedraaien.
 
 struct DistributePage: View {
     @Environment(AppStore.self) private var store
@@ -18,6 +20,7 @@ struct DistributePage: View {
                 DistributeSummaryCard(month: month)
                 DistributePotsCard(month: month)
                 DistributeHoldingsCard(month: month)
+                DistributeBankCard(month: month)
                 DistributeTransferDayCard(month: month)
             }
             .frame(maxWidth: Theme.readableWidth)
@@ -31,6 +34,10 @@ struct DistributePage: View {
                     Button { change { $0.spreadRemainingOverPots(in: month) } } label: {
                         Label("Rest over potten verdelen", systemImage: "divide")
                     }
+                    Button { change { $0.sendRemainingToBank(in: month) } } label: {
+                        Label(BankShareText.restTitle, systemImage: BankShareText.symbol)
+                    }
+                    .disabled(store.data.unassigned(in: month) <= 0)
                     Button { change { $0.clearAllocations(in: month) } } label: {
                         Label("Alles op nul zetten", systemImage: "xmark.circle")
                     }
@@ -59,40 +66,49 @@ private struct DistributeSummaryCard: View {
 
     var body: some View {
         let d = store.data
-        // Dezelfde formule als overal: inkomen − uitgaven van de bank − verdeeld − belegd.
+        let current = store.now
+        // Dezelfde formule als overal: inkomen − uitgaven van de bank − verdeeld − belegd. Het getal bij het label kiest
+        // `MoneyLabels.left` (via `MonthBoard.left`): nu en straks wat er nog niet is toegewezen (met wat je aan de bankrekening
+        // toewees als verdeeld), in het verleden wat er overbleef.
         let figures = d.monthFigures(month)
-        let left = CentsMath.value(figures.remaining)
-        let allocatedCents = CentsMath.add(figures.saved, figures.invested)
-        let availableCents = figures.available
-        let over = left < 0
-        let progress: Double = availableCents > 0 ? Double(allocatedCents) / Double(availableCents) : 0
+        let board = MonthBoard(month: month, figures: figures)
+        let left = board.left(current: current)
+        let over = board.leftIsNegative(current: current)
+        let distributed = board.distributedShown(current: current)
+        let available = board.available
+        let progress: Double = available > 0 ? distributed / available : 0
         // Nu en in komende maanden is het "Nog te verdelen", in het verleden "Overgehouden" (termenlijst).
-        let label = MoneyLabels.remainingLabel(of: month, current: store.now)
+        let label = MoneyLabels.remainingLabel(of: month, current: current)
         Card(title: label, symbol: "square.split.2x2", domain: .money,
-             subtitle: month > store.now ? "Verwacht" : nil) {
+             subtitle: month > current ? "Verwacht" : nil) {
             BigAmount(value: left, color: over ? Theme.negative : Color.primary, label: label)
             ProgressMeter(value: progress, tint: over ? Theme.negative : Theme.accent, style: .bar(height: 10),
-                          label: "Verdeeld",
-                          valueText: "\(Fmt.euro(CentsMath.value(allocatedCents))) van \(Fmt.euro(CentsMath.value(availableCents)))")
+                          label: "Verdeeld", valueText: "\(Fmt.euro(distributed)) van \(Fmt.euro(available))")
             FigureRow {
-                StatTile(title: "Inkomen", value: Fmt.euro(CentsMath.value(figures.income)))
-                StatTile(title: "Uitgaven", value: Fmt.euro(CentsMath.value(figures.expenses)))
-                StatTile(title: "Verdeeld", value: Fmt.euro(CentsMath.value(allocatedCents)))
+                StatTile(title: "Inkomen", value: Fmt.euro(board.income))
+                StatTile(title: "Uitgaven", value: Fmt.euro(board.expensesTotal))
+                StatTile(title: "Verdeeld", value: Fmt.euro(distributed))
             }
-            notes(d, figures: figures)
+            notes(d, board: board, current: current)
         }
     }
 
-    /// Wat er bij het getal hoort: uit spaarpotten betaald, afronding, een maand vóór de start, en waar de verdeling niet klopt.
+    /// Wat er bij het getal hoort: wat aan de bankrekening is toegewezen, uit spaarpotten betaald, afronding, een maand vóór de start,
+    /// en waar de verdeling niet klopt.
     @ViewBuilder
-    private func notes(_ d: FinanceData, figures: MonthFigures) -> some View {
-        let fromPots = CentsMath.value(figures.fromPots)
-        // Waar de verdeling niet klopt (percentages samen boven 100%, of meer verdeeld dan er is): tekst van de rekenmotor.
+    private func notes(_ d: FinanceData, board: MonthBoard, current: YearMonth) -> some View {
+        // Waar de verdeling niet klopt (percentages samen boven 100%, of meer verdeeld dan er is, ook door een te groot bankdeel):
+        // tekst van de rekenmotor.
         let warnings = d.allocationWarnings(in: month)
-        if fromPots > 0 {
-            MonthExplanation(text: "Waarvan \(Fmt.euro(fromPots)) uit een spaarpot. Dat telt niet mee in dit bedrag.")
+        // Het bankdeel dat in "Verdeeld" zit: alleen in een maand die "Nog te verdelen" heet (`MonthBoard.distributedShown`).
+        let shownToBankCents = CentsMath.int(board.distributedShown(current: current)) - CentsMath.int(board.allocated)
+        if let bankNote = BankShareText.summaryNote(toBankCents: shownToBankCents) {
+            MonthExplanation(text: bankNote)
         }
-        if MonthBoard(month: month, figures: figures).roundingHidesSum {
+        if board.hasPotExpenses {
+            MonthExplanation(text: "Waarvan \(Fmt.euro(board.fromPots)) uit een spaarpot. Dat telt niet mee in dit bedrag.")
+        }
+        if board.roundingHidesLeftSum(current: current) {
             RoundingNote()
         }
         if month < d.startMonth {
@@ -101,7 +117,7 @@ private struct DistributeSummaryCard: View {
         if let note = StartDateText.partialMonthNote(d, month: month) {
             MonthExplanation(text: note)
         }
-        if figures.available < 0 {
+        if board.spendingExceedsIncome {
             MonthWarningLine(text: "Je uitgaven zijn hoger dan je inkomen deze maand.", color: Theme.negative)
         }
         ForEach(warnings, id: \.message) { warning in
@@ -136,7 +152,7 @@ private struct DistributePotsCard: View {
                     .disabled(month < d.startMonth)
             }
             if !d.pots.isEmpty || !d.holdings.isEmpty {
-                MonthExplanation(text: "Wat je hier invult geldt voor \(Fmt.month(month)). Kies Percentage om een deel van je inkomen te verdelen: het bedrag rekent mee als je inkomen verandert. Een ander percentage in één maand mag ook. Wil je het elke maand, kies dan Maak dit je standaard.")
+                MonthExplanation(text: "Wat je hier invult geldt voor \(Fmt.month(month)). Kies Percentage om een deel van je inkomen te verdelen: het bedrag rekent mee als je inkomen verandert. Een ander percentage in één maand mag ook. Wil je het elke maand, kies dan Maak dit je standaard. Bij Percentage kun je \(ExtraAmountText.title) invullen: een vast bedrag bovenop het percentage. Met \(TransferPartsText.title) laat je een deel van de inleg op een eigen dag overgaan.")
             }
         }
     }
@@ -162,6 +178,28 @@ private struct DistributeHoldingsCard: View {
                                    caption: DistributeText.transferCaption(d, id: holding.id, month: month, today: store.today))
                     .disabled(month < d.startMonth)
             }
+        }
+    }
+}
+
+// MARK: - Bankrekening
+
+/// Wat je aan de bankrekening toewijst: dit deel van je inkomen blijft op je rekening en telt als verdeeld, zodat "Nog te verdelen" op
+/// nul kan uitkomen. Er wordt niets overgeschreven: dezelfde invoer als een pot, maar zonder overschrijfdag en extra overschrijfdagen,
+/// en zonder negatief bedrag. De kaart staat er ook zonder spaarpotten of beleggingen.
+private struct DistributeBankCard: View {
+    let month: YearMonth
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        let d = store.data
+        Card(title: BankShareText.title, symbol: BankShareText.symbol, domain: .money, subtitle: BankShareText.subtitle) {
+            MonthAllocationRow(id: BankShare.id, name: BankShareText.title, symbol: BankShareText.symbol,
+                               color: AppDomain.money.color, month: month,
+                               caption: BankShareText.caption(toBankCents: d.monthFigures(month).toBank),
+                               allowsNegativeAmount: false, movesMoney: false, spokenSubtitle: BankShareText.subtitle)
+                .disabled(month < d.startMonth)
+            MonthExplanation(text: BankShareText.explanation)
         }
     }
 }
@@ -192,7 +230,7 @@ private struct DistributeTransferDayCard: View {
                 VStack(alignment: .leading, spacing: 8) {
                     DayPickerRow(title: "Dag van de maand", day: dayBinding, defaultText: "Standaard")
                     MonthExplanation(text: DistributeText.transferExplanation(d, month: month))
-                    MonthExplanation(text: "Op de overschrijfdag gaat het bedrag automatisch van je bankrekening naar de spaarpot of belegging. Dat geldt ook voor maanden die nog komen. Tot die dag telt het bedrag niet mee in het saldo van de pot.")
+                    MonthExplanation(text: "Op de overschrijfdag gaat het bedrag automatisch van je bankrekening naar de spaarpot of belegging. Dat geldt ook voor maanden die nog komen. Tot die dag telt het bedrag niet mee in het saldo van de pot. Een deel van een inleg kan op een eigen dag overgaan: zie \(TransferPartsText.title) bij de pot.")
                 }
                 .padding(.top, 8)
             } label: {
@@ -204,130 +242,6 @@ private struct DistributeTransferDayCard: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
                 .frame(minHeight: Theme.minTapTarget, alignment: .leading)
-            }
-        }
-    }
-}
-
-// MARK: - Eén spaarpot of belegging
-
-/// Eén spaarpot of belegging op de pagina Verdelen: de inleg van deze maand als vast bedrag of als percentage van het
-/// inkomen (per maand te overschrijven), met wat het percentage in euro's oplevert, de overschrijfdag en de standaard.
-private struct MonthAllocationRow: View {
-    let id: UUID
-    let name: String
-    let symbol: String
-    let color: Color
-    let month: YearMonth
-    /// "Wordt overgeschreven op de 25e · salarisdag" (de pagina stelt dit samen uit de rekenmotor).
-    let caption: String
-
-    @Environment(AppStore.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var modeBinding: Binding<ContributionMode> {
-        Binding(get: { store.data.allocationRule(id, in: month).isPercent ? ContributionMode.percentage : ContributionMode.fixed },
-                set: { newMode in
-                    withAnimation(reduceMotion ? nil : Theme.motion) {
-                        store.mutate { AllocationEdit.setMode(&$0, id: id, month: month, to: newMode) }
-                    }
-                })
-    }
-
-    private var amountBinding: Binding<Double> {
-        Binding(get: {
-            // Wat de regel zegt, ook als de overschrijving niet meetelt (zie `transferNote`): anders sprong het veld terug naar 0.
-            if case .amount(let value) = store.data.allocationRule(id, in: month) { return CentsMath.value(CentsMath.int(value)) }
-            return store.data.allocation(id, in: month)
-        }, set: { value in
-            store.mutate { AllocationEdit.setAmount(&$0, id: id, month: month, amount: value) }
-        })
-    }
-
-    private var percentBinding: Binding<Double> {
-        Binding(get: {
-            if case .percent(let rule) = store.data.allocationRule(id, in: month) { return rule.percent }
-            return 0
-        }, set: { value in
-            store.mutate { AllocationEdit.setPercent(&$0, id: id, month: month, percent: value) }
-        })
-    }
-
-    private var basisBinding: Binding<IncomeBasis> {
-        Binding(get: {
-            if case .percent(let rule) = store.data.allocationRule(id, in: month) { return rule.basis }
-            return IncomeBasis.salary
-        }, set: { newBasis in
-            withAnimation(reduceMotion ? nil : Theme.motion) {
-                store.mutate { AllocationEdit.setBasis(&$0, id: id, month: month, to: newBasis) }
-            }
-        })
-    }
-
-    var body: some View {
-        let d = store.data
-        let effective = d.effectiveAllocation(id, in: month)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                SymbolBadge(symbol: symbol, color: color, size: 32)
-                Text(name)
-                    .font(.body.weight(.semibold))
-                Spacer(minLength: 6)
-                if effective.isOverride {
-                    Text("Afwijkend")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.warning)
-                }
-            }
-            ContributionFields(mode: modeBinding, amount: amountBinding, percent: percentBinding, basis: basisBinding,
-                               allowsNegativeAmount: true,
-                               resolvedAmount: effective.rule.isPercent ? effective.amount : nil,
-                               resolvedNote: effective.rule.isPercent ? effective.rule.summary : nil,
-                               footnote: noIncomeNote(d, rule: effective.rule), subject: name)
-            MonthExplanation(text: caption)
-            if let note = transferNote(d) {
-                MonthWarningLine(text: note)
-            }
-            if effective.isOverride {
-                standardRow(d)
-            }
-        }
-        .padding(12)
-        .tile()
-    }
-
-    /// Valt de overschrijfdag van deze maand vóór de startdatum, dan telt de inleg niet mee: zeg dat bij de rij.
-    private func transferNote(_ d: FinanceData) -> String? {
-        guard month >= d.startMonth, !d.transferCounts(id, in: month) else { return nil }
-        return StartDateText.transferBeforeStart(day: d.transferDay(for: id, in: month))
-    }
-
-    /// Een percentage van niets is niets: zeg dat, anders lijkt het veld stuk.
-    private func noIncomeNote(_ d: FinanceData, rule: AllocationRule) -> String? {
-        guard case .percent(let percent) = rule, d.incomeBases(in: month).cents(for: percent.basis) == 0 else { return nil }
-        let what = percent.basis == .salary ? "salaris" : "inkomen"
-        return "Er is in \(Fmt.month(month)) geen \(what): het percentage geeft nu € 0."
-    }
-
-    /// Wat de standaard is, met de knoppen om daarnaar terug te gaan of van deze maand de standaard te maken.
-    @ViewBuilder
-    private func standardRow(_ d: FinanceData) -> some View {
-        let standard = d.defaultAllocationRule(id, in: month)
-        MonthExplanation(text: "Standaard: \(standard?.summary ?? Fmt.euro(0))")
-        ActionGroup {
-            ActionButton(title: "Terug naar standaard", symbol: "arrow.counterclockwise") {
-                withAnimation(reduceMotion ? nil : Theme.motion) {
-                    store.mutate { AllocationEdit.resetToStandard(&$0, id: id, month: month) }
-                }
-            }
-            // Van een maand in het verleden maak je geen standaard: dat gaat over wat er vanaf nu gebeurt.
-            if month >= store.now {
-                ActionButton(title: "Maak dit je standaard", symbol: "pin") {
-                    let current = store.now
-                    withAnimation(reduceMotion ? nil : Theme.motion) {
-                        store.mutate { AllocationEdit.makeStandard(&$0, id: id, month: month, current: current) }
-                    }
-                }
             }
         }
     }

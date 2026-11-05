@@ -116,16 +116,18 @@ struct LibraryFigures {
         return LibraryRowFigures(subtitle: "Vast \(Fmt.euro(overview.fixed)) · variabel \(Fmt.euro(overview.variable))", value: value)
     }
 
-    /// Wat er van de maand nog te verdelen is, met het teken van het bedrag; negatief krijgt de kleur van een tekort.
+    /// Wat er van de maand nog te verdelen is, met het teken van het bedrag; negatief krijgt de kleur van een tekort. Het getal is
+    /// hetzelfde als op Verdelen (`MoneyLabels.left`): met een deel dat aan de bankrekening is toegewezen telt dat als verdeeld.
     private func distributeRow() -> LibraryRowFigures {
         let figures = data.monthFigures(now)
-        let left = CentsMath.value(figures.remaining)
-        guard figures.remaining < 0 else {
-            return LibraryRowFigures(subtitle: MoneyLabels.remainingLabel(of: now, current: now), value: Fmt.euro(left))
+        let left = MoneyLabels.left(figures, of: now, current: now)
+        let value = Fmt.euro(CentsMath.value(left))
+        guard left < 0 else {
+            return LibraryRowFigures(subtitle: MoneyLabels.remainingLabel(of: now, current: now), value: value)
         }
         // Onder nul door te hoge uitgaven (bijvoorbeeld nog geen salaris) is niet "te veel verdeeld".
         let text = figures.available < 0 ? "Je uitgaven zijn hoger dan je inkomen" : "Je hebt te veel verdeeld"
-        return LibraryRowFigures(subtitle: text, value: Fmt.euro(left), tone: .negative)
+        return LibraryRowFigures(subtitle: text, value: value, tone: .negative)
     }
 
     /// Het saldo van vandaag, alleen als dat bekend is; anders een uitnodiging om het in te vullen.

@@ -2,7 +2,8 @@
 import SwiftUI
 
 // Voorbeelden voor de Xcode-canvas (alleen in een debug-build): Home met voorbeelddata, in donker, bij grote tekst, breed (iPad en
-// Mac), de lege start, zonder banksaldo en met lege planken, en de drie hero-kaarten los. Home staat in een `TabStack`, zoals in de app.
+// Mac), de lege start, zonder banksaldo en met lege planken, en de drie hero-kaarten los, ook met een deel dat aan de bankrekening is
+// toegewezen (te groot en passend). Home staat in een `TabStack`, zoals in de app.
 
 /// De gegevens van een voorbeeld.
 private enum HomePreviewScenario {
@@ -14,6 +15,10 @@ private enum HomePreviewScenario {
     case noBalance
     /// Voorbeelddata zonder spaarpotten, beleggingen en doelen: elke plank in zijn lege staat.
     case emptyShelves
+    /// Voorbeelddata met 300 euro per maand aan de bankrekening toegewezen: "Nog te verdelen" is dan 300 lager dan wat er overblijft.
+    case bankShare
+    /// Voorbeelddata met een bankdeel dat groter is dan wat er te verdelen is: het getal is rood.
+    case bankShareTooLarge
 }
 
 /// Maakt een winkel (met voorbeelddata of leeg), een router en een inlogstatus voor de voorbeelden.
@@ -37,6 +42,11 @@ private struct HomePreviewHost<Content: View>: View {
                 d.holdings = []
                 d.goals = []
             }
+        }
+        if scenario == .bankShare || scenario == .bankShareTooLarge {
+            let current = previewStore.now
+            let amount: Double = scenario == .bankShare ? 300 : 20_000
+            previewStore.mutate { d in d.setContributionAmount(BankShare.id, amount: amount, current: current) }
         }
         _store = State(initialValue: previewStore)
         self.content = content()
@@ -121,6 +131,19 @@ private struct HomeHeroCardsPreview: View {
     HomePreviewHost {
         HomeHeroCardsPreview()
     }
+}
+
+#Preview("Hero-kaarten, met een bankdeel") {
+    HomePreviewHost(.bankShare) {
+        HomeHeroCardsPreview()
+    }
+}
+
+#Preview("Hero-kaarten, bankdeel te groot, donker") {
+    HomePreviewHost(.bankShareTooLarge) {
+        HomeHeroCardsPreview()
+    }
+    .preferredColorScheme(.dark)
 }
 
 #Preview("Hero-kaarten, donker, grote tekst") {

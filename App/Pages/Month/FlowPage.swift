@@ -38,9 +38,9 @@ struct FlowContent: View {
              subtitle: Fmt.period(mode, containing: focus)) {
             PeriodPicker()
             chart(d, mode: mode, focus: focus, now: now)
-            leftTile(period: period, label: label)
+            leftTile(period: period, focus: focus, now: now, isPeriod: mode != .month, label: label)
             Divider()
-            figuresGroup(period: period, focus: focus, label: label)
+            figuresGroup(period: period, focus: focus, now: now, isPeriod: mode != .month, label: label)
             monthsGroup(period: period, now: now)
         }
     }
@@ -51,15 +51,16 @@ struct FlowContent: View {
     private func chart(_ d: FinanceData, mode: PeriodMode, focus: YearMonth, now: YearMonth) -> some View {
         let months = chartMonths(mode: mode, focus: focus)
         let summaries = d.summaries(from: months.first ?? focus, count: months.count, current: now)
-        let model = StackedBarModel.months(summaries, startMonth: d.startMonth)
+        let model = StackedBarModel.months(summaries, startMonth: d.startMonth, current: now)
         return StackedBarChart(model: model, size: .regular, onAction: handleChartAction)
     }
 
-    /// Wat er van het inkomen van de periode over is: dezelfde som als `remaining(in:)`, ook voor een periode.
-    private func leftTile(period: PeriodSummary, label: String) -> some View {
-        let left = period.remaining
+    /// Het getal bij het label: voor de huidige en de komende maanden wat er nog te verdelen is (met wat je aan de bankrekening
+    /// toewees als verdeeld), voor het verleden en voor een periode wat er over is (`MoneyLabels.left`, hetzelfde getal als op Verdelen).
+    private func leftTile(period: PeriodSummary, focus: YearMonth, now: YearMonth, isPeriod: Bool, label: String) -> some View {
+        let left = MoneyLabels.left(period.figures, of: focus, current: now, isPeriod: isPeriod)
         return FigureRow {
-            StatTile(title: label, value: Fmt.euro(left), color: left < 0 ? Theme.negative : Color.primary,
+            StatTile(title: label, value: Fmt.euro(CentsMath.value(left)), color: left < 0 ? Theme.negative : Color.primary,
                      caption: period.hasProjected ? "Verwacht" : nil)
         }
     }
@@ -73,16 +74,17 @@ struct FlowContent: View {
 
     // MARK: Uitklappers
 
-    private func figuresGroup(period: PeriodSummary, focus: YearMonth, label: String) -> some View {
-        let left = period.remaining
+    private func figuresGroup(period: PeriodSummary, focus: YearMonth, now: YearMonth, isPeriod: Bool, label: String) -> some View {
+        // "Gemiddeld overgehouden" is het gemiddelde van wat er per maand op de rekening bleef, ook met een bankdeel erin.
+        let averageLeft = period.average(period.remaining) // remaining: gemiddelde van wat er per maand op de rekening bleef
         return DisclosureGroup(isExpanded: $figuresOpen) {
             VStack(alignment: .leading, spacing: Theme.rowSpacing) {
                 AmountRow(title: "Inkomen", value: Fmt.euro(period.income))
                 AmountRow(title: "Uitgaven", value: Fmt.euro(period.expenses))
                 AmountRow(title: "Gespaard", value: Fmt.euro(period.saved))
                 AmountRow(title: "Belegd", value: Fmt.euro(period.invested))
-                AmountRow(title: "Gemiddeld overgehouden per maand", value: Fmt.euro(period.average(left)))
-                figureNotes(period: period, focus: focus, label: label)
+                AmountRow(title: "Gemiddeld overgehouden per maand", value: Fmt.euro(averageLeft))
+                figureNotes(period: period, focus: focus, now: now, isPeriod: isPeriod, label: label)
             }
             .padding(.top, 8)
         } label: {
@@ -93,14 +95,14 @@ struct FlowContent: View {
 
     /// De toelichtingen bij de cijfers: verwachte maanden, wat uit spaarpotten komt en de afronding.
     @ViewBuilder
-    private func figureNotes(period: PeriodSummary, focus: YearMonth, label: String) -> some View {
+    private func figureNotes(period: PeriodSummary, focus: YearMonth, now: YearMonth, isPeriod: Bool, label: String) -> some View {
         if period.hasProjected {
             FlowNote(text: "Maanden na deze maand zijn verwacht: ze volgen je salarisschema, terugkerende regels en standaardinleg.")
         }
         if period.fromPots > 0 {
             FlowNote(text: "Waarvan \(Fmt.euro(period.fromPots)) uit spaarpotten betaald. Dat telt niet mee in \(label).")
         }
-        if MonthBoard(month: focus, figures: period.figures).roundingHidesSum {
+        if MonthBoard(month: focus, figures: period.figures).roundingHidesLeftSum(current: now, isPeriod: isPeriod) {
             RoundingNote()
         }
     }
@@ -109,9 +111,10 @@ struct FlowContent: View {
         DisclosureGroup(isExpanded: $monthsOpen) {
             VStack(alignment: .leading, spacing: Theme.rowSpacing) {
                 ForEach(period.months) { summary in
-                    AmountRow(title: Fmt.month(summary.month), value: Fmt.euro(summary.remaining),
+                    // Het getal volgt het label van die maand (`MonthSummary.left`): Nog te verdelen of Overgehouden.
+                    AmountRow(title: Fmt.month(summary.month), value: Fmt.euro(summary.left(current: now)),
                               detail: monthDetail(summary, now: now),
-                              color: summary.remaining < 0 ? Theme.negative : Color.primary)
+                              color: summary.left(current: now) < 0 ? Theme.negative : Color.primary)
                 }
             }
             .padding(.top, 8)
