@@ -120,6 +120,13 @@ final class PageCatalogTests: XCTestCase {
         XCTAssertTrue(found("opnemen naar").contains(.pots))
         XCTAssertTrue(found("meer spaarpotten").contains(.goals))
         XCTAssertEqual(PageCatalog.all.count, 19)
+        // Loon wijzigen (D6) is een bestemming met ouders, geen pagina van de catalogus en zonder eigen zoekregel: je komt er via
+        // Salaris. Het heeft dus geen eigen regel en de catalogus telt niet mee.
+        let wageChange = Destination.wageChange(YearMonth(year: 2026, month: 11))
+        XCTAssertNil(PageCatalog.info(wageChange))
+        XCTAssertFalse(SearchIndex.pages.map { $0.destination }.contains(wageChange))
+        XCTAssertFalse(found("loon wijzigen").contains(wageChange), "\(found("loon wijzigen"))")
+        XCTAssertEqual(wageChange.parents, [.income, .salary])
     }
 
     // MARK: De Bibliotheek

@@ -1,5 +1,6 @@
 import XCTest
 import Foundation
+@testable import MyBuddyCore
 
 // Tests van de navigatieregels (App/Navigation/NavigationModel.swift, Foundation-only): de drie tabs, de bestemmingen met hun
 // ouders, het afknippen van een pad bij een herhaalde bestemming (K16) en `go` (B5 en par. 1.2 van docs/design2/plan.md).
@@ -17,6 +18,7 @@ enum NavigationTestSupport {
             .income, .salary, .expenses, .distribute, .bank, .cashflow,
             .pots, .pot(idA), .portfolio, .holding(idB),
             .goals, .goal(idA), .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+            .wageChange(YearMonth(year: 2026, month: 11)),
             .tools, .settingsRoot
         ]
         for page in SettingsPage.allCases { list.append(.settings(page)) }
@@ -49,10 +51,11 @@ enum NavigationTestSupport {
         case .tools: return 20
         case .settingsRoot: return 21
         case .settings: return 22
+        case .wageChange: return 23
         }
     }
 
-    static let caseCount = 23
+    static let caseCount = 24
 
     /// De ouders die par. 1.2 van docs/design2/plan.md voor elke bestemming noemt, los van de implementatie.
     static func expectedParents(_ destination: Destination) -> [Destination] {
@@ -61,6 +64,7 @@ enum NavigationTestSupport {
         case .holding: return [.portfolio]
         case .goal: return [.goals]
         case .salary: return [.income]
+        case .wageChange: return [.income, .salary]
         case .settings(let page):
             if let parent = page.parent { return [.settingsRoot, .settings(parent)] }
             return [.settingsRoot]
@@ -127,7 +131,7 @@ final class NavigationRulesTests: XCTestCase {
     // MARK: Instellingenpagina's
 
     func testSettingsPagesHaveTitlesSymbolsAndParents() {
-        XCTAssertEqual(SettingsPage.allCases.count, 11)
+        XCTAssertEqual(SettingsPage.allCases.count, 12)
         let titles = SettingsPage.allCases.map { $0.title }
         XCTAssertEqual(Set(titles).count, titles.count, "elke pagina heeft een eigen titel")
         XCTAssertTrue(titles.allSatisfy { !$0.isEmpty })
@@ -140,11 +144,16 @@ final class NavigationRulesTests: XCTestCase {
         XCTAssertEqual(SettingsPage.startDate.parent, .data, "de startdatum is een subpagina van Gegevens")
         XCTAssertEqual(SettingsPage.startDate.title, "Startdatum")
         XCTAssertEqual(SettingsPage.startDate.symbol, "calendar.badge.plus")
+        XCTAssertNil(SettingsPage.workHours.parent, "Werkuren is een hoofdpagina")
+        XCTAssertEqual(SettingsPage.workHours.title, "Werkuren")
+        XCTAssertEqual(SettingsPage.workHours.symbol, "clock")
         for page in SettingsPage.panes { XCTAssertNil(page.parent, "\(page) is een hoofdpagina") }
     }
 
-    func testSettingsPanesAreTheSixMainPagesAndEverySubpageBelongsToOne() {
-        XCTAssertEqual(SettingsPage.panes, [.account, .calculations, .prices, .data, .layout, .about])
+    func testSettingsPanesAreTheSevenMainPagesAndEverySubpageBelongsToOne() {
+        XCTAssertEqual(SettingsPage.panes, [.account, .calculations, .workHours, .prices, .data, .layout, .about])
+        XCTAssertEqual(SettingsPage.panes.count, 7)
+        XCTAssertEqual(SettingsPage.workHours.pane, .workHours, "Werkuren is een eigen pane, tussen Rekenen en Koersen")
         for page in SettingsPage.allCases {
             XCTAssertTrue(SettingsPage.panes.contains(page.pane), "\(page) hoort bij een pane")
         }
@@ -304,6 +313,35 @@ final class NavigationRulesTests: XCTestCase {
         XCTAssertEqual(same.path, open)
         let sub = NavigationRules.go(.settings(.password), from: .home, path: [.settingsRoot, .settings(.account)])
         XCTAssertEqual(sub.path, [.settingsRoot, .settings(.account), .settings(.password)])
+    }
+
+    func testGoToWageChangeOpensItInTheLibraryUnderIncomeAndSalary() {
+        let november = YearMonth(year: 2026, month: 11)
+        for current in AppTab.allCases {
+            let result = NavigationRules.go(.wageChange(november), from: current, path: [.bank, .pots])
+            XCTAssertEqual(result.tab, .library, "vanaf \(current)")
+            XCTAssertEqual(result.path, [.income, .salary, .wageChange(november)], "een bestaand pad wordt vervangen")
+        }
+        XCTAssertEqual(Destination.wageChange(november).parents, [.income, .salary])
+        XCTAssertFalse(Destination.wageChange(november).isTabRoot)
+    }
+
+    func testWageChangeNeverRepeatsInAPathAndDiffersPerMonth() {
+        let november = YearMonth(year: 2026, month: 11)
+        let december = YearMonth(year: 2026, month: 12)
+        XCTAssertNotEqual(Destination.wageChange(november), Destination.wageChange(december))
+        // Vanaf Salaris naar een maand en vandaar naar een andere maand: twee verschillende pagina's staan achter elkaar in het pad.
+        let path = NavigationRules.push(.wageChange(december), onto: [.income, .salary, .wageChange(november)])
+        XCTAssertEqual(path, [.income, .salary, .wageChange(november), .wageChange(december)])
+        // Dezelfde maand nogmaals openen knipt het pad af.
+        XCTAssertEqual(NavigationRules.push(.wageChange(november), onto: path), [.income, .salary, .wageChange(november)])
+        XCTAssertEqual(NavigationRules.normalize([.income, .salary, .wageChange(november), .salary]), [.income, .salary])
+    }
+
+    func testGoToWorkHoursStaysOnTheCurrentStackAsAMainSettingsPage() {
+        XCTAssertEqual(NavigationRules.go(.settings(.workHours), from: .home, path: []).path, [.settingsRoot, .settings(.workHours)])
+        XCTAssertEqual(NavigationRules.go(.settings(.workHours), from: .home, path: []).tab, .home)
+        XCTAssertEqual(Destination.settings(.workHours).parents, [.settingsRoot])
     }
 
     func testGoToSettingsNeverLeavesARepeat() {

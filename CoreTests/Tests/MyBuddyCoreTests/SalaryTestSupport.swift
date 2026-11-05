@@ -51,9 +51,11 @@ func referencePayoutCents(_ salary: SalarySettings) -> Int {
 
 /// De uitbetalingen van `month` zoals ze horen te zijn, met een eventuele overschrijving van de maand (salaris: het totaal;
 /// uren: de uren van de maand, bij uurloon). Het totaal wordt gelijk verdeeld, de restcenten naar de eerste uitbetalingen;
-/// zonder uitbetaling in de maand komt een overschreven salaris op de salarisdag-terugval binnen.
+/// zonder uitbetaling in de maand komt een overschreven salaris op de salarisdag-terugval binnen. Met `agenda` (de uren komen uit de
+/// agenda) betaalt elke uitbetaling zonder overschrijving van de maand het bedrag dat `agenda` voor haar dag geeft.
 func referenceSalaryPayouts(_ salary: SalarySettings, start: YearMonth, month: YearMonth, startDay: CalendarDay? = nil,
-                            salaryOverride: Double? = nil, hoursOverride: Double? = nil) -> [ReferencePayout] {
+                            salaryOverride: Double? = nil, hoursOverride: Double? = nil,
+                            agenda: ((CalendarDay) -> Int)? = nil) -> [ReferencePayout] {
     guard month >= start else { return [] }
     // Met een startdatum (golf 1, docs/work/plan.md) tellen in de startmaand alleen de uitbetalingen op of na de startdag. Een
     // eigen salaris of eigen uren is het totaal dat telt, verdeeld over die uitbetalingen. Zonder startdatum telt alles.
@@ -78,5 +80,8 @@ func referenceSalaryPayouts(_ salary: SalarySettings, start: YearMonth, month: Y
         // getallen uitgerekend (uurloon in centen x uren in honderdsten, zonder kommagetallen).
         return spread((engCents(salary.hourlyRate) * Int((hours * 100).rounded()) + 50) / 100, fallback: false)
     }
+    // Uren uit de agenda: elke uitbetaling zonder eigen salaris of eigen uren van de maand is wat de agenda ervoor betaalt
+    // (`referenceAgendaPayout`); `agenda` krijgt de dag van de uitbetaling.
+    if let agenda { return days.map { ReferencePayout(day: $0, cents: agenda(CalendarDay(month: month, day: $0))) } }
     return days.map { ReferencePayout(day: $0, cents: referencePayoutCents(salary)) }
 }

@@ -28,6 +28,9 @@ enum PotAction: String, Identifiable {
 
 // MARK: - Geld bewegen
 
+/// Storten, opnemen, het saldo aanpassen en overboeken. Bij opnemen en storten kies je waar het geld heen gaat of vandaan komt
+/// (`MoneyEnd`): buiten je overzicht (zoals Opnemen altijd deed), de bankrekening of een andere spaarpot. De teksten en de keuzes
+/// staan in `PotMoveText`, de boekingen in `FinanceData.withdraw` en `deposit`.
 struct PotEntrySheet: View {
     let pot: Pot
     let action: PotAction
@@ -36,16 +39,30 @@ struct PotEntrySheet: View {
     @State private var amount = 0.0
     @State private var note = ""
     @State private var targetID: UUID?
-    @State private var viaBank = false
+    /// Waar het geld heen gaat (opnemen) of vandaan komt (storten). Standaard buiten je overzicht: wat Opnemen altijd deed.
+    @State private var end: MoneyEnd = .outside
     /// De beginwaarden van het formulier, om te weten of er iets is veranderd.
     @State private var startAmount = 0.0
     @State private var startTarget: UUID?
 
+    /// `end` en `amount` zijn wat het blad ingevuld opent (voor de voorbeelden); de gebruiker kiest zelf verder.
+    init(pot: Pot, action: PotAction, end: MoneyEnd = .outside, amount: Double = 0) {
+        self.pot = pot
+        self.action = action
+        _end = State(initialValue: end)
+        _amount = State(initialValue: amount)
+    }
+
     private var others: [Pot] { store.data.pots.filter { $0.id != pot.id } }
 
     private var hasChanges: Bool {
-        amount != startAmount || !note.isEmpty || viaBank || targetID != startTarget
+        amount != startAmount || !note.isEmpty || end != .outside || targetID != startTarget
     }
+
+    /// Opnemen of storten: de acties met een bestemming of herkomst.
+    private var movesMoney: Bool { action == .deposit || action == .withdraw }
+
+    private var direction: PotMoveDirection { action == .deposit ? .deposit : .withdraw }
 
     var body: some View {
         let balance = store.data.potBalanceNow(pot.id, current: store.now, today: store.today)
@@ -70,15 +87,24 @@ struct PotEntrySheet: View {
         }
     }
 
-    /// Onder het formulier: bij "Saldo aanpassen" waar het verschil heen gaat, en bij een startdatum die nog moet komen de
-    /// waarschuwing dat wat je nu invult ervoor valt en niet meetelt.
+    /// Onder het formulier: bij "Saldo aanpassen" waar het verschil heen gaat, bij opnemen en storten wat er met het bedrag
+    /// gebeurt (en dat het banksaldo nog niet bekend is), en bij een startdatum die nog moet komen de waarschuwing dat wat je nu
+    /// invult ervoor valt en niet meetelt.
     @ViewBuilder
     private var entryFooter: some View {
         let warning = StartDateText.entryBeforeStartWarning(store.data, at: store.today)
-        if action == .setBalance || warning != nil {
+        let move = moveFooter
+        let bank = bankUnknownNote
+        if action == .setBalance || warning != nil || move != nil || bank != nil {
             VStack(alignment: .leading, spacing: 6) {
                 if action == .setBalance {
                     Text("Het verschil wordt als correctie in de geschiedenis gezet.")
+                }
+                if let move {
+                    Text(move)
+                }
+                if let bank {
+                    MonthWarningLine(text: bank)
                 }
                 if let warning {
                     MonthWarningLine(text: warning)
@@ -87,11 +113,26 @@ struct PotEntrySheet: View {
         }
     }
 
+    /// Wat er met het bedrag gebeurt, zodra er een bedrag is (`PotMoveText.footer`).
+    private var moveFooter: String? {
+        guard movesMoney, amount > 0 else { return nil }
+        return PotMoveText.footer(direction, end: end, amount: amount, in: store.data)
+    }
+
+    /// De bankrekening als bron of bestemming terwijl het saldo nog niet is ingevuld: de boeking begint dan het saldo. Bij storten
+    /// uit de bank gaat er geld af, dus staat het bedrag er met een min.
+    private var bankUnknownNote: String? {
+        guard movesMoney, amount > 0, end == .bank,
+              !store.data.hasBankBalanceNow(current: store.now, today: store.today) else { return nil }
+        return PotMoveText.bankUnknownNote(amount: action == .withdraw ? amount : -amount)
+    }
+
     @ViewBuilder
     private var fields: some View {
         switch action {
         case .deposit, .withdraw:
             NumberRow(title: "Bedrag", value: $amount)
+            endPicker
         case .setBalance:
             NumberRow(title: "Nieuw saldo", value: $amount)
         case .transfer:
@@ -103,14 +144,35 @@ struct PotEntrySheet: View {
         if action != .transfer {
             TextField("Waarvoor? (optioneel)", text: $note)
         }
-        if action == .deposit || action == .withdraw {
-            Toggle(action == .deposit ? "Van de bankrekening" : "Naar de bankrekening", isOn: $viaBank)
+    }
+
+    /// "Waar gaat het naartoe?" bij opnemen en "Waar komt het vandaan?" bij storten. Bij storten uit een andere pot staat het saldo van
+    /// die pot erbij, want meer dan dat saldo kan er niet uit.
+    private var endPicker: some View {
+        Picker(PotMoveText.question(direction), selection: $end) {
+            ForEach(PotMoveText.choices(excluding: pot.id, in: store.data), id: \.self) { choice in
+                Text(choiceTitle(choice)).tag(choice)
+            }
         }
+    }
+
+    private func choiceTitle(_ choice: MoneyEnd) -> String {
+        let title = PotMoveText.title(choice, in: store.data)
+        guard direction == .deposit, case .pot(let sourceID) = choice else { return title }
+        let balance = store.data.potBalanceNow(sourceID, current: store.now, today: store.today)
+        return title + " · " + Fmt.euro(balance)
     }
 
     private func canSave(balance: Double) -> Bool {
         switch action {
-        case .deposit: return amount > 0
+        case .deposit:
+            guard amount > 0 else { return false }
+            // Uit een andere pot kan er hoogstens zijn saldo uit.
+            if case .pot(let sourceID) = end {
+                let sourceBalance = store.data.potBalanceNow(sourceID, current: store.now, today: store.today)
+                return amount <= sourceBalance + 0.005
+            }
+            return true
         case .withdraw: return amount > 0 && amount <= balance + 0.005
         case .setBalance: return amount >= 0
         case .transfer: return amount > 0 && amount <= balance + 0.005 && targetID != nil
@@ -124,19 +186,12 @@ struct PotEntrySheet: View {
         let now = store.now
         let today = store.today
         let target = targetID
+        let chosen = end
         switch action {
         case .deposit:
-            if viaBank {
-                store.mutate { $0.transferBankToPot(potID: id, amount: a, note: n) }
-            } else {
-                store.mutate { $0.addPotEntry(potID: id, amount: a, kind: .deposit, note: n) }
-            }
+            store.mutate { $0.deposit(toPot: id, amount: a, from: chosen, note: n) }
         case .withdraw:
-            if viaBank {
-                store.mutate { $0.transferPotToBank(potID: id, amount: a, note: n) }
-            } else {
-                store.mutate { $0.addPotEntry(potID: id, amount: -a, kind: .withdrawal, note: n) }
-            }
+            store.mutate { $0.withdraw(fromPot: id, amount: a, to: chosen, note: n) }
         case .setBalance:
             // Het verschil wordt gemeten tegen het saldo van nu: precies het getal dat je zag.
             store.mutate { $0.setPotBalance(id, to: a, current: now, note: n, asOf: today) }
@@ -170,6 +225,10 @@ struct PotEditSheet: View {
     @State private var mode: ContributionMode = .fixed
     @State private var percent = 0.0
     @State private var basis: IncomeBasis = .salary
+    /// Bij een percentage: het vaste bedrag dat er elke maand bovenop komt.
+    @State private var extra = 0.0
+    /// Extra overschrijfdata van de standaardinleg: delen die op een eigen dag overgaan.
+    @State private var parts: [TransferPart] = []
     // Rente
     @State private var rate = 0.0
     @State private var payout: InterestPayout = .yearly
@@ -190,13 +249,13 @@ struct PotEditSheet: View {
 
     /// Alle invoer in een tekst: gelijk aan die van vlak na het laden betekent dat er niets is veranderd.
     private var signature: String {
-        let parts: [String] = [
+        let fields: [String] = [
             name, symbol, String(colorIndex), String(describing: goal), String(describing: goalDate),
             String(monthly), String(opening), String(describing: transferDay), String(describing: mode),
             String(percent), String(describing: basis), String(rate), String(describing: payout),
-            String(payoutDay), String(payoutMonth)
+            String(payoutDay), String(payoutMonth), String(extra), TransferPartsOverview.signature(parts)
         ]
-        return parts.joined(separator: "|")
+        return fields.joined(separator: "|")
     }
 
     private var hasChanges: Bool {
@@ -213,6 +272,7 @@ struct PotEditSheet: View {
             appearanceSection
             goalSection
             moneySection
+            transferPartsSection
             interestSection
         }
         .onAppear { load() }
@@ -284,7 +344,31 @@ struct PotEditSheet: View {
                 Text("De standaard inleg komt elke maand in je verdeling; die kun je per maand aanpassen.")
             }
             Text("Op de overschrijfdag gaat de inleg naar de pot en telt hij mee in het saldo. Zonder eigen dag is dat \(payText). Een verdeling die je voor één maand maakt, kan een eigen dag hebben; die gaat voor.")
+            if let overview = partsOverview {
+                Text(overview)
+            }
         }
+    }
+
+    // MARK: Extra overschrijfdagen
+
+    /// De dag waarop de rest van de inleg wordt overgeschreven: je eigen dag voor deze pot, anders je salarisdag.
+    private var standardTransferDay: Int {
+        min(transferDay ?? store.data.salaryDay(in: store.now), store.now.dayCount)
+    }
+
+    /// De inleg van de lopende maand in centen zoals het concept hem nu geeft, voor de delen en hun waarschuwing.
+    private var draftTotalCents: Int {
+        store.data.rawCents(of: draftPot().contributionRule, in: store.now)
+    }
+
+    /// "Overschrijving: € 40 op de 10e en € 85 op de 25e", zodra er delen zijn en een inleg om te verdelen.
+    private var partsOverview: String? {
+        TransferPartsOverview.line(parts: parts, totalCents: draftTotalCents, standardDay: standardTransferDay, month: store.now)
+    }
+
+    private var transferPartsSection: some View {
+        StandardTransferPartsSection(parts: $parts, standardDay: standardTransferDay, totalCents: draftTotalCents)
     }
 
     // MARK: Inleg
@@ -294,14 +378,16 @@ struct PotEditSheet: View {
     @ViewBuilder
     private var contributionFields: some View {
         let preview: ContributionPreview.Result? = mode == .percentage
-            ? ContributionPreview.resolve(store.data, percent: percent, basis: basis, month: store.now)
+            ? ContributionPreview.resolve(store.data, percent: percent, basis: basis, extra: extra, month: store.now)
             : nil
         ContributionFields(mode: modeBinding, amount: $monthly, percent: $percent, basis: $basis,
                            amountTitle: "Standaard inleg per maand", percentTitle: "Percentage van je inkomen",
                            resolvedAmount: preview?.amount, resolvedNote: preview?.note, footnote: preview?.footnote,
-                           subject: name)
-        // Samen meer dan 100% van je inkomen, of meer dan er te verdelen is: de motor meldt het al voor je bewaart.
+                           subject: name, extra: mode == .percentage ? $extra : nil)
         if mode == .percentage {
+            // Het extra bedrag komt bovenop het percentage; de som staat hierboven bij "=".
+            MonthExplanation(text: ExtraAmountText.footer)
+            // Samen meer dan 100% van je inkomen, of meer dan er te verdelen is: de motor meldt het al voor je bewaart.
             ForEach(ContributionPreview.warnings(store.data, pot: draftPot(), month: store.now), id: \.message) { warning in
                 AllocationWarningLabel(warning: warning)
                     .transition(.opacity)
@@ -322,16 +408,19 @@ struct PotEditSheet: View {
     }
 
     /// Bij een andere inlegwijze begint het veld bij wat de inleg nu is: een bedrag wordt het percentage van je salaris dat
-    /// erbij hoort, een percentage wordt het bedrag dat het nu oplevert. Zo verspringt de inleg niet. De rekenmotor doet de
-    /// omrekening (`percent(forAmount:)`, `percentAmount`).
+    /// erbij hoort, een percentage (met zijn extra bedrag) wordt het bedrag dat het nu oplevert. Zo verspringt de inleg niet. De
+    /// rekenmotor doet de omrekening (`percent(forAmount:)`, `percentAmount`). Een extra bedrag hoort bij een percentage: bij een
+    /// vast bedrag is het al in het bedrag opgenomen, en een nieuw percentage begint zonder.
     private func prefill(for newMode: ContributionMode) {
         let d = store.data
         let month = store.now
         switch newMode {
         case .percentage:
             if percent == 0, monthly > 0, let start = d.percent(forAmount: monthly, of: basis, in: month) { percent = start }
+            extra = 0
         case .fixed:
-            if monthly == 0, percent > 0 { monthly = d.percentAmount(percent, of: basis, in: month) }
+            if monthly == 0, percent > 0 || extra > 0 { monthly = d.percentAmount(percent, of: basis, extra: extra, in: month) }
+            extra = 0
         }
     }
 
@@ -454,6 +543,8 @@ struct PotEditSheet: View {
             mode = pot.contributionMode
             percent = pot.contributionPercent
             basis = pot.contributionBasis
+            extra = pot.contributionExtra
+            parts = pot.extraTransfers
             transferDay = pot.transferDay
             rate = pot.interestRate
             payout = pot.interestPayout
@@ -486,6 +577,9 @@ struct PotEditSheet: View {
         // Het percentage zoals de rekenmotor het gebruikt: 0...100 op twee decimalen.
         p.contributionPercent = AllocationMath.cleanPercent(percent)
         p.contributionBasis = basis
+        // Het extra bedrag hoort bij een percentage (bij een vast bedrag is het al het totaal), op hele centen.
+        p.contributionExtra = mode == .percentage ? AllocationMath.cleanExtra(extra) : 0
+        p.extraTransfers = TransferMath.normalized(parts)
         p.transferDay = transferDay
         // Afgerond op 0,001%, zodat een getypt percentage geen afrondruis meekrijgt.
         p.interestRate = (rate * 100_000).rounded() / 100_000

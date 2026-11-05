@@ -415,6 +415,43 @@ func ledgerScenario(seed: UInt64) -> LedgerScenario {
             }
         }
     }
+
+    // Een zevende reeks ingrepen (weer een eigen zaadwaarde, AAN HET EIND: de zes reeksen hierboven blijven voor elke zaadwaarde gelijk): het
+    // salaris is een uurloon met de uren uit de agenda (docs/work/plan.md par. 3): willekeurige diensten, ook over middernacht en op
+    // feestdagen, toeslagen, pauzeregels, de periode (deze of de vorige) en een horizon waarna de agenda niets meer weet (dan gelden je
+    // gemiddelde uren). Het dagboek moet ook dan op elke dag sluiten en elke uitbetaling is wat `referenceAgendaPayout` geeft.
+    var u = EngRandom(seed: seed &+ 37_000)
+    if u.chance(35) {
+        features.insert("uren uit agenda")
+        engApplyRandomAgenda(&d, &u, around: start, months: span)
+    }
+
+    // Een achtste reeks ingrepen (weer een eigen zaadwaarde, AAN HET EIND, na de zevende): het loon verandert per maand (een ander uurloon,
+    // een ander vast bedrag of andere uren vanaf een maand), ook samen met een salaris om de zoveel weken of dagen, een eigen salaris of
+    // eigen uren van een maand, uren uit de agenda en een startdatum (docs/work/plan2.md D6). Het dagboek moet sluiten en de uitbetalingen
+    // kloppen met de onafhankelijke berekening (`referenceSalarySettings`, `referenceSalaryPayouts`).
+    var v = EngRandom(seed: seed &+ 47_000)
+    if v.chance(45) {
+        features.insert("loon per maand")
+        for _ in 0..<v.int(1...3) {
+            let month = start.adding(v.int(-1...span))
+            if d.salary.mode == .hourly {
+                d.setSalaryChange(SalaryChange(from: month, hourlyRate: v.amount(8, 45),
+                                               hoursPerWeek: v.chance(40) ? Double(v.int(8...40)) : nil))
+            } else {
+                d.setSalaryChange(SalaryChange(from: month, fixedMonthly: v.amount(0, 4_500)))
+            }
+        }
+        if v.chance(30) {
+            let current = start.adding(v.int(0...span))
+            if d.salary.mode == .hourly {
+                d.setWage(current: current, hourlyRate: v.amount(8, 45))
+            } else {
+                d.setWage(current: current, fixedMonthly: v.amount(0, 4_500))
+            }
+            features.insert("loon vanaf de lopende maand")
+        }
+    }
     return LedgerScenario(data: d, today: today, months: start.adding(-2).range(count: span + 5), seed: seed, start: start,
                           features: features)
 }
@@ -620,4 +657,20 @@ func referenceCountedTotal(_ d: FinanceData, id: UUID, month: YearMonth, total: 
     return referenceSlices(total: total, parts: referenceTransferParts(d, id: id, month: month),
                            standardDay: d.transferDay(for: id, in: month), month: month)
         .filter { $0.day >= first }.reduce(0) { $0 + $1.cents }
+}
+
+// MARK: - Onafhankelijke berekening van het loon per maand
+
+/// De salarisinstellingen voor de uitbetalingen van `month`, rechtstreeks uit de wijzigingen: de basis met elke wijziging vanaf die maand
+/// of eerder erover, op volgorde van maand. Geschreven zonder `salarySettings(in:)`.
+func referenceSalarySettings(_ d: FinanceData, month: YearMonth) -> SalarySettings {
+    var settings = d.salary
+    let target = month.year * 12 + month.month
+    let ordered = d.salaryChanges.sorted { ($0.from.year * 12 + $0.from.month) < ($1.from.year * 12 + $1.from.month) }
+    for change in ordered where change.from.year * 12 + change.from.month <= target {
+        if let rate = change.hourlyRate { settings.hourlyRate = rate }
+        if let amount = change.fixedMonthly { settings.fixedMonthly = amount }
+        if let hours = change.hoursPerWeek { settings.hoursPerWeek = hours }
+    }
+    return settings
 }

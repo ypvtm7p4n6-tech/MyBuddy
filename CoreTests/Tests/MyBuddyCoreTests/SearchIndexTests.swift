@@ -25,7 +25,7 @@ final class SearchIndexTests: XCTestCase {
              .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase,
              .tools, .settingsRoot:
             return true
-        case .pot, .holding, .goal:
+        case .pot, .holding, .goal, .wageChange:
             return false
         case .settings:
             return true
@@ -48,7 +48,7 @@ final class SearchIndexTests: XCTestCase {
     func testPageEntryCountMatchesPageDestinations() {
         let required = NavigationTestSupport.allDestinations().filter { requiresPageEntry($0) }
         XCTAssertEqual(SearchIndex.pages.count, required.count)
-        XCTAssertEqual(SearchIndex.pages.count, 30)
+        XCTAssertEqual(SearchIndex.pages.count, 31)
         XCTAssertEqual(SearchIndex.pages.count, PageCatalog.all.count + SettingsPage.allCases.count)
         // Elke bestemming heeft precies een regel.
         XCTAssertEqual(Set(SearchIndex.pages.map { $0.destination }).count, SearchIndex.pages.count)
@@ -135,6 +135,34 @@ final class SearchIndexTests: XCTestCase {
         XCTAssertEqual(entry?.title, "Startdatum")
         XCTAssertEqual(entry?.group, .settings)
         XCTAssertEqual(entry?.hue, .sage)
+    }
+
+    func testFindsTheWorkHoursPageByItsTerms() {
+        let data = emptyData()
+        func found(_ query: String) -> [Destination] { destinations(SearchIndex.results(for: query, in: data)) }
+        // De termen van docs/work/plan.md par. 3.4: agenda, uren, toeslag, zondag, feestdag, pauze, werken, rooster, diensten, kalender.
+        for term in ["agenda", "uren", "toeslag", "zondag", "feestdag", "pauze", "werken", "rooster", "diensten", "kalender", "Werkuren"] {
+            XCTAssertTrue(found(term).contains(.settings(.workHours)), "'\(term)' vindt Werkuren niet")
+        }
+        XCTAssertEqual(found("Werkuren").first, .settings(.workHours), "de titel begint ermee")
+        let entry = SearchIndex.pages.first { $0.destination == .settings(.workHours) }
+        XCTAssertEqual(entry?.id, "settings-workHours")
+        XCTAssertEqual(entry?.title, "Werkuren")
+        XCTAssertEqual(entry?.symbol, "clock")
+        XCTAssertEqual(entry?.group, .settings)
+        XCTAssertEqual(entry?.hue, .sage)
+    }
+
+    func testWageChangeHasNoSearchEntryOfItsOwnButItsGroupIsPages() {
+        let wageChange = Destination.wageChange(YearMonth(year: 2026, month: 11))
+        XCTAssertFalse(SearchIndex.pages.contains { $0.destination == wageChange })
+        // Een regel die er toch naartoe wijst is een gewone pagina (de groep is een totale functie van de bestemming).
+        let entry = SearchEntry(id: "wage", title: "Loon wijzigen", symbol: "eurosign.arrow.circlepath", terms: ["loon"], destination: wageChange)
+        XCTAssertEqual(entry.group, .pages)
+        // Het zoeken op "loon per maand" vindt Salaris en niet de pagina Loon wijzigen zelf.
+        let found = destinations(SearchIndex.results(for: "loon per maand", in: emptyData()))
+        XCTAssertTrue(found.contains(.salary))
+        XCTAssertFalse(found.contains(wageChange))
     }
 
     func testTitlePrefixComesBeforeTitleContainsBeforeOtherNames() {

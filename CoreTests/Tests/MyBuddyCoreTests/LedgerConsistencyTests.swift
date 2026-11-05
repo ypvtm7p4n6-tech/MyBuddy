@@ -30,6 +30,9 @@ final class LedgerConsistencyTests: XCTestCase {
         var monthsWithSeveralPayouts = 0
         var monthsWithoutPayout = 0
         var overriddenSalaryMonths = 0
+        var agendaMonths = 0
+        var agendaMonthsWithAnExpectedPart = 0
+        var wageChangeMonths = 0
     }
 
     private func cents(_ value: Double) -> Int { CentsMath.int(value) }
@@ -64,7 +67,8 @@ final class LedgerConsistencyTests: XCTestCase {
                         "percentage-inleg", "percentage per maand", "reeks overgeslagen", "reeks gestopt", "reeks bewerkt",
                         "reeks later toegevoegd", "salaris om de zoveel weken of dagen", "salarisoverschrijving",
                         "percentage met extra bedrag", "percentage met extra bedrag per maand", "extra overschrijfdata",
-                        "extra overschrijfdata per maand", "bankrekening in de verdeling", "opnemen met bestemming"] {
+                        "extra overschrijfdata per maand", "bankrekening in de verdeling", "opnemen met bestemming",
+                        "uren uit agenda", "loon per maand", "loon vanaf de lopende maand"] {
             XCTAssertGreaterThan(coverage.scenariosWithFeature[feature] ?? 0, 8, "datasets met: \(feature)")
         }
         XCTAssertGreaterThan(coverage.scheduleMonths, 600, "maanden met een salaris om de zoveel weken of dagen")
@@ -76,6 +80,9 @@ final class LedgerConsistencyTests: XCTestCase {
         XCTAssertGreaterThan(coverage.splitTransfers, 60, "pot- of beleggingsmaanden met overschrijvingen op meer dan één dag")
         XCTAssertGreaterThan(coverage.extraAmountMonths, 60, "percentagemaanden met een extra bedrag")
         XCTAssertGreaterThan(coverage.bankShareMonths, 40, "maanden met een bedrag voor de bankrekening")
+        XCTAssertGreaterThan(coverage.agendaMonths, 150, "maanden met een salaris uit de uren van de agenda")
+        XCTAssertGreaterThan(coverage.agendaMonthsWithAnExpectedPart, 20, "agendamaanden waarin een deel van de uren uit je gemiddelde komt")
+        XCTAssertGreaterThan(coverage.wageChangeMonths, 100, "maanden waarin een loonwijziging al gold")
     }
 
     /// Verzamelt mislukte vergelijkingen zonder per vergelijking de XCTest-machinerie aan te roepen (dat is in een
@@ -272,8 +279,20 @@ final class LedgerConsistencyTests: XCTestCase {
             // voor stap met `Calendar`, in hele centen), en het maandtotaal is hun som, overal hetzelfde.
             if month >= d.startMonth {
                 let plan = d.plan(for: month)
-                let expected = referenceSalaryPayouts(d.salary, start: d.startMonth, month: month, startDay: d.startDay,
-                                                      salaryOverride: plan.salaryOverride, hoursOverride: plan.hoursOverride)
+                // Het loon van de maand van de uitbetalingen komt uit de wijzigingen (`referenceSalarySettings`); bij een uurloon met de
+                // uren uit de agenda betaalt elke uitbetaling zonder eigen salaris of eigen uren wat `referenceAgendaPayout` geeft.
+                let wage = referenceSalarySettings(d, month: month)
+                let agendaHours = d.work.hoursSource == .calendar && d.salary.mode == .hourly
+                let expected = referenceSalaryPayouts(wage, start: d.startMonth, month: month, startDay: d.startDay,
+                                                      salaryOverride: plan.salaryOverride, hoursOverride: plan.hoursOverride,
+                                                      agenda: agendaHours ? { referenceAgendaPayout(d, payoutDay: $0).cents } : nil)
+                if agendaHours, plan.salaryOverride == nil, plan.hoursOverride == nil, !expected.isEmpty {
+                    coverage.agendaMonths += 1
+                    if expected.contains(where: { referenceAgendaPayout(d, payoutDay: CalendarDay(month: month, day: $0.day)).expectedMinutes > 0 }) {
+                        coverage.agendaMonthsWithAnExpectedPart += 1
+                    }
+                }
+                if let change = d.salaryChanges.first, change.from <= month { coverage.wageChangeMonths += 1 }
                 let payouts = d.salaryPayouts(in: month, plan: plan)
                 f.eq(payouts.map(\.day), expected.map(\.day), "dagen van de uitbetalingen: \(what)")
                 f.eq(payouts.map(\.cents), expected.map(\.cents), "bedragen van de uitbetalingen: \(what)")

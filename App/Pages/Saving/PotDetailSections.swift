@@ -35,8 +35,26 @@ struct PotTrendSection: View {
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
             }
+            goalLinks
         } header: {
             SectionHeader("Verloop", symbol: "chart.line.uptrend.xyaxis", domain: .saving)
+        }
+    }
+
+    // MARK: Doelen die deze pot gebruiken
+
+    /// Voedt deze pot een of meer doelen (een doel kan uit meer spaarpotten komen, en een pot kan voor meer doelen meetellen), dan
+    /// zegt een regel dat ("Telt mee voor het doel Japan.") en opent een rij per doel dat doel. Niets zonder doel.
+    @ViewBuilder
+    private var goalLinks: some View {
+        let goals = store.data.goals(usingPot: pot.id)
+        if let line = GoalPotsText.potLine(goalNames: goals.map { $0.name }) {
+            Label(line, systemImage: "flag.checkered")
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+            ForEach(goals) { goal in
+                NavigationRow(title: goal.name, symbol: goal.kind.symbol, domain: .goals, destination: .goal(goal.id))
+            }
         }
     }
 

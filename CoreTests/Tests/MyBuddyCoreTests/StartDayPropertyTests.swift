@@ -196,7 +196,7 @@ final class StartDayPropertyTests: XCTestCase {
         if let override = plan.salaryOverride {
             total = cents(override)
         } else if d.salary.mode == .hourly, let hours = plan.hoursOverride {
-            total = cents(SalarySettings.exactHourlyPay(rate: d.salary.hourlyRate, hours: hours))
+            total = cents(SalarySettings.exactHourlyPay(rate: referenceSalarySettings(d, month: month).hourlyRate, hours: hours))
         }
         guard let total else { return counted }
         if d.salary.isMonthly {

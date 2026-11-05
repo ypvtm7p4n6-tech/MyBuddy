@@ -34,6 +34,49 @@ struct RoundingNote: View {
     }
 }
 
+/// De regel die zegt op welke dag(en) de inleg van een maand over gaat: "Overschrijving: € 50 op de 10e en € 150 op de 25e". De dagen
+/// en bedragen komen uit de rekenmotor (`TransferMath.slices`, `FinanceData.transferSlices`); de zin uit `TransferPartsText.summary`.
+enum TransferPartsOverview {
+    static let prefix = "Overschrijving: "
+
+    /// Voor de stukken van een opgeslagen maand (`ContributionInfo.slices`).
+    static func line(slices: [TransferSlice], standardDay: Int) -> String {
+        prefix + TransferPartsText.summary(slices: slices, standardDay: standardDay)
+    }
+
+    /// Een tekst die gelijk blijft zolang de delen zoals ze worden bewaard gelijk blijven (voor `hasChanges` van een blad): een nieuw
+    /// deel zonder bedrag telt niet mee, want het wordt niet bewaard.
+    static func signature(_ parts: [TransferPart]) -> String {
+        TransferMath.normalized(parts).map { "\($0.day):\($0.amount)" }.joined(separator: ",")
+    }
+
+    /// Voor een concept in een blad: de inleg van `month` (in centen) verdeeld over de standaarddelen die je nu invult. nil zonder
+    /// delen of zonder inleg om te verdelen.
+    static func line(parts: [TransferPart], totalCents: Int, standardDay: Int, month: YearMonth) -> String? {
+        let clean = TransferMath.normalized(parts)
+        guard !clean.isEmpty, totalCents > 0 else { return nil }
+        let day = min(max(standardDay, 1), month.dayCount)
+        let slices = TransferMath.slices(totalCents: totalCents, parts: clean, standardDay: day, month: month)
+        return line(slices: slices, standardDay: day)
+    }
+}
+
+/// De sectie "Extra overschrijfdagen" in het blad van een spaarpot of belegging: de editor van de delen van de standaardinleg
+/// (`TransferPartsEditor`). `totalCents` is de inleg van de lopende maand, voor de waarschuwing als de delen samen meer zijn.
+struct StandardTransferPartsSection: View {
+    @Binding var parts: [TransferPart]
+    let standardDay: Int
+    let totalCents: Int
+
+    var body: some View {
+        Section {
+            TransferPartsEditor(parts: $parts, standardDay: standardDay, totalCents: totalCents)
+        } header: {
+            Text(TransferPartsText.title)
+        }
+    }
+}
+
 /// Hoe de inleg van een spaarpot of belegging in deze maand is opgebouwd: de standaardregel (een vast bedrag of een
 /// percentage van je inkomen), wat daar in deze maand uit volgt, en waar het van afhangt. Bij een percentage is het bedrag
 /// van deze maand de actuele waarde: het rekent mee als je inkomen verandert.
@@ -47,6 +90,13 @@ struct ContributionSummary: View {
             FigureRow {
                 StatTile(title: "Standaard", value: info.standardValue, caption: info.standardCaption)
                 StatTile(title: "In \(monthName)", value: Fmt.euro(info.amount), caption: info.amountCaption)
+            }
+            if info.hasParts {
+                // De inleg gaat in delen over: op welke dagen.
+                Text(TransferPartsOverview.line(slices: info.slices, standardDay: info.transferDay))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if info.isOverride {
                 Text("In \(monthName) wijkt de inleg af van je standaard: \(info.ruleText). Je standaard is \(info.standardText).")

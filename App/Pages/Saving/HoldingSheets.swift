@@ -71,8 +71,12 @@ struct HoldingEditSheet: View {
     @State private var mode: ContributionMode = .fixed
     @State private var percent = 0.0
     @State private var basis: IncomeBasis = .salary
+    /// Bij een percentage: het vaste bedrag dat er elke maand bovenop komt.
+    @State private var extra = 0.0
     /// Eigen overschrijfdag voor de inleg. nil = je salarisdag.
     @State private var transferDay: Int?
+    /// Extra overschrijfdata van de standaardinleg: delen die op een eigen dag overgaan.
+    @State private var parts: [TransferPart] = []
 
     @State private var query = ""
     @State private var results: [SymbolMatch] = []
@@ -89,12 +93,12 @@ struct HoldingEditSheet: View {
 
     /// Alle invoer in een tekst: gelijk aan die van vlak na het laden betekent dat er niets is veranderd.
     private var signature: String {
-        let parts: [String] = [
+        let fields: [String] = [
             name, kind.rawValue, ticker, String(units), String(invested), String(manualValue), startMonth.key,
             String(expectedReturn), String(annualCost), String(monthly), String(describing: mode), String(percent),
-            String(describing: basis), String(describing: transferDay)
+            String(describing: basis), String(describing: transferDay), String(extra), TransferPartsOverview.signature(parts)
         ]
-        return parts.joined(separator: "|")
+        return fields.joined(separator: "|")
     }
 
     private var hasChanges: Bool {
@@ -110,6 +114,7 @@ struct HoldingEditSheet: View {
             nameSection
             quoteSection
             amountsSection
+            transferPartsSection
             expectationSection
         }
         .task(id: query) { await search() }
@@ -281,7 +286,31 @@ struct HoldingEditSheet: View {
                 Text("De inleg per maand verschijnt in je maandverdeling.")
             }
             Text("Op de overschrijfdag gaat de inleg van je bankrekening naar de belegging. Zonder eigen dag is dat \(payText). Een verdeling die je voor één maand maakt, kan een eigen dag hebben; die gaat voor.")
+            if let overview = partsOverview {
+                Text(overview)
+            }
         }
+    }
+
+    // MARK: Extra overschrijfdagen
+
+    /// De dag waarop de rest van de inleg wordt overgeschreven: je eigen dag voor deze belegging, anders je salarisdag.
+    private var standardTransferDay: Int {
+        min(transferDay ?? store.data.salaryDay(in: store.now), store.now.dayCount)
+    }
+
+    /// De inleg van de lopende maand in centen zoals het concept hem nu geeft, voor de delen en hun waarschuwing.
+    private var draftTotalCents: Int {
+        store.data.rawCents(of: draftHolding().contributionRule, in: store.now)
+    }
+
+    /// "Overschrijving: € 40 op de 10e en € 85 op de 25e", zodra er delen zijn en een inleg om te verdelen.
+    private var partsOverview: String? {
+        TransferPartsOverview.line(parts: parts, totalCents: draftTotalCents, standardDay: standardTransferDay, month: store.now)
+    }
+
+    private var transferPartsSection: some View {
+        StandardTransferPartsSection(parts: $parts, standardDay: standardTransferDay, totalCents: draftTotalCents)
     }
 
     // MARK: Verwachting
@@ -304,14 +333,16 @@ struct HoldingEditSheet: View {
     @ViewBuilder
     private var contributionFields: some View {
         let preview: ContributionPreview.Result? = mode == .percentage
-            ? ContributionPreview.resolve(store.data, percent: percent, basis: basis, month: store.now)
+            ? ContributionPreview.resolve(store.data, percent: percent, basis: basis, extra: extra, month: store.now)
             : nil
         ContributionFields(mode: modeBinding, amount: $monthly, percent: $percent, basis: $basis,
                            amountTitle: "Inleg per maand", percentTitle: "Percentage van je inkomen",
                            resolvedAmount: preview?.amount, resolvedNote: preview?.note, footnote: preview?.footnote,
-                           subject: name)
-        // Samen meer dan 100% van je inkomen, of meer dan er te verdelen is: de motor meldt het al voor je bewaart.
+                           subject: name, extra: mode == .percentage ? $extra : nil)
         if mode == .percentage {
+            // Het extra bedrag komt bovenop het percentage; de som staat hierboven bij "=".
+            MonthExplanation(text: ExtraAmountText.footer)
+            // Samen meer dan 100% van je inkomen, of meer dan er te verdelen is: de motor meldt het al voor je bewaart.
             ForEach(ContributionPreview.warnings(store.data, holding: draftHolding(), month: store.now), id: \.message) { warning in
                 AllocationWarningLabel(warning: warning)
                     .transition(.opacity)
@@ -332,15 +363,18 @@ struct HoldingEditSheet: View {
     }
 
     /// Bij een andere inlegwijze begint het veld bij wat de inleg nu is (zie `PotEditSheet.prefill`): zo verspringt de
-    /// inleg niet. De rekenmotor doet de omrekening.
+    /// inleg niet. De rekenmotor doet de omrekening; een extra bedrag gaat mee in het vaste bedrag en een nieuw percentage begint
+    /// zonder extra bedrag.
     private func prefill(for newMode: ContributionMode) {
         let d = store.data
         let month = store.now
         switch newMode {
         case .percentage:
             if percent == 0, monthly > 0, let start = d.percent(forAmount: monthly, of: basis, in: month) { percent = start }
+            extra = 0
         case .fixed:
-            if monthly == 0, percent > 0 { monthly = d.percentAmount(percent, of: basis, in: month) }
+            if monthly == 0, percent > 0 || extra > 0 { monthly = d.percentAmount(percent, of: basis, extra: extra, in: month) }
+            extra = 0
         }
     }
 
@@ -426,6 +460,8 @@ struct HoldingEditSheet: View {
             mode = h.contributionMode
             percent = h.contributionPercent
             basis = h.contributionBasis
+            extra = h.contributionExtra
+            parts = h.extraTransfers
             transferDay = h.transferDay
         } else {
             // Een nieuwe belegging begint in de huidige maand; met een eerdere maand tekent de app de groei vanaf dan.
@@ -453,6 +489,9 @@ struct HoldingEditSheet: View {
         // Het percentage zoals de rekenmotor het gebruikt: 0...100 op twee decimalen.
         h.contributionPercent = AllocationMath.cleanPercent(percent)
         h.contributionBasis = basis
+        // Het extra bedrag hoort bij een percentage (bij een vast bedrag is het al het totaal), op hele centen.
+        h.contributionExtra = mode == .percentage ? AllocationMath.cleanExtra(extra) : 0
+        h.extraTransfers = TransferMath.normalized(parts)
         h.transferDay = transferDay
         return h
     }

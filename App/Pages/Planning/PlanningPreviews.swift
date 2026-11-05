@@ -2,7 +2,7 @@
 import SwiftUI
 
 // Voorbeelden van de pagina's van Plannen met voorbeelddata, voor de Xcode-canvas (alleen in een debug-build): gevuld, donker,
-// bij grote tekst (`.accessibility3`) en leeg.
+// bij grote tekst (`.accessibility3`) en leeg. Onderaan staan de doelen die uit meer spaarpotten komen.
 
 /// Maakt een winkel met voorbeelddata, een router en een inlogstatus voor de previews en geeft de winkel aan de inhoud.
 @MainActor
@@ -12,11 +12,25 @@ private struct PlanningPreviewHost<Content: View>: View {
     @State private var auth = AuthStore()
     private let content: Content
 
-    /// Met `withSampleData: false` is de winkel leeg (de lege staat van een pagina).
-    init(withSampleData: Bool = true, @ViewBuilder content: (AppStore) -> Content) {
+    /// Met `withSampleData: false` is de winkel leeg (de lege staat van een pagina). Met `multiPotGoals` staan er vooraan twee doelen:
+    /// "Japan" uit de spaarpotten Vakantie en Buffer, en "Auto" uit alleen Buffer (die pot telt dus voor twee doelen mee).
+    init(withSampleData: Bool = true, multiPotGoals: Bool = false, @ViewBuilder content: (AppStore) -> Content) {
         let sampleStore = AppStore(storage: nil)
         if withSampleData {
             sampleStore.loadSampleData()
+        }
+        if multiPotGoals {
+            sampleStore.mutate { data in
+                guard let holiday = data.pots.first(where: { $0.name == "Vakantie" }),
+                      let buffer = data.pots.first(where: { $0.name == "Buffer" }) else { return }
+                var japan = LifeGoal(name: "Japan", kind: .vacation)
+                japan.targetAmount = 4_000
+                japan.setFundingPots([holiday.id, buffer.id])
+                var car = LifeGoal(name: "Auto", kind: .custom)
+                car.targetAmount = 9_000
+                car.setFundingPots([buffer.id])
+                data.goals.insert(contentsOf: [japan, car], at: 0)
+            }
         }
         _store = State(initialValue: sampleStore)
         self.content = content(sampleStore)
@@ -91,5 +105,69 @@ private struct PlanningPreviewHost<Content: View>: View {
 
 #Preview("Aankoopcheck") {
     PlanningPreviewHost { _ in PurchasePage() }
+}
+
+// MARK: - Doelen uit meer spaarpotten
+
+#Preview("Doelen, uit meer spaarpotten") {
+    PlanningPreviewHost(multiPotGoals: true) { _ in GoalsPage() }
+}
+
+#Preview("Doel, uit twee spaarpotten") {
+    PlanningPreviewHost(multiPotGoals: true) { store in GoalDetailPage(goalID: store.data.goals.first?.id ?? UUID()) }
+}
+
+#Preview("Doel, uit twee spaarpotten, donker") {
+    PlanningPreviewHost(multiPotGoals: true) { store in GoalDetailPage(goalID: store.data.goals.first?.id ?? UUID()) }
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Doel, uit twee spaarpotten, grote tekst") {
+    PlanningPreviewHost(multiPotGoals: true) { store in GoalDetailPage(goalID: store.data.goals.first?.id ?? UUID()) }
+        .dynamicTypeSize(.accessibility3)
+}
+
+#Preview("Doel bewerken, spaarpotten kiezen") {
+    PlanningPreviewHost(multiPotGoals: true) { store in
+        GoalEditSheet(goal: store.data.goals.first ?? LifeGoal(name: "", kind: .custom), isNew: false)
+    }
+}
+
+#Preview("Doel bewerken, donker") {
+    PlanningPreviewHost(multiPotGoals: true) { store in
+        GoalEditSheet(goal: store.data.goals.first ?? LifeGoal(name: "", kind: .custom), isNew: false)
+    }
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Doel bewerken, grote tekst") {
+    PlanningPreviewHost(multiPotGoals: true) { store in
+        GoalEditSheet(goal: store.data.goals.first ?? LifeGoal(name: "", kind: .custom), isNew: false)
+    }
+    .dynamicTypeSize(.accessibility3)
+}
+
+#Preview("Doel bewerken, geen spaarpot gekozen") {
+    PlanningPreviewHost { _ in
+        GoalEditSheet(goal: orphanPotGoal(), isNew: false)
+    }
+}
+
+#Preview("Doel bewerken, nog geen spaarpotten") {
+    PlanningPreviewHost(withSampleData: false) { _ in
+        GoalEditSheet(goal: orphanPotGoal(), isNew: true)
+    }
+}
+
+#Preview("Versnellers, doel uit meer spaarpotten") {
+    PlanningPreviewHost(multiPotGoals: true) { _ in AcceleratorsPage() }
+}
+
+/// Een doel dat naar een spaarpot verwijst die er niet (meer) is: het blad zegt dat je een spaarpot moet kiezen.
+private func orphanPotGoal() -> LifeGoal {
+    var goal = LifeGoal(name: "Reis", kind: .vacation)
+    goal.targetAmount = 2_000
+    goal.setFundingPots([UUID()])
+    return goal
 }
 #endif

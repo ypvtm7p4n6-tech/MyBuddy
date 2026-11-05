@@ -294,12 +294,22 @@ struct GoalDetailPage: View {
                 StatTile(title: goal.inflationAdjusted ? "Reëel rendement" : "Gebruikt rendement",
                          value: Fmt.percent(a.inputs.effectiveReturn))
             }
+            // Een doel uit meer spaarpotten: welke, op de volgorde van het doel.
+            if let sources = potSourceLine(goal, data: d) {
+                PlanningFootnote(sources)
+            }
             // Een doel kijkt vooruit: bij een salaris om de zoveel weken of dagen rekent het met een gemiddelde maand
             // (een maand met twee uitbetalingen is geen maat voor "elke maand"). Zeg dat.
             if !d.salary.isMonthly, !isCustomFunding(goal) {
                 PlanningFootnote("Je salaris komt niet elke maand even vaak binnen. Daarom rekent dit doel met een gemiddelde maand.")
             }
         }
+    }
+
+    /// "Uit Vakantie en Reis" bij een doel uit meer dan één bestaande spaarpot; anders niets (één pot staat al bij "Bron").
+    private func potSourceLine(_ goal: LifeGoal, data d: FinanceData) -> String? {
+        let names = goal.fundingPotIDs.compactMap { d.pot($0)?.name }
+        return names.count > 1 ? GoalPotsText.sourceLine(potNames: names) : nil
     }
 
     private func deleteButton(_ goal: LifeGoal) -> some View {
@@ -395,10 +405,10 @@ struct GoalDetailPage: View {
             return "(\(Fmt.euro(goal.monthlySpending)) − \(Fmt.euro(goal.otherMonthlyIncome))) × 12 ÷ \(Fmt.percent(goal.withdrawalRate)) = \(Fmt.euro(a.inputs.target)). Zo veel kapitaal heb je nodig om elke maand op te nemen zonder dat het opraakt (de opnameregel)."
         case .partTime:
             // Het inkomensverlies is een schatting: bij een salaris om de zoveel weken of dagen een gemiddelde maand.
-            let gap = d.monthlyIncomeGap(for: goal)
+            let gap = d.monthlyIncomeGap(for: goal, in: store.now)
             let average = d.salary.isMonthly ? "" : "gemiddeld "
             if let years = goal.partTimeYears, years > 0 {
-                return "Je mist \(average)\(Fmt.euro(gap)) per maand als je \(Fmt.input(goal.hoursFrom > 0 ? goal.hoursFrom : d.salary.hoursPerWeek)) in plaats van \(Fmt.input(goal.hoursTo)) uur werkt. Voor \(years) jaar heb je daarvoor \(Fmt.euro(a.inputs.target)) nodig."
+                return "Je mist \(average)\(Fmt.euro(gap)) per maand als je \(Fmt.input(goal.hoursFrom > 0 ? goal.hoursFrom : d.salarySettings(in: store.now).hoursPerWeek)) in plaats van \(Fmt.input(goal.hoursTo)) uur werkt. Voor \(years) jaar heb je daarvoor \(Fmt.euro(a.inputs.target)) nodig."
             }
             // Wat je zelf nog aan inkomsten hebt gaat van het verlies af (zoals de rekenmotor het doet).
             let formula = goal.otherMonthlyIncome > 0
@@ -422,7 +432,7 @@ struct GoalEditSheet: View {
         var title: String {
             switch self {
             case .portfolio: return "Beleggingen"
-            case .pot: return "Een spaarpot"
+            case .pot: return GoalPotsText.pickerTitle
             case .custom: return "Eigen waarden"
             }
         }
@@ -433,7 +443,8 @@ struct GoalEditSheet: View {
     private let original: LifeGoal
     @State private var g: LifeGoal
     @State private var funding: Funding = .portfolio
-    @State private var potID: UUID?
+    /// De spaarpotten van het doel, op de volgorde waarin ze zijn gekozen: de eerste is de pot waar versnellers op werken.
+    @State private var potIDs: [UUID] = []
     @State private var customStart = 0.0
     @State private var customMonthly = 0.0
     @State private var customReturn = 0.05
@@ -445,9 +456,9 @@ struct GoalEditSheet: View {
         switch goal.funding {
         case .portfolio:
             break
-        case .pot(let id):
+        case .pot:
             _funding = State(initialValue: .pot)
-            _potID = State(initialValue: id)
+            _potIDs = State(initialValue: goal.fundingPotIDs)
         case .custom(let s, let m, let r):
             _funding = State(initialValue: .custom)
             _customStart = State(initialValue: s)
@@ -475,20 +486,31 @@ struct GoalEditSheet: View {
         var out = g
         switch funding {
         case .portfolio:
-            out.funding = .portfolio
+            out.setFundingPots([])
         case .pot:
-            if let id = potID ?? store.data.pots.first?.id { out.funding = .pot(id) } else { out.funding = .portfolio }
+            out.setFundingPots(potIDs)
         case .custom:
+            out.setFundingPots([])
             out.funding = .custom(start: customStart, monthly: customMonthly, annualReturn: customReturn)
         }
         return out
+    }
+
+    /// De gekozen spaarpotten die nog bestaan.
+    private var chosenPots: [Pot] {
+        potIDs.compactMap { store.data.pot($0) }
+    }
+
+    /// Met Spaarpotten als bron is er minstens één bestaande spaarpot nodig.
+    private var fundingIsValid: Bool {
+        funding != .pot || !chosenPots.isEmpty
     }
 
     private var hasChanges: Bool { builtGoal() != original }
 
     var body: some View {
         SheetScaffold(title: isNew ? "Nieuw doel" : "Doel bewerken",
-                      canSave: !g.name.trimmingCharacters(in: .whitespaces).isEmpty,
+                      canSave: !g.name.trimmingCharacters(in: .whitespaces).isEmpty && fundingIsValid,
                       hasChanges: hasChanges,
                       onSave: { save() }) {
             Section("Naam") {
@@ -506,9 +528,13 @@ struct GoalEditSheet: View {
             }
 
             fundingSection
+            if funding == .pot {
+                potsSection
+            }
         }
-        .onAppear {
-            if funding == .pot && potID == nil { potID = store.data.pots.first?.id }
+        .onChange(of: funding) { _, newValue in
+            // Kies je Spaarpotten, dan staat de eerste spaarpot alvast aan.
+            if newValue == .pot, potIDs.isEmpty, let first = store.data.pots.first?.id { potIDs = [first] }
         }
     }
 
@@ -555,16 +581,9 @@ struct GoalEditSheet: View {
                 ForEach(Funding.allCases) { Text($0.title).tag($0) }
             }
             switch funding {
-            case .portfolio:
+            case .portfolio, .pot:
+                // De spaarpotten staan in een eigen sectie hieronder (`potsSection`).
                 EmptyView()
-            case .pot:
-                if store.data.pots.isEmpty {
-                    Text("Je hebt nog geen spaarpotten.").foregroundStyle(Theme.textSecondary)
-                } else {
-                    Picker("Spaarpot", selection: $potID) {
-                        ForEach(store.data.pots) { pot in Text(pot.name).tag(pot.id as UUID?) }
-                    }
-                }
             case .custom:
                 NumberRow(title: "Startbedrag", value: $customStart)
                 NumberRow(title: "Inleg per maand", value: $customMonthly)
@@ -576,6 +595,49 @@ struct GoalEditSheet: View {
         } footer: {
             Text("Beleggingen gebruikt de waarde van je beleggingen, je inleg en het verwachte rendement. Koopkracht van vandaag houdt rekening met inflatie.")
         }
+    }
+
+    /// De keuze van de spaarpotten van het doel: een schakelaar per spaarpot, op de volgorde van de spaarpotten. Een pot die ook een
+    /// ander doel voedt zegt dat; zonder pot staat er wat je moet doen.
+    private var potsSection: some View {
+        Section {
+            if store.data.pots.isEmpty {
+                Text("Je hebt nog geen spaarpotten.").foregroundStyle(Theme.textSecondary)
+            } else {
+                ForEach(store.data.pots) { pot in
+                    Toggle(pot.name, isOn: potBinding(pot.id))
+                    if potIDs.contains(pot.id), let warning = GoalPotsText.sharedWarning(otherGoalNames: otherGoalNames(usingPot: pot.id)) {
+                        MonthWarningLine(text: warning)
+                    }
+                }
+                if chosenPots.isEmpty {
+                    MonthWarningLine(text: GoalPotsText.needsOnePot)
+                }
+            }
+        } header: {
+            Text(GoalPotsText.pickerTitle)
+        } footer: {
+            Text(GoalPotsText.pickerFooter)
+        }
+    }
+
+    /// Aan: de pot komt achteraan bij de gekozen potten (de eerste blijft de eerste). Uit: hij gaat eruit.
+    private func potBinding(_ id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { potIDs.contains(id) },
+            set: { on in
+                if on {
+                    if !potIDs.contains(id) { potIDs.append(id) }
+                } else {
+                    potIDs.removeAll { $0 == id }
+                }
+            }
+        )
+    }
+
+    /// De namen van de andere doelen die uit deze spaarpot putten.
+    private func otherGoalNames(usingPot id: UUID) -> [String] {
+        store.data.goals(usingPot: id).filter { $0.id != g.id }.map { $0.name }
     }
 
     private func save() {

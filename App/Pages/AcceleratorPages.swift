@@ -107,6 +107,10 @@ struct AcceleratorsSection: View {
                     }
                 }
                 PlanningFootnote("\(PlanningText.tap) op de versnellers die je wilt combineren. De berekening telt ze bij elkaar op. Met Toepassen voer je een versneller echt door in je gegevens; je kunt hem daarna herstellen.")
+                // Een doel uit meer spaarpotten: versnellers werken op de eerste pot.
+                if goal.fundingPotIDs.count > 1 {
+                    PlanningFootnote(GoalPotsText.acceleratorNote)
+                }
             }
             if baseline != 0, d.hasOneOffExpensesWorthCutting(current: now) {
                 PlanningFootnote("Uitgaven worden hier alleen voorgesteld als ze terugkerend zijn, want een eenmalige uitgave levert geen vaste maandinleg op. Zet bij een uitgave \"Terugkerend, elke maand\" aan om hem hier te zien.")
