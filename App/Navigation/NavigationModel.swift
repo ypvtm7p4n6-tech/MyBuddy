@@ -1,7 +1,10 @@
 import Foundation
 // Foundation-only: geen SwiftUI. In de app zit alles in één module. In het testpakket (CoreTests/Tests/MyBuddyCoreTests) staat
-// dit bestand als symlink tussen de tests; de tests staan in NavigationRulesTests.swift. `PageCatalog.swift` (ook Foundation-only)
-// beschrijft elke bestemming met titel, symbool, tint en groep.
+// dit bestand als symlink tussen de tests (en leest het `YearMonth` via `@testable import`); de tests staan in
+// NavigationRulesTests.swift. `PageCatalog.swift` (ook Foundation-only) beschrijft elke bestemming met titel, symbool, tint en groep.
+#if canImport(MyBuddyCore)
+@testable import MyBuddyCore
+#endif
 
 // MARK: - Tabs
 
@@ -35,10 +38,11 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
 // MARK: - Pagina's van Instellingen
 
 /// De pagina's van Instellingen. Account is de eerste rij; wachtwoord, account verwijderen en de back-ups van conflicten
-/// zijn subpagina's van Account, het importoverzicht en de startdatum zijn subpagina's van Gegevens.
+/// zijn subpagina's van Account, het importoverzicht en de startdatum zijn subpagina's van Gegevens. Werkuren (de uren uit je
+/// agenda) staat in de groep Rekenen, tussen Rekenen en Koersen.
 enum SettingsPage: String, CaseIterable, Hashable {
     case account, password, deleteAccount, conflictBackups,
-         calculations, prices, data, layout, about, importReview, startDate
+         calculations, prices, data, layout, about, importReview, startDate, workHours
 
     var title: String {
         switch self {
@@ -53,6 +57,7 @@ enum SettingsPage: String, CaseIterable, Hashable {
         case .about: return "Over MyBuddy"
         case .importReview: return "Importoverzicht"
         case .startDate: return "Startdatum"
+        case .workHours: return "Werkuren"
         }
     }
 
@@ -69,6 +74,7 @@ enum SettingsPage: String, CaseIterable, Hashable {
         case .about: return "info.circle"
         case .importReview: return "square.and.arrow.down"
         case .startDate: return "calendar.badge.plus"
+        case .workHours: return "clock"
         }
     }
 
@@ -77,7 +83,7 @@ enum SettingsPage: String, CaseIterable, Hashable {
         switch self {
         case .password, .deleteAccount, .conflictBackups: return .account
         case .importReview, .startDate: return .data
-        case .account, .calculations, .prices, .data, .layout, .about: return nil
+        case .account, .calculations, .prices, .workHours, .data, .layout, .about: return nil
         }
     }
 
@@ -85,8 +91,8 @@ enum SettingsPage: String, CaseIterable, Hashable {
     /// van haar ouder).
     var pane: SettingsPage { parent ?? self }
 
-    /// De zes hoofdpagina's, in de volgorde van de lijst op de tab (iOS) en van de panes (Mac).
-    static let panes: [SettingsPage] = [.account, .calculations, .prices, .data, .layout, .about]
+    /// De zeven hoofdpagina's, in de volgorde van de lijst op de tab (iOS) en van de panes (Mac).
+    static let panes: [SettingsPage] = [.account, .calculations, .workHours, .prices, .data, .layout, .about]
 }
 
 // MARK: - Bestemmingen
@@ -101,6 +107,8 @@ enum Destination: Hashable {
     case income, salary, expenses, distribute, bank, cashflow
     case pots, pot(UUID), portfolio, holding(UUID)
     case goals, goal(UUID), savingsGoal, accelerators, buffer, projection, purchase
+    /// Het loon vanaf een maand wijzigen: een pagina onder Salaris (bereikt via de kaart "Loon per maand"), geen blad.
+    case wageChange(YearMonth)
     /// Hulpmiddelen (de lijst van vier rekenpagina's).
     case tools
     /// Instellingen (de lijst, Account eerst en los), een gepushte pagina op iPhone en iPad.
@@ -116,15 +124,16 @@ extension Destination {
             return true
         case .flow, .income, .salary, .expenses, .distribute, .bank, .cashflow,
              .pots, .pot, .portfolio, .holding,
-             .goals, .goal, .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+             .goals, .goal, .savingsGoal, .accelerators, .buffer, .projection, .purchase, .wageChange,
              .tools, .settingsRoot, .settings:
             return false
         }
     }
 
     /// De bestemmingen waaronder deze pagina in een pad staat als je er rechtstreeks naartoe gaat (`NavigationRules.go`):
-    /// een spaarpot onder Spaarpotten, een belegging onder Beleggingen, een doel onder Doelen, Salaris onder Inkomen, en een
-    /// instellingenpagina onder Instellingen (en een subpagina van Account of Gegevens ook onder haar hoofdpagina).
+    /// een spaarpot onder Spaarpotten, een belegging onder Beleggingen, een doel onder Doelen, Salaris onder Inkomen, Loon wijzigen
+    /// onder Inkomen en Salaris, en een instellingenpagina onder Instellingen (en een subpagina van Account of Gegevens ook onder haar
+    /// hoofdpagina).
     var parents: [Destination] {
         switch self {
         case .pot:
@@ -135,6 +144,8 @@ extension Destination {
             return [.goals]
         case .salary:
             return [.income]
+        case .wageChange:
+            return [.income, .salary]
         case .settings(let page):
             if let parent = page.parent { return [.settingsRoot, .settings(parent)] }
             return [.settingsRoot]
@@ -189,7 +200,7 @@ enum NavigationRules {
             return (tab: current, path: settingsPath(to: destination, from: path))
         case .flow, .income, .salary, .expenses, .distribute, .bank, .cashflow,
              .pots, .pot, .portfolio, .holding,
-             .goals, .goal, .savingsGoal, .accelerators, .buffer, .projection, .purchase,
+             .goals, .goal, .savingsGoal, .accelerators, .buffer, .projection, .purchase, .wageChange,
              .tools:
             return (tab: .library, path: normalize(destination.parents + [destination]))
         }

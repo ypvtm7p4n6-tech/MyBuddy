@@ -7,21 +7,23 @@ import Foundation
 // MARK: - Uurloon
 
 extension FinanceData {
-    /// Effectief netto uurloon uit je salarisinstellingen.
+    /// Effectief netto uurloon uit je salarisinstellingen, met het loon van `month` (`salarySettings(in:)`); zonder maand het laatste
+    /// loon (`latestSalarySettings`).
     /// - Uurloon: het ingestelde uurloon (bij elk salarisschema hetzelfde).
     /// - Vast bedrag: het GEMIDDELDE maandsalaris gedeeld door het gemiddeld aantal uren per maand. Bij het maandelijkse
     ///   schema is dat maandsalaris / (uren per week × 52 / 12); bij een schema om de zoveel weken of dagen is het bedrag
     ///   per uitbetaling gedeeld door de uren van één cyclus (beide delen krijgen dezelfde gemiddelde maand).
     /// nil als dat niet te berekenen is (geen uren per week of geen salaris): dan vult de gebruiker zelf een uurloon in.
-    func effectiveHourlyWage() -> Double? {
+    func effectiveHourlyWage(in month: YearMonth? = nil) -> Double? {
+        let settings = month.map { salarySettings(in: $0) } ?? latestSalarySettings
         let wage: Double
-        switch salary.mode {
+        switch settings.mode {
         case .hourly:
-            wage = salary.hourlyRate
+            wage = settings.hourlyRate
         case .fixed:
-            let monthlyHours = salary.defaultMonthlyHours
-            guard salary.hoursPerWeek > 0, monthlyHours.isFinite, monthlyHours > 0 else { return nil }
-            wage = salary.averageMonthlyFixedAmount / monthlyHours
+            let monthlyHours = settings.defaultMonthlyHours
+            guard settings.hoursPerWeek > 0, monthlyHours.isFinite, monthlyHours > 0 else { return nil }
+            wage = settings.averageMonthlyFixedAmount / monthlyHours
         }
         guard wage.isFinite, wage > 0 else { return nil }
         let rounded = wage.cents
@@ -468,11 +470,12 @@ enum PurchaseCalc {
         return CentsMath.value(min(cents, CentsMath.int(maxAmount)))
     }
 
-    /// Het uurloon waarmee gerekend wordt: een zelf ingevuld uurloon gaat voor, anders het salaris. nil = onbekend.
-    static func resolvedWage(manual: Double, data: FinanceData) -> Double? {
+    /// Het uurloon waarmee gerekend wordt: een zelf ingevuld uurloon gaat voor, anders het salaris van `month`. Zonder maand is dat het
+    /// loon van de lopende kalendermaand: de aankoopcheck gaat over wat je nu verdient. nil = onbekend.
+    static func resolvedWage(manual: Double, data: FinanceData, in month: YearMonth? = nil) -> Double? {
         let own = sanitizedWage(manual)
         if own > 0 { return own }
-        return data.effectiveHourlyWage()
+        return data.effectiveHourlyWage(in: month ?? YearMonth.current())
     }
 
     /// Uren werken die een bedrag kost, afgerond op 0,1 uur. 0 zonder uurloon.

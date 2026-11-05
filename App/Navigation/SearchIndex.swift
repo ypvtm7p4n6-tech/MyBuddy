@@ -53,7 +53,7 @@ struct SearchEntry: Identifiable, Hashable {
             if id.hasPrefix("income-") || id.hasPrefix("expense-") { return .lines }
             return .pages
         case .home, .library, .flow, .salary, .distribute, .bank, .cashflow, .pots, .portfolio,
-             .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase, .tools:
+             .goals, .savingsGoal, .accelerators, .buffer, .projection, .purchase, .tools, .wageChange:
             return .pages
         }
     }
@@ -81,7 +81,8 @@ enum SearchIndex {
         return entries
     }
 
-    /// De elf pagina's van Instellingen (alleen met zoektermen die bij de pagina horen).
+    /// De twaalf pagina's van Instellingen (alleen met zoektermen die bij de pagina horen). Loon wijzigen (`Destination.wageChange`) heeft
+    /// geen eigen ingang: je komt er via Salaris.
     private static func settingsEntries() -> [SearchEntry] {
         [
             settingsPage(.account, ["inloggen", "uitloggen", "synchronisatie", "cloud", "e-mail", "profiel"]),
@@ -94,7 +95,8 @@ enum SearchIndex {
             settingsPage(.layout, ["volgorde", "blokken", "volgorde aanpassen", "verplaatsen"]),
             settingsPage(.about, ["versie", "privacy", "bronnen", "disclaimer", "over"]),
             settingsPage(.importReview, ["importeren", "excel", "csv", "controleren"]),
-            settingsPage(.startDate, ["beginnen", "startdatum", "begindatum", "vanaf", "opnieuw beginnen", "eerste dag", "beginsaldo"])
+            settingsPage(.startDate, ["beginnen", "startdatum", "begindatum", "vanaf", "opnieuw beginnen", "eerste dag", "beginsaldo"]),
+            settingsPage(.workHours, ["agenda", "uren", "toeslag", "zondag", "feestdag", "pauze", "werken", "rooster", "diensten", "kalender"])
         ]
     }
 

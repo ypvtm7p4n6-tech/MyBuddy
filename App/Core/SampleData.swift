@@ -109,8 +109,9 @@ extension FinanceData {
 
 extension FinanceData {
     /// De voorbeelddata met de nieuwe verdeelmogelijkheden zichtbaar (voor screenshots en proberen, `-mybuddy-demo-verdelen`): de
-    /// vakantiepot legt 3,5% van je salaris plus 25 euro in en laat 40 euro op de 10e overgaan, en de bankrekening houdt 300 euro
-    /// vast. De gewone voorbeelddata (`sample`) blijft zoals ze is.
+    /// vakantiepot legt 3,5% van je salaris plus 25 euro in en laat 40 euro op de 10e overgaan, de bankrekening houdt 300 euro vast
+    /// en het uurloon gaat vanaf volgende maand met een euro omhoog (Loon per maand). De gewone voorbeelddata (`sample`) blijft zoals
+    /// ze is.
     static func sampleWithDistribution(now: Date = Date()) -> FinanceData {
         var d = FinanceData.sample(now: now)
         let current = YearMonth(date: now)
@@ -119,6 +120,7 @@ extension FinanceData {
             d.setStandardTransferParts(holiday.id, parts: [TransferPart(day: 10, amount: 40)], current: current)
         }
         d.setContributionAmount(BankShare.id, amount: 300, current: current)
+        d.setSalaryChange(SalaryChange(from: current.adding(1), hourlyRate: d.salary.hourlyRate + 1))
         return d
     }
 }

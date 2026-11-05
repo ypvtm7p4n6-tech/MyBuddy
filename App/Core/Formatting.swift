@@ -72,6 +72,11 @@ enum Fmt {
         return f.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
+    /// "38,5 uur", "1 uur", "0 uur": hele minuten als uren, met hoogstens twee decimalen ("uur" blijft zoals het is, ook bij meer dan één).
+    static func hours(minutes: Int) -> String {
+        "\(input(Double(minutes) / 60)) uur"
+    }
+
     static let monthNames = ["januari", "februari", "maart", "april", "mei", "juni",
                              "juli", "augustus", "september", "oktober", "november", "december"]
     static let shortMonthNames = ["jan", "feb", "mrt", "apr", "mei", "jun",

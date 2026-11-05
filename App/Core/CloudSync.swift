@@ -95,7 +95,7 @@ enum CloudSync {
         if !data.pots.isEmpty || !data.potEntries.isEmpty || !data.holdings.isEmpty { return true }
         if !data.bankSnapshots.isEmpty || !data.bankEntries.isEmpty || !data.goals.isEmpty { return true }
         if !data.appliedAccelerators.isEmpty { return true }
-        if data.salary != SalarySettings() || data.hasBankShare { return true }
+        if data.salary != SalarySettings() || data.hasBankShare || !data.salaryChanges.isEmpty || data.work.hasUserContent { return true }
         for plan in data.months.values {
             if !plan.expenses.isEmpty || !plan.extraIncome.isEmpty { return true }
             if plan.salaryOverride != nil || plan.hoursOverride != nil || plan.transferDay != nil { return true }
@@ -125,12 +125,15 @@ enum CloudSync {
     // MARK: Koersen
 
     /// De gegevens zonder wat de koersverversing vanzelf bijwerkt: de laatste koers van beleggingen met een ticker en
-    /// (bij beleggingen die de live koers volgen) de meetpunten die daaruit volgen. Ook de wijzigingstijd is weg.
-    /// Twee apparaten die op hetzelfde moment koersen verversen, verschillen alleen hierin (de meetpunten hebben een
-    /// willekeurig id); dat is geen reden om de gebruiker te laten kiezen.
+    /// (bij beleggingen die de live koers volgen) de meetpunten die daaruit volgen. Ook de wijzigingstijd is weg, en de
+    /// afgeleide diensten uit de agenda (`work.snapshot`): elk apparaat leest zijn eigen agenda, dus twee apparaten die op hetzelfde
+    /// moment verversen verschillen alleen hierin. Twee apparaten die op hetzelfde moment koersen verversen, verschillen alleen
+    /// hierin (de meetpunten hebben een willekeurig id); dat is geen reden om de gebruiker te laten kiezen. De instellingen van de
+    /// werkuren (bron, regels, periode) blijven staan.
     static func withoutMarketData(_ data: FinanceData) -> FinanceData {
         var result = data
         result.modifiedAt = nil
+        result.work.snapshot = nil
         for index in result.holdings.indices where result.holdings[index].hasTicker {
             result.holdings[index].lastPrice = nil
             result.holdings[index].lastPriceDate = nil

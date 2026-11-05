@@ -255,14 +255,15 @@ extension FinanceData {
             }
         }
 
-        // 8. Meer uren werken (bij uurloon)
-        if salary.mode == .hourly, salary.hourlyRate > 0 {
+        // 8. Meer uren werken (bij uurloon), tegen het uurloon van de lopende maand
+        let wage = salarySettings(in: current)
+        if wage.mode == .hourly, wage.hourlyRate > 0 {
             // 2 uur per week, omgerekend naar een gemiddelde maand (52 / 12 weken, of 365,25 / 7 / 12 bij een salaris om de
             // zoveel weken of dagen; zie `SalarySettings.averageMonthly(perWeek:)`).
-            let extra = salary.averageMonthly(perWeek: salary.hourlyRate * 2).cents
+            let extra = wage.averageMonthly(perWeek: wage.hourlyRate * 2).cents
             if extra >= 10 {
                 candidates.append(("hours", "Werk 2 uur extra per week",
-                                   "Bij je uurloon van \(Fmt.euroExact(salary.hourlyRate)) levert dat ongeveer \(Fmt.euro(extra)) extra per maand op.",
+                                   "Bij je uurloon van \(Fmt.euroExact(wage.hourlyRate)) levert dat ongeveer \(Fmt.euro(extra)) extra per maand op.",
                                    "clock.badge.plus",
                                    ScenarioChange(extraMonthly: extra)))
             }
@@ -1176,7 +1177,8 @@ extension FinanceData {
         addRecurringLine(MoneyLine(id: AcceleratorIDs.entry(recordID, "hours"), name: name, amount: amount, isRecurring: true),
                          kind: .income, in: current)
         let detail = "per maand erbij, vanaf \(Fmt.month(current))"
-        let rate = salary.mode == .hourly && salary.hourlyRate > 0 ? " Bij een uurloon van \(Fmt.euroExact(salary.hourlyRate))." : ""
+        let wage = salarySettings(in: current)
+        let rate = wage.mode == .hourly && wage.hourlyRate > 0 ? " Bij een uurloon van \(Fmt.euroExact(wage.hourlyRate))." : ""
         run.add(symbol: "clock.badge.plus", title: "Extra inkomsten", old: nil, new: Fmt.euro(amount), detail: detail,
                 sentence: "Extra inkomsten van \(Fmt.euro(amount)) \(detail), als \"\(name)\".\(rate)")
         for line in contribution.lines {
@@ -1531,7 +1533,7 @@ extension FinanceData {
             detail = "in euro's van vandaag"
             sentence = "Je gewenste pensioen gaat van \(Fmt.euro(old)) naar \(Fmt.euro(new)) per maand."
         case .partTime:
-            let gap = monthlyIncomeGap(for: g)
+            let gap = monthlyIncomeGap(for: g, in: current)
             let net = max(0, gap - g.otherMonthlyIncome)
             old = gap
             new = (g.otherMonthlyIncome + net * 0.9).cents

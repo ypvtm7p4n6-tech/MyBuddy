@@ -40,6 +40,7 @@ struct DestinationView: View {
         case .buffer: BufferPage()
         case .savingsGoal: SavingsGoalPage()
         case .purchase: PurchasePage()
+        case .wageChange(let month): WageChangePage(month: month)
         case .cashflow: BankPage(section: .days)
         case .tools: ToolsPage()
         case .settingsRoot: SettingsView()

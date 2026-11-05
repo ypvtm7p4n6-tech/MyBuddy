@@ -109,26 +109,29 @@ extension FinanceData {
     func goal(_ id: UUID) -> LifeGoal? { goals.first { $0.id == id } }
 
     /// Inkomensverlies per maand als je minder uren werkt. Een schatting: het GEMIDDELDE per maand (bij een salaris om de
-    /// zoveel weken of dagen telt een maand met twee uitbetalingen niet dubbel), zie `SalarySettings.averageMonthly(perWeek:)`.
-    func monthlyIncomeGap(for goal: LifeGoal) -> Double {
+    /// zoveel weken of dagen telt een maand met twee uitbetalingen niet dubbel), zie `SalarySettings.averageMonthly(perWeek:)`. Het
+    /// loon is dat van `month` (`salarySettings(in:)`); zonder maand het laatste loon (`latestSalarySettings`).
+    func monthlyIncomeGap(for goal: LifeGoal, in month: YearMonth? = nil) -> Double {
         if let o = goal.monthlyGapOverride { return max(0, o) }
-        let from = goal.hoursFrom > 0 ? goal.hoursFrom : salary.hoursPerWeek
+        let wage = month.map { salarySettings(in: $0) } ?? latestSalarySettings
+        let from = goal.hoursFrom > 0 ? goal.hoursFrom : wage.hoursPerWeek
         let to = goal.hoursTo
         guard from > to, from > 0 else { return 0 }
-        switch salary.mode {
-        case .hourly: return salary.averageMonthly(perWeek: salary.hourlyRate * (from - to)).cents
-        case .fixed: return (salary.averageMonthlyFixedAmount * (1 - to / from)).cents
+        switch wage.mode {
+        case .hourly: return wage.averageMonthly(perWeek: wage.hourlyRate * (from - to)).cents
+        case .fixed: return (wage.averageMonthlyFixedAmount * (1 - to / from)).cents
         }
     }
 
-    /// Kapitaal dat nodig is voor het doel.
-    func neededCapital(for goal: LifeGoal, drawdownReturn: Double) -> Double {
+    /// Kapitaal dat nodig is voor het doel. Bij een parttime-doel rekent het inkomensverlies met het loon van `month` (zonder maand het
+    /// laatste loon).
+    func neededCapital(for goal: LifeGoal, drawdownReturn: Double, in month: YearMonth? = nil) -> Double {
         switch goal.kind {
         case .retirement:
             let net = max(0, goal.monthlySpending - goal.otherMonthlyIncome)
             return Growth.capitalNeeded(monthlyAmount: net, withdrawalRate: goal.withdrawalRate)
         case .partTime:
-            let gap = max(0, monthlyIncomeGap(for: goal) - goal.otherMonthlyIncome)
+            let gap = max(0, monthlyIncomeGap(for: goal, in: month) - goal.otherMonthlyIncome)
             if let years = goal.partTimeYears, years > 0 {
                 return Growth.annuityCapital(monthlyAmount: gap, years: years, annualReturn: drawdownReturn)
             }
@@ -173,7 +176,7 @@ extension FinanceData {
 
         let effective = goal.inflationAdjusted ? Growth.realReturn(nominal: nominal, inflation: inflation) : nominal
         let drawdown = goal.inflationAdjusted ? Growth.realReturn(nominal: portfolioReturn, inflation: inflation) : portfolioReturn
-        let target = neededCapital(for: goal, drawdownReturn: drawdown)
+        let target = neededCapital(for: goal, drawdownReturn: drawdown, in: current)
         return GoalInputs(start: start.cents, monthly: monthly.cents, nominalReturn: nominal,
                           effectiveReturn: effective, target: target, sourceName: name)
     }
@@ -229,8 +232,10 @@ extension FinanceData {
             g.monthlySpending = max(0, (averageMonthlyExpenses(current: YearMonth.current())).rounded())
             g.otherMonthlyIncome = 0
         case .partTime:
-            g.hoursFrom = salary.hoursPerWeek
-            g.hoursTo = max(0, salary.hoursPerWeek - 8)
+            // De uren van het loon van de lopende maand.
+            let hours = salarySettings(in: YearMonth.current()).hoursPerWeek
+            g.hoursFrom = hours
+            g.hoursTo = max(0, hours - 8)
         case .vacation:
             g.inflationAdjusted = false
             g.targetAmount = 3000

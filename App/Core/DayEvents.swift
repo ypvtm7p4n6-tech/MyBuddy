@@ -24,6 +24,8 @@ struct DayEvent: Identifiable, Equatable {
     /// De dag van deze gebeurtenis ligt na de dag van `asOf` van `dayEvents` (per kalenderdag, niet per tijdstip:
     /// alles op de dag van vandaag geldt als al gebeurd, ook als het voor 12:00 is).
     var isPlanned: Bool
+    /// Een korte uitleg onder de titel (een voetnoot), bijvoorbeeld bij een salaris uit de agenda "uit agenda: 38,5 uur". nil: geen.
+    var detail: String? = nil
 }
 
 /// Eén uitbetaling van het salaris.
@@ -34,6 +36,8 @@ struct SalaryPayout: Equatable {
     /// Dag van de maand (1...dagen in de maand).
     var day: Int
     var cents: Int
+    /// Bij een uurloon met de uren uit de agenda: de uren van deze uitbetaling (wat de agenda gaf en wat uit je gemiddelde komt).
+    var hours: PayoutHours? = nil
 }
 
 /// Het saldo van de bankrekening aan het eind van een dag, met wat er die dag gebeurde.
@@ -74,19 +78,20 @@ extension FinanceData {
         var out: [DayEvent] = []
 
         func add(id: String, day: Int, title: String, kind: DayEventKind, bank: Int, pot: Int = 0,
-                 potID: UUID? = nil, holdingID: UUID? = nil, lineID: UUID? = nil) {
+                 potID: UUID? = nil, holdingID: UUID? = nil, lineID: UUID? = nil, detail: String? = nil) {
             let d = min(max(day, 1), month.dayCount)
             // Wat vóór de startdag valt bestaat niet (in een gewone maand telt elke dag).
             guard counts(day: d, in: month) else { return }
             out.append(DayEvent(id: id, date: month.date(day: d, calendar: cal), day: d, title: title, kind: kind,
                                 bankAmount: CentsMath.value(bank), potAmount: CentsMath.value(pot),
-                                potID: potID, holdingID: holdingID, lineID: lineID, isPlanned: false))
+                                potID: potID, holdingID: holdingID, lineID: lineID, isPlanned: false, detail: detail))
         }
 
         // Elke uitbetaling is een eigen gebeurtenis op haar eigen dag. Het dagboek (`monthLedger`) telt ze allemaal mee;
         // het maakt dus niet uit hoeveel er in een maand zijn.
+        // Bij uren uit de agenda zegt de gebeurtenis hoeveel uren de uitbetaling betaalt ("uit agenda: 38,5 uur").
         for payout in salaryPayouts(in: month, plan: plan) where payout.cents != 0 {
-            add(id: payout.id, day: payout.day, title: "Salaris", kind: .salary, bank: payout.cents)
+            add(id: payout.id, day: payout.day, title: "Salaris", kind: .salary, bank: payout.cents, detail: payout.hours?.detailText)
         }
 
         for line in plan.extraIncome {
@@ -155,9 +160,9 @@ extension FinanceData {
     /// `MonthLedger.overviewReconciles`.
     func salaryPayouts(in month: YearMonth, plan: MonthPlan) -> [SalaryPayout] {
         let monthly = salary.isMonthly
-        return salaryPayoutCents(in: month, plan: plan).map { payout in
+        return salaryPayoutParts(in: month, plan: plan).map { payout in
             let id = monthly ? "salary-\(month.key)" : "salary-\(CalendarDay(month: month, day: payout.day).key)"
-            return SalaryPayout(id: id, day: payout.day, cents: payout.cents)
+            return SalaryPayout(id: id, day: payout.day, cents: payout.cents, hours: payout.hours)
         }
     }
 
