@@ -241,7 +241,8 @@ enum AllocationEdit {
         if case .percent(let standard)? = data.defaultAllocationRule(id, in: month), standard.percent > 0 || standard.extra > 0 {
             return standard
         }
-        let amount = data.allocation(id, in: month)
+        // Het hele bedrag van de maand: ook het deel dat een startdatum buiten beeld laat valt mee (anders verandert wat meetelt).
+        let amount = CentsMath.value(data.rawCents(of: data.allocationRule(id, in: month), in: month))
         let percent = data.percent(forAmount: amount, of: .salary, in: month) ?? 0
         return PercentRule(percent: percent, basis: .salary)
     }
@@ -253,7 +254,8 @@ enum AllocationEdit {
         switch mode {
         case .fixed:
             guard current.isPercent else { return }
-            data.setAllocation(id, in: month, amount: data.allocation(id, in: month))
+            // Het hele bedrag van de maand (percentage plus extra bedrag), ook als een startdatum een deel ervan buiten beeld laat.
+            data.setAllocation(id, in: month, amount: CentsMath.value(data.rawCents(of: current, in: month)))
         case .percentage:
             guard !current.isPercent else { return }
             let start = startingPercent(data, id: id, month: month)

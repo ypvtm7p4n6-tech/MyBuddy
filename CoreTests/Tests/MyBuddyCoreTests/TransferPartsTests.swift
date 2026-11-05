@@ -383,4 +383,105 @@ final class TransferPartsTests: XCTestCase {
         XCTAssertEqual(d.monthFigures(nov), plain)
         XCTAssertEqual(d.potBalance(pot.id, at: feb), 1_000, accuracy: 1e-9, "vijf maanden van 200")
     }
+
+    func testAFrozenMonthEqualToTheStandardIsNoDeviation() {
+        var (d, pot) = dataWithPot()
+        d.materialize(upTo: engJan2027)
+        // Delen toevoegen vanaf december legt de oude standaard (geen delen) vast in oktober en november.
+        d.setStandardTransferParts(pot.id, parts: [TransferPart(day: 10, amount: 50)], current: engDec2026)
+        XCTAssertTrue(d.hasTransferPartsOverride(pot.id, in: nov), "november houdt zijn oude, lege lijst: dat wijkt nu af")
+        XCTAssertTrue(AllocationEdit.differsFromStandard(d, id: pot.id, month: nov))
+        XCTAssertFalse(d.hasTransferPartsOverride(pot.id, in: engDec2026))
+        // Daarna weer zonder delen vanaf januari: de bewaarde lege lijsten zijn gelijk aan de standaard en wijken niet meer af.
+        d.setStandardTransferParts(pot.id, parts: [], current: engJan2027)
+        XCTAssertEqual(d.months[nov.key]?.transferParts[pot.id.uuidString], [], "de lijst blijft bewaard")
+        XCTAssertFalse(d.hasTransferPartsOverride(pot.id, in: nov), "gelijk aan de standaard: geen afwijking")
+        XCTAssertFalse(AllocationEdit.differsFromStandard(d, id: pot.id, month: nov))
+        // December (vastgelegd met de delen van toen) wijkt wel af.
+        XCTAssertTrue(d.hasTransferPartsOverride(pot.id, in: engDec2026))
+        // "Terug naar standaard" haalt ook een bewaarde lijst weg die gelijk is aan de standaard.
+        d.clearTransferParts(pot.id, in: nov)
+        XCTAssertNil(d.months[nov.key]?.transferParts[pot.id.uuidString])
+        XCTAssertEqual(d.transferSlices(for: pot.id, in: nov).count, 1)
+        // De delen van een maand worden vergeleken zoals ze gelden: dubbele dagen en delen van 0 maken geen verschil.
+        d.setStandardTransferParts(pot.id, parts: [TransferPart(day: 10, amount: 40)], current: engJan2027)
+        d.months[engJan2027.key]?.transferParts[pot.id.uuidString] = [TransferPart(day: 10, amount: 15), TransferPart(day: 10, amount: 25),
+                                                                       TransferPart(day: 20, amount: 0)]
+        XCTAssertFalse(d.hasTransferPartsOverride(pot.id, in: engJan2027))
+    }
+
+    // MARK: Snelheid
+
+    /// Dezelfde zware dataset als `LedgerTests.testMonthLedgerStaysFastOverFiveYears` (vijf jaar, 10 potten, 8 beleggingen), nu met drie
+    /// extra overschrijfdata op elke pot en belegging, een extra bedrag bij elk percentage en een bankdeel: elke maand heeft dan vier
+    /// overschrijvingen per pot of belegging. De richtwaarde is 15 ms per maand op een gewone machine (de grens is vier keer zo ruim,
+    /// de mediaan van vijf metingen); de plek om te zoeken als dit faalt is `TransferMath.slices` in `planEvents` en `potLedgers`.
+    func testMonthLedgerStaysFastWithExtraDatesTheExtraAmountAndABankShare() throws {
+        try XCTSkipIf(MachineSpeed.skipsTiming, "tijdmetingen overgeslagen (SKIP_PERF_TESTS)")
+        var (d, current) = ledgerPerformanceData(percentages: true)
+        let parts = [TransferPart(day: 5, amount: 5), TransferPart(day: 12, amount: 5), TransferPart(day: 19, amount: 5)]
+        let ids = d.pots.map(\.id) + d.holdings.map(\.id)
+        for id in ids { d.setStandardTransferParts(id, parts: parts, current: current.adding(-60)) }
+        for key in Array(d.months.keys) {
+            for id in ids { d.months[key]?.percentAllocations[id.uuidString] = PercentRule(percent: 2.5, basis: .allIncome, extra: 10) }
+            d.months[key]?.allocations[BankShare.key] = 100
+        }
+        let today = current.date(day: 10)
+        _ = d.monthLedger(current, asOf: today)   // warme start
+        var worst = 0.0
+        for month in [current, current.adding(-30), current.adding(-58)] {
+            var times: [Double] = []
+            var ledger: MonthLedger?
+            for _ in 0..<5 {
+                let start = Date()
+                ledger = d.monthLedger(month, asOf: today)
+                times.append(Date().timeIntervalSince(start))
+            }
+            times.sort()
+            worst = max(worst, times[2])
+            XCTAssertEqual(ledger?.allReconciles, true, month.key)
+            XCTAssertEqual(ledger?.toBank, 100, month.key)
+            XCTAssertEqual(ledger?.days.flatMap { $0.events }.filter { $0.kind == .toPot || $0.kind == .toHolding }.count, 18 * 4, month.key)
+        }
+        XCTAssertLessThan(worst, MachineSpeed.limit(0.060), "mediaan van 5 keer, per maand (richtwaarde 15 ms op een gewone machine, machine \(MachineSpeed.slowdown)x trager)")
+    }
+
+    func testSwitchingTheModeKeepsTheWholeAmountWhenAPartFallsBeforeTheStartDate() {
+        // 10% van 3.000 plus 50 is 350; het deel van 100 op de 3e valt vóór de startdatum (15 oktober): er telt 250 mee.
+        var (d, pot) = dataWithPot(monthly: 0)
+        d.setContributionPercent(pot.id, percent: 10, basis: .salary, extra: 50, current: oct2026)
+        d.setStandardTransferParts(pot.id, parts: [TransferPart(day: 3, amount: 100)], current: oct2026)
+        d.setStart(CalendarDay(year: 2026, month: 10, day: 15))
+        XCTAssertEqual(d.allocationCents(pot.id, in: oct2026), 25_000)
+        AllocationEdit.setMode(&d, id: pot.id, month: oct2026, to: .fixed)
+        XCTAssertEqual(d.allocationRule(pot.id, in: oct2026), .amount(350), "het hele bedrag van de maand blijft staan")
+        XCTAssertEqual(d.allocationCents(pot.id, in: oct2026), 25_000, "en wat meetelt verandert niet")
+        // De andere kant op: een vast bedrag van 350 wordt een percentage van het salaris dat (op de afronding na) 350 is.
+        var (e, other) = dataWithPot(monthly: 350)
+        e.setStandardTransferParts(other.id, parts: [TransferPart(day: 3, amount: 100)], current: oct2026)
+        e.setStart(CalendarDay(year: 2026, month: 10, day: 15))
+        XCTAssertEqual(e.allocationCents(other.id, in: oct2026), 25_000)
+        AllocationEdit.setMode(&e, id: other.id, month: oct2026, to: .percentage)
+        guard case .percent(let rule) = e.allocationRule(other.id, in: oct2026) else { return XCTFail("geen percentage") }
+        XCTAssertEqual(rule.percent, 11.67)
+        XCTAssertEqual(Double(e.rawCents(of: .percent(rule), in: oct2026)), 35_000, accuracy: 16, "het hele bedrag, op de afronding van het percentage na")
+        XCTAssertEqual(Double(e.allocationCents(other.id, in: oct2026)), 25_000, accuracy: 16)
+    }
+
+    func testSpreadingTheRestKeepsAPartThatFallsBeforeTheStartDate() {
+        // De inleg van 200 heeft een deel van 50 op de 3e dat vóór de startdatum (15 oktober) valt: er telt 150 mee. "Rest over potten
+        // verdelen" legt er bij wat nog te verdelen is bij, zodat het precies op nul uitkomt en het deel van de 3e niet verdwijnt.
+        var (d, pot) = dataWithPot(monthly: 200)
+        d.setStandardTransferParts(pot.id, parts: [TransferPart(day: 3, amount: 50)], current: oct2026)
+        d.setStart(CalendarDay(year: 2026, month: 10, day: 15))
+        XCTAssertEqual(d.allocationCents(pot.id, in: oct2026), 15_000)
+        let left = d.monthFigures(oct2026).unassigned
+        XCTAssertGreaterThan(left, 0)
+        d.spreadRemainingOverPots(in: oct2026)
+        XCTAssertEqual(d.monthFigures(oct2026).unassigned, 0)
+        XCTAssertEqual(d.allocationCents(pot.id, in: oct2026), 15_000 + left)
+        XCTAssertEqual(d.allocationRule(pot.id, in: oct2026), .amount(CentsMath.value(20_000 + left)))
+        XCTAssertEqual(d.uncountedTransferSlices(for: pot.id, in: oct2026).map { [$0.day, $0.cents] }, [[3, 5_000]])
+        XCTAssertTrue(d.monthLedger(oct2026).allReconciles)
+    }
 }

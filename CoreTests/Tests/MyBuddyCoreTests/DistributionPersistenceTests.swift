@@ -271,4 +271,32 @@ final class DistributionPersistenceTests: XCTestCase {
         XCTAssertEqual(changed.monthFigures(apr).remaining, plain.monthFigures(apr).remaining)
         XCTAssertEqual(changed.monthFigures(apr).toBank, 12_300)
     }
+
+    func testRandomDatasetsRoundTripAndWriteTheNewKeysOnlyWhenTheyAreUsed() throws {
+        // De datasets van de eigenschapstests (200 zaadwaarden): zonder een van de nieuwe functies noemt het bestand geen enkele nieuwe
+        // sleutel (dus is het van het oude formaat), met die functies rondreist het via FinanceStorage en de back-up zonder verlies.
+        let newFeatures: Set<String> = ["percentage met extra bedrag", "percentage met extra bedrag per maand", "extra overschrijfdata",
+                                        "extra overschrijfdata per maand", "bankrekening in de verdeling"]
+        let newKeys = ["bankShare", "contributionExtra", "extraTransfers", "transferParts", "morePotIDs", "\"extra\""]
+        var without = 0
+        var with = 0
+        for seed in 1...200 {
+            let scenario = ledgerScenario(seed: UInt64(seed))
+            let raw = try FinanceStorage.makeFileEncoder().encode(scenario.data)
+            let json = text(raw)
+            if scenario.features.isDisjoint(with: newFeatures) {
+                without += 1
+                for key in newKeys { XCTAssertFalse(json.contains(key), "zaadwaarde \(seed) schrijft \(key) zonder de functie") }
+            } else {
+                with += 1
+            }
+            let back = try FinanceStorage.makeDecoder().decode(FinanceData.self, from: raw)
+            XCTAssertEqual(try FinanceStorage.makeFileEncoder().encode(back), raw, "rondreis van zaadwaarde \(seed)")
+            let backup = try BackupService.export(scenario.data, now: Date(timeIntervalSince1970: 1_800_000_000))
+            let restored = try BackupService.importBackup(backup)
+            XCTAssertEqual(try FinanceStorage.makeFileEncoder().encode(restored), raw, "back-up van zaadwaarde \(seed)")
+        }
+        XCTAssertGreaterThan(without, 10, "datasets zonder de nieuwe functies")
+        XCTAssertGreaterThan(with, 60, "datasets met de nieuwe functies")
+    }
 }

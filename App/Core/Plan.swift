@@ -529,7 +529,8 @@ extension FinanceData {
         let extra = left % count
         for (i, pot) in pots.enumerated() {
             let share = base + (i < extra ? 1 : 0)
-            let current = CentsMath.int(allocation(pot.id, in: month))
+            // Het hele bedrag van de maand, ook het deel dat een startdatum buiten beeld laat: het deel erbij komt op de overschrijfdag.
+            let current = rawCents(of: allocationRule(pot.id, in: month), in: month)
             setAllocation(pot.id, in: month, amount: CentsMath.value(current + share))
         }
     }

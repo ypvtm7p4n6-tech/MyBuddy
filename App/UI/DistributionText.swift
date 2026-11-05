@@ -111,7 +111,7 @@ enum BankShareText {
             : "\(Fmt.euro(CentsMath.value(toBankCents))) blijft op je rekening. Er wordt niets overgeschreven."
     }
 
-    /// De regel in de kaart Nog te verdelen: "Waarvan € 500 op je bankrekening blijft." nil zonder bankdeel.
+    /// De regel in de kaart Nog te verdelen: "Waarvan € 500 aan je bankrekening is toegewezen." nil zonder bankdeel.
     static func summaryNote(toBankCents: Int) -> String? {
         guard toBankCents != 0 else { return nil }
         return "Waarvan \(Fmt.euro(CentsMath.value(toBankCents))) aan je bankrekening is toegewezen."

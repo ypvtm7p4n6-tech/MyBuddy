@@ -166,9 +166,12 @@ extension FinanceData {
         months[month.key]?.transferParts[id.uuidString] ?? standardTransferParts(of: id)
     }
 
-    /// Heeft de maand eigen delen voor `id` (dus een afwijking van de standaard)?
+    /// Heeft de maand eigen delen voor `id` die van de standaard verschillen? Een lege lijst terwijl de standaard delen heeft is een
+    /// afwijking (deze maand alles op de overschrijfdag). Een bewaarde lijst die gelijk is aan de standaard (een maand die de oude
+    /// standaard kreeg vastgelegd, `freezePastTransferParts`) is geen afwijking.
     func hasTransferPartsOverride(_ id: UUID, in month: YearMonth) -> Bool {
-        months[month.key]?.transferParts[id.uuidString] != nil
+        guard let own = months[month.key]?.transferParts[id.uuidString] else { return false }
+        return TransferMath.normalized(own) != TransferMath.normalized(standardTransferParts(of: id))
     }
 
     /// De overschrijvingen van de inleg van `id` in `month` voor een inleg van `totalCents` (zie `TransferMath.slices`), zonder
@@ -214,16 +217,17 @@ extension FinanceData {
     /// de maand volgt de standaard, ook als die later verandert.
     mutating func setTransferParts(_ id: UUID, in month: YearMonth, parts: [TransferPart]) {
         let clean = TransferMath.normalized(parts)
-        if clean == standardTransferParts(of: id) {
+        if clean == TransferMath.normalized(standardTransferParts(of: id)) {
             clearTransferParts(id, in: month)
             return
         }
         editPlan(month) { $0.transferParts[id.uuidString] = clean }
     }
 
-    /// Haalt de eigen delen van een maand weg: de standaard van de pot of belegging geldt weer.
+    /// Haalt de eigen delen van een maand weg (ook een bewaarde lijst die gelijk is aan de standaard): de standaard van de pot of
+    /// belegging geldt weer.
     mutating func clearTransferParts(_ id: UUID, in month: YearMonth) {
-        guard hasTransferPartsOverride(id, in: month) else { return }
+        guard months[month.key]?.transferParts[id.uuidString] != nil else { return }
         editPlan(month) { _ = $0.transferParts.removeValue(forKey: id.uuidString) }
     }
 
@@ -232,7 +236,7 @@ extension FinanceData {
     /// verandert. De lopende en de komende maanden volgen de nieuwe standaard (behalve maanden met eigen delen).
     mutating func setStandardTransferParts(_ id: UUID, parts: [TransferPart], current: YearMonth) {
         let clean = TransferMath.normalized(parts)
-        let old = standardTransferParts(of: id)
+        let old = TransferMath.normalized(standardTransferParts(of: id))
         guard old != clean else { return }
         let start = pot(id)?.startMonth ?? holding(id)?.startMonth ?? startMonth
         freezePastTransferParts(id, parts: old, start: start, before: current)

@@ -363,7 +363,8 @@ final class NowAndOverflowTests: XCTestCase {
         var d = FinanceData(startMonth: oct2026)
         d.months["999999999999999999-01"] = MonthPlan()
         d.months["kapot"] = MonthPlan()
-        d.addPot(Pot(name: "Spaar", monthlyContribution: 50, startMonth: oct2026), openingBalance: 100)
+        // `now:` vast: het beginsaldo is anders gedateerd op de echte datum van vandaag en valt na oktober niet meer in oktober.
+        d.addPot(Pot(name: "Spaar", monthlyContribution: 50, startMonth: oct2026), openingBalance: 100, now: day(oct2026, 1))
         d.materialize(upTo: oct2026)
         XCTAssertEqual(d.potBalance(d.pots[0].id, at: oct2026), 150, accuracy: 0.001)
         XCTAssertEqual(d.monthFigures(oct2026.adding(1)).saved, 5_000)

@@ -101,3 +101,51 @@ struct TransferPartsEditor: View {
         }
     }
 }
+
+#if DEBUG
+// Voorbeelden voor de Xcode-canvas: gevuld, donker, bij grote tekst, leeg en met delen die samen meer zijn dan de inleg.
+
+/// De editor werkt op een binding: de voorbeelden houden de lijst zelf bij.
+private struct TransferPartsEditorPreviewHost: View {
+    @State private var parts: [TransferPart]
+    let totalCents: Int?
+
+    init(parts: [TransferPart], totalCents: Int? = nil) {
+        _parts = State(initialValue: parts)
+        self.totalCents = totalCents
+    }
+
+    var body: some View {
+        ScrollView {
+            Card(title: TransferPartsText.title, symbol: "calendar.badge.plus", domain: .money) {
+                TransferPartsEditor(parts: $parts, standardDay: 25, totalCents: totalCents)
+            }
+            .padding(16)
+        }
+        .background(Theme.canvas)
+    }
+}
+
+#Preview("Extra overschrijfdagen, gevuld") {
+    TransferPartsEditorPreviewHost(parts: [TransferPart(day: 10, amount: 50), TransferPart(day: 31, amount: 25)], totalCents: 20_000)
+        .preferredColorScheme(.light)
+}
+
+#Preview("Extra overschrijfdagen, donker") {
+    TransferPartsEditorPreviewHost(parts: [TransferPart(day: 10, amount: 50), TransferPart(day: 31, amount: 25)], totalCents: 20_000)
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Extra overschrijfdagen, grote tekst") {
+    TransferPartsEditorPreviewHost(parts: [TransferPart(day: 10, amount: 50), TransferPart(day: 31, amount: 25)], totalCents: 20_000)
+        .dynamicTypeSize(.accessibility3)
+}
+
+#Preview("Extra overschrijfdagen, leeg") {
+    TransferPartsEditorPreviewHost(parts: [])
+}
+
+#Preview("Extra overschrijfdagen, samen te veel") {
+    TransferPartsEditorPreviewHost(parts: [TransferPart(day: 5, amount: 70), TransferPart(day: 20, amount: 70)], totalCents: 10_000)
+}
+#endif
