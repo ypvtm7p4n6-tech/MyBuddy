@@ -797,6 +797,17 @@ struct FinanceData: Codable, Equatable {
     /// `startMonth`, zoals altijd. Zet hem met `setStart(_:)`, dat `startMonth` meeneemt: `startDay.yearMonth == startMonth`.
     var startDay: CalendarDay?
     var salary = SalarySettings()
+    /// Wijzigingen van het loon per maand (zie `WageHistory.swift`), op maand gesorteerd, één per maand. Standaard geen: dan geldt
+    /// `salary` voor alle maanden. Het schema (soort, salarisdag, interval, anker) blijft in `salary`.
+    var salaryChanges: [SalaryChange] = []
+    /// Werkuren uit de agenda: instellingen, regels en de afgeleide diensten (zie `WorkHours.swift`). Een wijziging maakt de
+    /// tussenopslag van de uren per dag leeg.
+    var work = WorkSettings() {
+        didSet { derivedWork = DerivedWork() }
+    }
+    /// Tussenopslag van de uren per dag (`WorkLedger`), alleen voor de snelheid. Wordt niet opgeslagen, telt niet mee bij `==` en
+    /// wordt leeg zodra `work` verandert.
+    var derivedWork = DerivedWork()
     /// Wat je van je inkomen aan de bankrekening toewijst in de verdeling (zie `BankShare.swift`). Standaard niets.
     var bankShare = BankShare()
     var months: [String: MonthPlan] = [:] {
@@ -828,7 +839,7 @@ struct FinanceData: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case version, startMonth, startDay, salary, bankShare, months, pots, potEntries, holdings
+        case version, startMonth, startDay, salary, salaryChanges, work, bankShare, months, pots, potEntries, holdings
         case bankSnapshots, bankEntries, goals, homePotIDs, homeHoldingIDs, settings
         case appliedAccelerators, modifiedAt
     }
@@ -848,6 +859,14 @@ extension FinanceData {
             startMonth = day.yearMonth
         }
         salary = try c.decodeIfPresent(SalarySettings.self, forKey: .salary) ?? SalarySettings()
+        // Een onleesbare wijziging wordt overgeslagen, de rest blijft (op maand gesorteerd, één per maand: bij twee van dezelfde
+        // maand wint de laatste in het bestand).
+        let readChanges = c.decodeLenient([LossyBox<SalaryChange>].self, forKey: .salaryChanges, default: []).compactMap { $0.value }
+        var changesByMonth: [String: SalaryChange] = [:]
+        for change in readChanges { changesByMonth[change.from.key] = change }
+        salaryChanges = changesByMonth.values.sorted { $0.from < $1.from }
+        // Werkuren: mild gelezen. Wat niet te lezen is, geeft de standaardinstellingen (handmatige uren), nooit een bestand dat niet laadt.
+        work = c.decodeLenient(WorkSettings.self, forKey: .work, default: WorkSettings())
         bankShare = c.decodeLenient(BankShare.self, forKey: .bankShare, default: BankShare())
         months = try c.decodeIfPresent([String: MonthPlan].self, forKey: .months) ?? [:]
         pots = try c.decodeIfPresent([Pot].self, forKey: .pots) ?? []
@@ -864,9 +883,10 @@ extension FinanceData {
     }
 }
 
-// Een eigen `encode`: hetzelfde als de automatische (dezelfde sleutels, dezelfde waarden), maar `startDay` alleen als hij iets zegt.
-// Een bestand zonder startdatum blijft zo byte voor byte gelijk aan vroeger (compact, en gelijk voor cloud, back-up en vergelijken).
-// Een startdatum die niet in `startMonth` valt (iemand zette `startMonth` rechtstreeks) wordt niet bewaard: hij geldt niet.
+// Een eigen `encode`: hetzelfde als de automatische (dezelfde sleutels, dezelfde waarden), maar `startDay`, `salaryChanges`, `work` en
+// `bankShare` alleen als ze iets zeggen. Een bestand zonder die functies blijft zo byte voor byte gelijk aan vroeger (compact, en
+// gelijk voor cloud, back-up en vergelijken). Een startdatum die niet in `startMonth` valt (iemand zette `startMonth` rechtstreeks)
+// wordt niet bewaard: hij geldt niet.
 extension FinanceData {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -874,6 +894,8 @@ extension FinanceData {
         try c.encode(startMonth, forKey: .startMonth)
         try c.encodeIfPresent(effectiveStartDay, forKey: .startDay)
         try c.encode(salary, forKey: .salary)
+        if !salaryChanges.isEmpty { try c.encode(salaryChanges, forKey: .salaryChanges) }
+        if work != WorkSettings() { try c.encode(work, forKey: .work) }
         if bankShare != BankShare() { try c.encode(bankShare, forKey: .bankShare) }
         try c.encode(months, forKey: .months)
         try c.encode(pots, forKey: .pots)
