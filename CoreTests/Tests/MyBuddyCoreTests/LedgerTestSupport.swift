@@ -429,7 +429,9 @@ func ledgerScenario(seed: UInt64) -> LedgerScenario {
     // Een achtste reeks ingrepen (weer een eigen zaadwaarde, AAN HET EIND, na de zevende): het loon verandert per maand (een ander uurloon,
     // een ander vast bedrag of andere uren vanaf een maand), ook samen met een salaris om de zoveel weken of dagen, een eigen salaris of
     // eigen uren van een maand, uren uit de agenda en een startdatum (docs/work/plan2.md D6). Het dagboek moet sluiten en de uitbetalingen
-    // kloppen met de onafhankelijke berekening (`referenceSalarySettings`, `referenceSalaryPayouts`).
+    // kloppen met de onafhankelijke berekening (`referenceSalarySettings`, `referenceSalaryPayouts`). Let op: omdat de zaadwaarden van de
+    // zevende en deze reeks 10 000 uit elkaar liggen, komen "uren uit agenda" en "loon per maand" in `ledgerScenario` nooit samen voor;
+    // `WorkAgendaPropertyTests` en `WagePayoutPropertyTests` maken die combinatie zelf.
     var v = EngRandom(seed: seed &+ 47_000)
     if v.chance(45) {
         features.insert("loon per maand")

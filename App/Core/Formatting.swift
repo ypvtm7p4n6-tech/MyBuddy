@@ -72,9 +72,15 @@ enum Fmt {
         return f.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
-    /// "38,5 uur", "1 uur", "0 uur": hele minuten als uren, met hoogstens twee decimalen ("uur" blijft zoals het is, ook bij meer dan één).
+    /// "38,5 uur", "1 uur", "0 uur": hele minuten als uren, met hoogstens twee decimalen en een komma ("uur" blijft zoals het is, ook bij
+    /// meer dan één). Zonder `NumberFormatter`: de salarisgebeurtenissen vragen dit bij elke berekening van de dagen.
     static func hours(minutes: Int) -> String {
-        "\(input(Double(minutes) / 60)) uur"
+        let hundredths = Int((Double(minutes.magnitude) / 60 * 100).rounded())
+        let whole = hundredths / 100
+        let fraction = hundredths % 100
+        var text = "\(minutes < 0 && hundredths > 0 ? "-" : "")\(whole)"
+        if fraction > 0 { text += fraction % 10 == 0 ? ",\(fraction / 10)" : (fraction < 10 ? ",0\(fraction)" : ",\(fraction)") }
+        return "\(text) uur"
     }
 
     static let monthNames = ["januari", "februari", "maart", "april", "mei", "juni",

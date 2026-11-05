@@ -182,6 +182,23 @@ final class WorkHoursTests: XCTestCase {
         XCTAssertFalse(mixed.isAllExpected)
     }
 
+    func testShiftsAfterTheFetchDayExtendWhatTheAgendaKnows() throws {
+        // De agenda is voor het laatst gelezen op 10 oktober, maar er staan al diensten tot en met 14 oktober (een rooster dat vooruit
+        // bekend is): de agenda kent alles tot en met de laatste dienst, daarna komt het gemiddelde.
+        var d = hourlyData()
+        d.work.snapshot = engSnapshot(octoberShifts(), fetched: day(2026, 10, 10))
+        let report = try XCTUnwrap(d.workReport(forPayoutOn: day(2026, 10, 25)))
+        XCTAssertEqual(report.agendaMinutes, 4_740, "ook de diensten na de dag van verversen tellen")
+        XCTAssertEqual(report.expectedMinutes, Int((104.0 * 60 * 17 / 31).rounded()), "15 tot en met 31 oktober: 17 dagen uit je gemiddelde")
+        XCTAssertEqual(report.expectedMinutes, 3_422)
+        XCTAssertEqual(report.amountCents, SalarySettings.exactPayCents(rate: 15, weightedMinutes100: 4_500 * 100 + 240 * 150 + 3_422 * 100))
+        // Zonder diensten na de dag van verversen valt alles erna terug op het gemiddelde.
+        d.work.snapshot = engSnapshot(octoberShifts().filter { $0.startMinute < WorkShift.minute(of: at(2026, 10, 10)) }, fetched: day(2026, 10, 10))
+        let early = try XCTUnwrap(d.workReport(forPayoutOn: day(2026, 10, 25)))
+        XCTAssertEqual(early.expectedMinutes, Int((104.0 * 60 * 21 / 31).rounded()), "11 tot en met 31 oktober: 21 dagen")
+        XCTAssertEqual(early.agendaMinutes, 7 * 450 + 240, "de werkdagen 1, 2, 5, 6, 7, 8 en 9 oktober en de zondag van 4 oktober")
+    }
+
     func testAPeriodEntirelyBeyondTheAgendaIsExactlyTheManualAmount() throws {
         var d = withOctober(hourlyData(rate: 14.35, hours: 33))
         // De agenda is bekend tot en met 31 oktober; december ligt er helemaal achter.
@@ -221,9 +238,17 @@ final class WorkHoursTests: XCTestCase {
         XCTAssertEqual(d.salaryAmount(in: oct), 1_500, "eigen uren rekenen uren keer uurloon, zonder toeslagen")
         XCTAssertEqual(d.salaryHours(in: oct), 100)
         XCTAssertEqual(d.scheduledSalary(in: oct), 1_215, "het schema blijft de agenda")
+        // Overal hetzelfde: de uitbetaling, de gebeurtenis en het dagboek.
+        XCTAssertEqual(d.salaryPayoutCents(in: oct, plan: d.plan(for: oct)).map { $0.cents }, [150_000])
+        XCTAssertEqual(d.salaryPayouts(in: oct, plan: d.plan(for: oct)).map { $0.hours }, [nil], "eigen uren hebben geen uren uit de agenda")
+        XCTAssertEqual(d.dayEvents(in: oct).filter { $0.kind == .salary }.map { $0.bankAmount }, [1_500])
+        XCTAssertTrue(d.monthLedger(oct).allReconciles)
         d.editPlan(oct) { $0.hoursOverride = nil; $0.salaryOverride = 999 }
         XCTAssertEqual(d.salaryAmount(in: oct), 999, "een eigen salaris gaat voor")
+        XCTAssertEqual(d.salaryPayoutCents(in: oct, plan: d.plan(for: oct)).map { $0.cents }, [99_900])
+        XCTAssertEqual(d.dayEvents(in: oct).filter { $0.kind == .salary }.map { $0.bankAmount }, [999])
         XCTAssertEqual(d.dayEvents(in: oct).filter { $0.kind == .salary }.map { $0.detail }, [nil], "geen uren uit de agenda bij een eigen salaris")
+        XCTAssertTrue(d.monthLedger(oct).allReconciles)
         d.editPlan(oct) { $0.salaryOverride = nil }
         XCTAssertEqual(d.salaryAmount(in: oct), 1_215, "zonder overschrijving weer de agenda")
     }
@@ -397,6 +422,36 @@ final class WorkHoursTests: XCTestCase {
         var manual = d
         manual.work.hoursSource = .manual
         XCTAssertNil(manual.salaryPayoutParts(in: oct, plan: manual.plan(for: oct)).first?.hours)
+    }
+
+    // MARK: De volgende uitbetalingen
+
+    func testUpcomingPayoutDaysFollowTheScheduleAndTheStartDate() {
+        var d = withOctober()
+        XCTAssertEqual(d.upcomingPayoutDays(count: 3, after: at(2026, 10, 10, 12)), [day(2026, 10, 25), day(2026, 11, 25), day(2026, 12, 25)])
+        XCTAssertEqual(d.upcomingPayoutDays(after: at(2026, 10, 25, 12)), [day(2026, 11, 25), day(2026, 12, 25)], "vandaag is al gebeurd")
+        XCTAssertEqual(d.upcomingPayoutDays(count: 0, after: at(2026, 10, 10, 12)), [])
+        XCTAssertEqual(d.upcomingPayoutDays(count: -2, after: at(2026, 10, 10, 12)), [])
+        d.salary.setSchedule(.weeks, interval: 4, anchor: day(2026, 10, 23))
+        XCTAssertEqual(d.upcomingPayoutDays(count: 3, after: at(2026, 10, 24, 12)), [day(2026, 11, 20), day(2026, 12, 18), day(2027, 1, 15)])
+        d.setStart(day(2026, 12, 1))
+        XCTAssertEqual(d.upcomingPayoutDays(count: 1, after: at(2026, 10, 24, 12)), [day(2026, 12, 18)], "niet vóór de startdag")
+    }
+
+    func testTheAgendaReportOfAPayoutIsNilWhenTheMonthHasItsOwnSalaryOrHours() throws {
+        var d = withOctober()
+        let payout = day(2026, 10, 25)
+        XCTAssertEqual(d.agendaPayoutReport(on: payout, asOf: at(2026, 10, 20, 12))?.amountCents, 121_500)
+        XCTAssertEqual(d.agendaPayoutReport(on: payout, asOf: at(2026, 10, 20, 12)), d.workReport(forPayoutOn: payout, asOf: at(2026, 10, 20, 12)))
+        d.editPlan(oct) { $0.hoursOverride = 50 }
+        XCTAssertNil(d.agendaPayoutReport(on: payout), "eigen uren gaan voor")
+        XCTAssertNotNil(d.workReport(forPayoutOn: payout), "het rapport zelf bestaat wel")
+        d.editPlan(oct) { $0.hoursOverride = nil; $0.salaryOverride = 100 }
+        XCTAssertNil(d.agendaPayoutReport(on: payout), "een eigen salaris gaat voor")
+        d.editPlan(oct) { $0.salaryOverride = nil }
+        XCTAssertNotNil(d.agendaPayoutReport(on: payout))
+        d.work.hoursSource = .manual
+        XCTAssertNil(d.agendaPayoutReport(on: payout), "geen uren uit de agenda")
     }
 
     // MARK: Gemiddelde uit de agenda

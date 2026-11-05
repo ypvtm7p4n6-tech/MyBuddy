@@ -347,6 +347,29 @@ extension FinanceData {
         return built
     }
 
+    /// Komt de uitbetaling op `day` echt uit de agenda? Dan het rapport (uren, toeslagen, pauze, bedrag); nil als het salaris geen uurloon
+    /// uit de agenda is of als de maand van de uitbetaling een eigen salaris of eigen uren heeft (die gaan voor). Voor de uitleg bij de
+    /// volgende uitbetalingen op Salaris en Werkuren.
+    func agendaPayoutReport(on day: CalendarDay, asOf today: Date = Date()) -> WorkHoursReport? {
+        guard usesCalendarHours else { return nil }
+        let plan = plan(for: day.yearMonth)
+        guard plan.salaryOverride == nil, plan.hoursOverride == nil else { return nil }
+        return workReport(forPayoutOn: day, asOf: today)
+    }
+
+    /// De dagen van de eerstvolgende `count` uitbetalingen na de dag van `date` (strikt later, zoals `nextPayDate(after:)`), oplopend; nooit
+    /// vóór de startdag. Voor "de volgende twee uitbetalingen".
+    func upcomingPayoutDays(count: Int = 2, after date: Date = Date()) -> [CalendarDay] {
+        let calendar = YearMonth.calendar
+        var days: [CalendarDay] = []
+        var cursor = date
+        while days.count < min(max(count, 0), 60), let next = nextPayDate(after: cursor) {
+            days.append(CalendarDay(date: next, calendar: calendar))
+            cursor = next
+        }
+        return days
+    }
+
     /// De betaalde uren per week, gemiddeld over de laatste volle weken (maandag t/m zondag) vóór de week van `today` waarvan de agenda
     /// alles kent (vanaf het begin van wat is opgehaald), hoogstens `weeks` weken. Voor de knop "Gemiddelde uit je agenda invullen".
     /// Afgerond op 0,1 uur; nil zonder gelezen agenda of zonder één volle week.

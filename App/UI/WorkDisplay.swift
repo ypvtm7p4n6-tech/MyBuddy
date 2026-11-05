@@ -65,6 +65,20 @@ enum WorkText {
     static let addHolidayTitle = "Eigen feestdag toevoegen"
     static let fillAverageTitle = "Gemiddelde uit je agenda invullen"
     static let freezeTitle = "Eerdere maanden vastleggen"
+    static let upcomingTitle = "Uren van de volgende uitbetalingen"
+    static let previewTitle = "Voorbeeld"
+    static let rulesTitle = "Toeslagen"
+    static let breaksTitle = "Pauzes"
+    static let holidaysTitle = "Feestdagen"
+    static let managementTitle = "Beheer"
+    static let manualHoursTitle = "Uren per week invullen"
+    static let factorTitle = "Factor"
+    static let breakFromTitle = "Vanaf"
+    static let breakMinutesTitle = "Onbetaalde pauze"
+    /// De keuzes van het menu "Toeslag toevoegen".
+    static let addWeekdayTitle = "Weekdag"
+    static let addHolidayRuleTitle = "Feestdag"
+    static let addDateTitle = "Eigen datum"
 
     /// Voetnoot bij de keuze van de bron: ook het verleden volgt de agenda.
     static let sourceFooter = "Dit geldt ook voor eerdere maanden vanaf je startdatum. Maanden zonder diensten in je agenda krijgen geen salaris."
@@ -83,6 +97,10 @@ enum WorkText {
     static let formula = "Uurloon × uren uit je agenda, met toeslagen en pauzes"
     /// Als een periode niets uit de agenda geeft.
     static let nothingInCalendarNote = "Nog geen diensten in je agenda voor deze periode: MyBuddy rekent met je gemiddelde uren."
+    /// Bij de bron "agenda" terwijl het salaris een vast bedrag is: de agenda doet dan niets.
+    static let fixedSalaryNote = "Uren uit je agenda gelden alleen bij een uurloon. Stel je salaris in als uurloon om ze te gebruiken."
+    /// De bevestiging bij "Eerdere maanden vastleggen".
+    static let freezeMessage = "Het salaris van de maanden voor deze maand blijft zoals het nu is, ook als je agenda of je regels later veranderen."
 
     // MARK: Uren, perioden en bedragen
 
@@ -272,8 +290,15 @@ enum WorkText {
         return "Alleen bij een uurloon"
     }
 
-    /// De naam van een feestdag in de lijst (met Koninginnedag voor jaren vóór 2014 is het een vraag van de datum, niet van de lijst).
-    static func holidayTitle(_ kind: HolidayKind) -> String {
-        kind.title
+    /// De eerstvolgende feestdagen vanaf `day` (de aangezette soorten en eigen dagen): "De eerstvolgende feestdagen: Eerste Kerstdag
+    /// (25 december), Tweede Kerstdag (26 december) en Nieuwjaarsdag (1 januari)." nil als er geen enkele aanstaat.
+    static func nextHolidaysText(_ settings: HolidaySettings, from day: CalendarDay, count: Int = 3) -> String? {
+        let upcoming = (DutchHolidays.holidays(year: day.year, settings: settings) + DutchHolidays.holidays(year: day.year + 1, settings: settings))
+            .filter { $0.day >= day }
+            .prefix(max(count, 1))
+            .map { "\($0.name) (\(Fmt.longDayMonth($0.day)))" }
+        guard !upcoming.isEmpty else { return nil }
+        let list = upcoming.count == 1 ? upcoming[0] : upcoming.dropLast().joined(separator: ", ") + " en " + upcoming[upcoming.count - 1]
+        return "De eerstvolgende feestdagen: \(list)."
     }
 }

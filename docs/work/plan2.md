@@ -564,13 +564,13 @@ App/Navigation/NavigationModel.swift - G2V2 -
 App/Navigation/SearchIndex.swift - G2V2 -
 App/Navigation/SettingsScene.swift - - G3A
 App/UI/ - - -
-App/UI/DistributionText.swift V1 - -
+App/UI/DistributionText.swift V1 C -
 App/UI/PotMoveText.swift V1 - -
 App/UI/GoalPotsText.swift V1 - -
 App/UI/TransferPartsEditor.swift V1 - -
 App/UI/MoneyFigures.swift V1 - -
 App/UI/SavingsDisplay.swift V1 - -
-App/UI/Fields.swift V1 - -
+App/UI/Fields.swift V1 C -
 App/UI/WageText.swift - G2V2 -
 App/UI/WorkDisplay.swift - G2V2 -
 App/UI/ChartModels.swift - V3A -
@@ -607,6 +607,7 @@ App/Pages/Settings/SettingsDestination.swift - G2V2 G3A
 App/Pages/Settings/WorkHoursPage.swift - G2V2 G3A
 App/Pages/Settings/WorkHoursParts.swift - - G3A
 App/Pages/Settings/SettingsView.swift - - G3A
+App/Pages/SettingsView.swift - - G3A
 App/Pages/Settings/AboutPage.swift - - G3A
 App/Calendar/ - - G3A
 App/MyBuddyApp.swift - - G3A

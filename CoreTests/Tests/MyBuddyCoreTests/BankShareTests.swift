@@ -187,6 +187,15 @@ final class BankShareTests: XCTestCase {
         XCTAssertTrue(CloudSync.hasContent(f))
         // Het verdwijnen van de marktgegevens uit een bestand laat het bankdeel staan.
         XCTAssertEqual(CloudSync.withoutMarketData(d).bankShare, d.bankShare)
+        // Een loonwijziging (Loon per maand) is ook inhoud, en blijft staan als de marktgegevens verdwijnen.
+        var g = FinanceData(startMonth: oct2026)
+        g.setSalaryChange(SalaryChange(from: nov, hourlyRate: 16))
+        XCTAssertFalse(g.isEmptyStart)
+        XCTAssertTrue(CloudSync.hasContent(g))
+        XCTAssertEqual(CloudSync.withoutMarketData(g).salaryChanges, g.salaryChanges)
+        g.removeSalaryChange(from: nov)
+        XCTAssertTrue(g.isEmptyStart, "zonder wijziging is de start weer leeg")
+        XCTAssertFalse(CloudSync.hasContent(g))
     }
 
     func testTheLedgerCarriesTheBankShareAsAFigureOnly() {
@@ -208,7 +217,14 @@ final class BankShareTests: XCTestCase {
         XCTAssertEqual(holiday.contributionExtra, 25)
         XCTAssertEqual(d.transferSlices(for: holiday.id, in: oct2026).map { $0.day }.first, 10)
         for m in [oct2026, nov] { XCTAssertTrue(d.monthLedger(m).allReconciles) }
+        // Het uurloon gaat vanaf volgende maand met een euro omhoog (Loon per maand); de maanden ervoor houden hun loon.
+        XCTAssertEqual(d.salaryChanges, [SalaryChange(from: nov, hourlyRate: d.salary.hourlyRate + 1)])
+        XCTAssertEqual(d.salarySettings(in: oct2026).hourlyRate, d.salary.hourlyRate)
+        XCTAssertEqual(d.salarySettings(in: nov).hourlyRate, d.salary.hourlyRate + 1)
+        XCTAssertGreaterThan(d.salaryAmount(in: nov), d.salaryAmount(in: oct2026))
+        XCTAssertTrue(d.months.values.allSatisfy { $0.salaryOverride == nil }, "er is niets vastgelegd")
         // De gewone voorbeelddata blijft ongewijzigd.
+        XCTAssertTrue(FinanceData.sample(now: now).salaryChanges.isEmpty)
         XCTAssertEqual(FinanceData.sample(now: now).bankShare, BankShare())
         XCTAssertTrue(FinanceData.sample(now: now).pots.allSatisfy { $0.extraTransfers.isEmpty && $0.contributionExtra == 0 })
     }

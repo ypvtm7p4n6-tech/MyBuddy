@@ -203,15 +203,15 @@ struct WorkRules: Codable, Equatable, Sendable {
     init() {}
 
     /// Zondag 1,5 en feestdag 2,0, met vaste id's (twee nieuwe `WorkRules()` zijn gelijk).
-    static var defaultPayRules: [PayRule] {
-        [PayRule(id: StableID.uuid("payrule|sunday"), kind: .weekday(1), factor: 1.5),
-         PayRule(id: StableID.uuid("payrule|holiday"), kind: .holiday, factor: 2.0)]
-    }
+    static let defaultPayRules: [PayRule] = [
+        PayRule(id: StableID.uuid("payrule|sunday"), kind: .weekday(1), factor: 1.5),
+        PayRule(id: StableID.uuid("payrule|holiday"), kind: .holiday, factor: 2.0)
+    ]
 
     /// Vanaf 5,5 uur 30 minuten pauze.
-    static var defaultBreakRules: [BreakRule] {
-        [BreakRule(id: StableID.uuid("breakrule|5.5"), fromHours: 5.5, minutes: 30)]
-    }
+    static let defaultBreakRules: [BreakRule] = [
+        BreakRule(id: StableID.uuid("breakrule|5.5"), fromHours: 5.5, minutes: 30)
+    ]
 
     enum CodingKeys: String, CodingKey { case payRules, breakRules, combine, holidays }
 
