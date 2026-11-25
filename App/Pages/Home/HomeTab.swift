@@ -50,6 +50,8 @@ private struct HomeContent: View {
                 HomeHeroSection(selection: $selectedHero, present: present)
                 HomeShelfStack(present: present)
             }
+            // Zoals de voettekst van apple.com: elke pagina in kleine links, één tik vanaf Home.
+            HomeDirectory()
         }
     }
 }

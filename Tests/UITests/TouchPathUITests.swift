@@ -67,4 +67,14 @@ final class TouchPathUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Werkuren"].waitForExistence(timeout: 5), "de rij opent Werkuren")
         XCTAssertTrue(app.switches.matching(NSPredicate(format: "label BEGINSWITH 'Uren uit je agenda'")).firstMatch.exists)
     }
+
+    func testTheDirectoryAtTheBottomOfHomeOpensAPage() {
+        // Zoals de voettekst van apple.com: onderaan Home staat elke pagina als kleine link.
+        let link = app.buttons["Toekomstschatting"].firstMatch
+        var count = 0
+        while !(link.exists && link.isHittable) && count < 15 { app.swipeUp(); count += 1 }
+        XCTAssertTrue(link.waitForExistence(timeout: 5), "de gids onderaan Home heeft Toekomstschatting")
+        link.tap()
+        XCTAssertTrue(app.navigationBars["Toekomstschatting"].waitForExistence(timeout: 5), "de link opent Toekomstschatting")
+    }
 }
