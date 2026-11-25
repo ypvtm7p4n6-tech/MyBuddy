@@ -6,6 +6,8 @@ import SwiftUI
 /// stapels van twee tabs staan (B5: een pagina opent op de stapel waar je bent).
 struct TabStack<Root: View>: View {
     @Environment(Router.self) private var router
+    /// De ruimte waarin een tegel en de pagina die hij opent elkaar vinden voor de zoomovergang.
+    @Namespace private var zoom
     private let tab: AppTab
     private let root: Root
 
@@ -18,8 +20,77 @@ struct TabStack<Root: View>: View {
         NavigationStack(path: router.pathBinding(for: tab)) {
             root
                 .navigationDestination(for: Destination.self) { destination in
-                    DestinationView(destination: destination)
+                    ZoomablePage(destination: destination, zooms: router.zoomRequest == destination, namespace: zoom)
                 }
         }
+        .environment(\.zoomNamespace, zoom)
+    }
+}
+
+/// Een pagina op de stapel. Opende een tegel haar (`Router.zoomRequest`), dan groeit ze uit die tegel en krimpt ze er bij
+/// teruggaan weer in (iOS 18 en nieuwer, het systeem doet de overgang en het terugvegen); anders schuift ze in zoals gewoonlijk.
+/// De keuze wordt één keer gemaakt bij het openen, zodat de pagina nooit van overgang wisselt terwijl ze er staat.
+private struct ZoomablePage: View {
+    let destination: Destination
+    let namespace: Namespace.ID
+    @State private var zooms: Bool
+    @Environment(Router.self) private var router
+
+    init(destination: Destination, zooms: Bool, namespace: Namespace.ID) {
+        self.destination = destination
+        self.namespace = namespace
+        _zooms = State(initialValue: zooms)
+    }
+
+    var body: some View {
+        #if os(iOS)
+        if zooms {
+            DestinationView(destination: destination)
+                .navigationTransition(.zoom(sourceID: destination, in: namespace))
+                .onAppear { if router.zoomRequest == destination { router.zoomRequest = nil } }
+        } else {
+            DestinationView(destination: destination)
+        }
+        #else
+        DestinationView(destination: destination)
+        #endif
+    }
+}
+
+// MARK: - Zoombron
+
+private struct ZoomNamespaceKey: EnvironmentKey {
+    static let defaultValue: Namespace.ID? = nil
+}
+
+extension EnvironmentValues {
+    /// De zoomruimte van de stapel waar een view in staat (nil buiten een `TabStack`, zoals in previews en op de Mac).
+    var zoomNamespace: Namespace.ID? {
+        get { self[ZoomNamespaceKey.self] }
+        set { self[ZoomNamespaceKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Maakt deze view de bron van de zoomovergang naar `destination` (een tegel of poster).
+    func zoomSource(_ destination: Destination) -> some View {
+        modifier(ZoomSourceModifier(destination: destination))
+    }
+}
+
+private struct ZoomSourceModifier: ViewModifier {
+    let destination: Destination
+    @Environment(\.zoomNamespace) private var namespace
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        if let namespace {
+            content.matchedTransitionSource(id: destination, in: namespace)
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
     }
 }

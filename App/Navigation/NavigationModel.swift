@@ -13,15 +13,39 @@ import Foundation
 /// de pagina `Destination.settingsRoot`, op de Mac staat Instellingen in het `Settings`-venster.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
     case home, library, search
+    /// iPad en Mac: de onderdelen van de Bibliotheek als eigen items in de zijbalk (een `TabSection`, zoals de Bibliotheek in de
+    /// zijbalk van Apple Muziek en Apple TV). Op de iPhone staan ze niet in de tabbalk; daar open je ze via de Bibliotheek.
+    case flowItem = "sidebar-flow", potsItem = "sidebar-pots", portfolioItem = "sidebar-portfolio", goalsItem = "sidebar-goals"
+
+    /// De drie tabs van de tabbalk (iPhone) en de bovenste drie items van de zijbalk (iPad en Mac).
+    static var allCases: [AppTab] { [.home, .library, .search] }
+
+    /// De items van de sectie Bibliotheek in de zijbalk, in de volgorde van de Bibliotheek.
+    static let sidebarItems: [AppTab] = [.flowItem, .potsItem, .portfolioItem, .goalsItem]
 
     var id: String { rawValue }
 
-    /// Eén woord, zinshoofdletter (termenlijst).
+    /// De pagina die een zijbalkitem als wortel toont (nil bij de drie tabs).
+    var rootDestination: Destination? {
+        switch self {
+        case .home, .library, .search: return nil
+        case .flowItem: return .flow
+        case .potsItem: return .pots
+        case .portfolioItem: return .portfolio
+        case .goalsItem: return .goals
+        }
+    }
+
+    /// Eén woord, zinshoofdletter (termenlijst). Een zijbalkitem heet zoals zijn pagina (`PageCatalog`).
     var title: String {
         switch self {
         case .home: return "Home"
         case .library: return "Bibliotheek"
         case .search: return "Zoeken"
+        case .flowItem: return "Maandoverzicht"
+        case .potsItem: return "Spaarpotten"
+        case .portfolioItem: return "Beleggingen"
+        case .goalsItem: return "Doelen"
         }
     }
 
@@ -31,6 +55,10 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .home: return "house"
         case .library: return "books.vertical"
         case .search: return "magnifyingglass"
+        case .flowItem: return "chart.bar.xaxis"
+        case .potsItem: return "tray.full"
+        case .portfolioItem: return "chart.line.uptrend.xyaxis"
+        case .goalsItem: return "flag.checkered"
         }
     }
 }

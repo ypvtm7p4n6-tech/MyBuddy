@@ -181,18 +181,32 @@ private struct PressedStyle: ButtonStyle {
 struct DestinationLink<Inner: View>: View {
     let destination: Destination
     let showsCurrentMonth: Bool
+    /// Een tegel: de pagina zoomt uit het label (iOS), zoals in Apple TV en Apple Muziek. Een rij schuift gewoon in.
+    let zooms: Bool
     let label: (Bool) -> Inner
     @Environment(Router.self) private var router
     @Environment(AppStore.self) private var store
 
-    init(destination: Destination, showsCurrentMonth: Bool = false, @ViewBuilder label: @escaping (Bool) -> Inner) {
+    init(destination: Destination, showsCurrentMonth: Bool = false, zooms: Bool = false,
+         @ViewBuilder label: @escaping (Bool) -> Inner) {
         self.destination = destination
         self.showsCurrentMonth = showsCurrentMonth
+        self.zooms = zooms
         self.label = label
     }
 
     var body: some View {
-        if showsCurrentMonth {
+        if zooms {
+            Button {
+                if showsCurrentMonth { router.showCurrentMonth(store.now) }
+                if !destination.isTabRoot { router.zoomRequest = destination }
+                router.open(destination)
+            } label: {
+                label(true)
+                    .zoomSource(destination)
+            }
+            .accessibilityAddTraits(.isLink)
+        } else if showsCurrentMonth {
             Button {
                 router.showCurrentMonth(store.now)
                 router.open(destination)

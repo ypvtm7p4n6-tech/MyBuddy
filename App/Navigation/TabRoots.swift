@@ -24,6 +24,13 @@ struct TabRoot: View {
             TabStack(.search) {
                 SearchTab()
             }
+        case .flowItem, .potsItem, .portfolioItem, .goalsItem:
+            // Een zijbalkitem (iPad en Mac): de pagina zelf is de wortel van een eigen stapel.
+            TabStack(tab) {
+                if let destination = tab.rootDestination {
+                    DestinationView(destination: destination)
+                }
+            }
         }
     }
 }

@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// De schil van de app: een native tabbalk met een eigen navigatiepad per tab (`Router.paths`).
-/// Drie tabs op iPhone, iPad en Mac: Home, Bibliotheek en Zoeken (de zoektab staat los). iPhone: tabbalk onderin (op iOS 26 als
+/// Drie tabs op iPhone, iPad en Mac: Home, Bibliotheek en Zoeken (de zoektab staat los); op iPad en Mac staat in de zijbalk
+/// daaronder de sectie Bibliotheek met Maandoverzicht, Spaarpotten, Beleggingen en Doelen (`AppTab.sidebarItems`). iPhone: tabbalk onderin (op iOS 26 als
 /// glas boven de inhoud, krimpt bij omlaag scrollen). iPad en Mac: de tabbalk wordt een zijbalk met dezelfde drie items.
 /// Instellingen is geen tab: de profielknop op de tabwortels opent de pagina Instellingen (iPhone en iPad), op de Mac staat
 /// Instellingen in het `Settings`-venster (zie `SettingsScene`). De titels en symbolen van de tabs zijn gelijk aan
@@ -88,16 +89,30 @@ struct RootView: View {
             Tab(value: AppTab.search, role: .search) {
                 TabRoot(.search)
             }
+            // iPad en Mac: de onderdelen van de Bibliotheek als sectie in de zijbalk, zoals in Apple Muziek en Apple TV. De
+            // iPhone toont ze niet in de tabbalk (daar is de Bibliotheek zelf de ingang).
+            TabSection(LocalizedStringKey(AppTab.library.title)) {
+                ForEach(AppTab.sidebarItems) { item in
+                    Tab(LocalizedStringKey(item.title), systemImage: item.symbol, value: item) {
+                        TabRoot(item)
+                    }
+                    .defaultVisibility(.hidden, for: .tabBar)
+                }
+            }
         }
         .tabViewStyle(.sidebarAdaptable)
     }
 
-    /// Op iOS 26 schuift de tabbalk weg als je omlaag scrolt (op de Mac niet: die waarde bestaat daar niet). Eerdere versies laten alles zoals het is.
+    /// Op iOS 26 krijgt de tabbalk de balk "Nog te verdelen" erboven (`MonthAccessory`) en schuift hij weg als je omlaag scrolt (op de Mac niet: die waarde bestaat daar niet). Eerdere versies laten alles zoals het is.
     @ViewBuilder
     private func withMinimizingTabBar<Content: View>(_ content: Content) -> some View {
         #if os(iOS)
         if #available(iOS 26.0, macOS 26.0, *) {
-            content.tabBarMinimizeBehavior(.onScrollDown)
+            // De balk boven de tabbalk, zoals de mini-speler van Apple Muziek: het systeem tekent hem en past hem aan bij een
+            // nieuwe iOS-versie; bij scrollen schuift hij naast de gekrompen tabbalk.
+            content
+                .tabBarMinimizeBehavior(.onScrollDown)
+                .tabViewBottomAccessory { MonthAccessory() }
         } else {
             content
         }

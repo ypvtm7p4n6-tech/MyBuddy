@@ -197,7 +197,7 @@ struct PosterCard: View {
 
     var body: some View {
         if let destination {
-            DestinationLink(destination: destination, showsCurrentMonth: showsCurrentMonth) { _ in
+            DestinationLink(destination: destination, showsCurrentMonth: showsCurrentMonth, zooms: true) { _ in
                 tile
             }
             .buttonStyle(TilePressStyle())
@@ -281,7 +281,7 @@ struct ShelfCard<Content: View>: View {
 
     var body: some View {
         if let destination {
-            DestinationLink(destination: destination, showsCurrentMonth: showsCurrentMonth) { _ in
+            DestinationLink(destination: destination, showsCurrentMonth: showsCurrentMonth, zooms: true) { _ in
                 surface
             }
             .buttonStyle(TilePressStyle())
@@ -345,13 +345,15 @@ struct BrowseTile: View {
     var body: some View {
         if opensViaRouter {
             Button {
+                if !destination.isTabRoot { router.zoomRequest = destination }
                 router.open(destination)
             } label: {
                 tile
+                    .zoomSource(destination)
             }
             .buttonStyle(TilePressStyle())
         } else {
-            DestinationLink(destination: destination, showsCurrentMonth: showsCurrentMonth) { _ in
+            DestinationLink(destination: destination, showsCurrentMonth: showsCurrentMonth, zooms: true) { _ in
                 tile
             }
             .buttonStyle(TilePressStyle())

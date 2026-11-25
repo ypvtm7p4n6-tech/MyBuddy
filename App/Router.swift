@@ -8,7 +8,8 @@ import Observation
 final class Router {
     var tab: AppTab = .home
     /// Het pad van elke tab. Van tab wisselen wist niets; een tik op de actieve tab brengt je terug naar de wortel.
-    var paths: [AppTab: [Destination]] = [.home: [], .library: [], .search: []]
+    var paths: [AppTab: [Destination]] = [.home: [], .library: [], .search: [],
+                                         .flowItem: [], .potsItem: [], .portfolioItem: [], .goalsItem: []]
     /// De pagina waarvan de blokvolgorde wordt aangepast (laat het blad "Volgorde aanpassen" zien).
     var orderPage: BlockPage?
 
@@ -21,6 +22,9 @@ final class Router {
     var searchRequest = 0
     /// macOS: de wortel opent het `Settings`-venster op deze pane en het venster wist het verzoek weer.
     var settingsRequest: SettingsPage?
+    /// De pagina die een tegel net opende (iOS): die pagina zoomt uit de tegel, zoals in Apple TV en Apple Muziek (`TabStack`).
+    /// Een rij in een lijst opent zonder zoom. Wordt gewist zodra de pagina er staat.
+    @ObservationIgnored var zoomRequest: Destination?
 
     // MARK: Paden
 
