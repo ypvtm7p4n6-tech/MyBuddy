@@ -23,6 +23,7 @@ targets:
     scheme:
       testTargets:
         - MyBuddyTests
+        - MyBuddyUITests
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: nl.mybuddy.app
@@ -56,3 +57,15 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: nl.mybuddy.tests
         GENERATE_INFOPLIST_FILE: YES
+  MyBuddyUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/UITests
+    dependencies:
+      - target: MyBuddy
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.mybuddy.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: MyBuddy
