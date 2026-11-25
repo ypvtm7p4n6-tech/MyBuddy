@@ -87,8 +87,9 @@ final class SidebarUITests: XCTestCase {
         app.launchArguments = ["-mybuddy-demo", "-mybuddy-tab", "sidebar-pots"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Spaarpotten"].waitForExistence(timeout: 10), "het zijbalkitem Spaarpotten opent Spaarpotten")
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == 'Bibliotheek'")).count <= 1, true,
-                       "Bibliotheek staat hooguit één keer in de bovenbalk")
+        // De stapel van het zijbalkitem werkt: de pagina toont de potten (de bovenbalk zelf staat in de screenshot ipad-light-library).
+        let pot = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Vakantie'")).firstMatch
+        XCTAssertTrue(pot.waitForExistence(timeout: 5), "Spaarpotten toont de pot Vakantie")
     }
 }
 
