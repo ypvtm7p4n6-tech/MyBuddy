@@ -46,11 +46,12 @@ final class TouchPathUITests: XCTestCase {
     }
 
     func testABrowseTileInSearchOpensItsPage() {
-        let search = app.buttons.matching(NSPredicate(format: "label IN %@", ["Zoeken", "Search"])).firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: 5))
-        search.tap()
+        // De zoektab heeft op iOS 26 een systeemlabel; de test gaat over de bladertegel, dus de app start op de zoektab.
+        app.terminate()
+        app.launchArguments = ["-mybuddy-demo", "-mybuddy-tab", "search"]
+        app.launch()
         let tile = app.buttons["Inkomen"].firstMatch
-        XCTAssertTrue(tile.waitForExistence(timeout: 5), "Blader toont de tegel Inkomen")
+        XCTAssertTrue(tile.waitForExistence(timeout: 10), "Blader toont de tegel Inkomen")
         tile.tap()
         XCTAssertTrue(app.navigationBars["Inkomen"].waitForExistence(timeout: 5), "de tegel opent Inkomen")
     }
