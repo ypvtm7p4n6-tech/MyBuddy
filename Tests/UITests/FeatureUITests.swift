@@ -42,9 +42,10 @@ final class FeatureUITests: XCTestCase {
         XCTAssertTrue(save.isEnabled, "een ander uurloon kan bewaard worden")
         save.tap()
         XCTAssertTrue(app.navigationBars["Salaris"].waitForExistence(timeout: 5), "Bewaar gaat terug naar Salaris")
+        // De kaart Loon per maand staat boven de knop: de rij bestaat (ook buiten beeld) zodra de wijziging bewaard is.
         let row = element(containing: "31,00 per uur")
-        reveal(row)
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "de nieuwe wijziging staat bij Loon per maand")
+        XCTAssertTrue(row.waitForExistence(timeout: 5),
+                      "de nieuwe wijziging staat bij Loon per maand; gevonden: \(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Vanaf'")).allElementsBoundByIndex.map(\.label))")
     }
 
     func testCalendarHoursShowOnSalaryAndIncome() {
@@ -66,7 +67,9 @@ final class FeatureUITests: XCTestCase {
         launch(["-mybuddy-open", "wagechange"])
         let bar = app.navigationBars["Loon wijzigen"]
         XCTAssertTrue(bar.waitForExistence(timeout: 10))
-        let title = bar.buttons["Loon wijzigen"].exists ? bar.buttons["Loon wijzigen"] : bar.staticTexts["Loon wijzigen"]
+        // Met een titelmenu is de titel een knop (met een pijltje); het label begint met de titel.
+        let title = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Loon wijzigen' AND NOT (label CONTAINS 'vanaf')")).firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "de titel is een menu; de balk: \(bar.debugDescription)")
         title.tap()
         let income = app.buttons["Inkomen"]
         XCTAssertTrue(income.waitForExistence(timeout: 5), "het titelmenu toont Inkomen als niveau erboven")
