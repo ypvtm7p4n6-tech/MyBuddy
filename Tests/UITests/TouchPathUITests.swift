@@ -77,4 +77,17 @@ final class TouchPathUITests: XCTestCase {
         link.tap()
         XCTAssertTrue(app.navigationBars["Toekomstschatting"].waitForExistence(timeout: 5), "de link opent Toekomstschatting")
     }
+
+    func testTheChapterRowOnTopOfTheLibraryOpensAPage() {
+        // Zoals apple.com/iphone: bovenaan de Bibliotheek een rij pictogrammen met elke pagina.
+        app.terminate()
+        app.launchArguments = ["-mybuddy-demo", "-mybuddy-tab", "library"]
+        app.launch()
+        let row = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Alle pagina's")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "de Bibliotheek begint met de rij met alle pagina's")
+        let doelen = row.buttons["Doelen"].firstMatch
+        XCTAssertTrue(doelen.waitForExistence(timeout: 5))
+        doelen.tap()
+        XCTAssertTrue(app.navigationBars["Doelen"].waitForExistence(timeout: 5), "het pictogram opent Doelen")
+    }
 }

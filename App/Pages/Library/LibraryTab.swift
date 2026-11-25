@@ -33,6 +33,8 @@ private struct LibraryList: View {
         let figures = LibraryFigures(data: store.data, now: store.now, today: store.today,
                                      goalDraftJSON: storedDraft, bufferSetupJSON: storedBuffer)
         ListScaffold(title: "Bibliotheek", large: true) {
+            // Zoals apple.com/iphone: bovenaan elke pagina als pictogram in één rij.
+            Section { LibraryChapterNav() }
             ForEach(LibrarySection.allCases) { section in
                 LibrarySectionRows(section: section, figures: figures)
             }
