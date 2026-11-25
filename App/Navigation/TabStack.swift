@@ -20,7 +20,7 @@ struct TabStack<Root: View>: View {
         NavigationStack(path: router.pathBinding(for: tab)) {
             root
                 .navigationDestination(for: Destination.self) { destination in
-                    ZoomablePage(destination: destination, zooms: router.zoomRequest == destination, namespace: zoom)
+                    ZoomablePage(destination: destination, tab: tab, zooms: router.zoomRequest == destination, namespace: zoom)
                 }
         }
         .environment(\.zoomNamespace, zoom)
@@ -32,12 +32,15 @@ struct TabStack<Root: View>: View {
 /// De keuze wordt één keer gemaakt bij het openen, zodat de pagina nooit van overgang wisselt terwijl ze er staat.
 private struct ZoomablePage: View {
     let destination: Destination
+    let tab: AppTab
     let namespace: Namespace.ID
     @State private var zooms: Bool
     @Environment(Router.self) private var router
+    @Environment(AppStore.self) private var store
 
-    init(destination: Destination, zooms: Bool, namespace: Namespace.ID) {
+    init(destination: Destination, tab: AppTab, zooms: Bool, namespace: Namespace.ID) {
         self.destination = destination
+        self.tab = tab
         self.namespace = namespace
         _zooms = State(initialValue: zooms)
     }
@@ -45,15 +48,35 @@ private struct ZoomablePage: View {
     var body: some View {
         #if os(iOS)
         if zooms {
-            DestinationView(destination: destination)
+            page
                 .navigationTransition(.zoom(sourceID: destination, in: namespace))
                 .onAppear { if router.zoomRequest == destination { router.zoomRequest = nil } }
         } else {
-            DestinationView(destination: destination)
+            page
         }
         #else
-        DestinationView(destination: destination)
+        page
         #endif
+    }
+
+    /// De pagina met het kruimelpad onder haar titel: tik op de titel en kies een niveau erboven (zoals op apple.com).
+    private var page: some View {
+        DestinationView(destination: destination)
+            .toolbarTitleMenu {
+                ForEach(crumbs) { crumb in
+                    Button {
+                        router.paths[tab] = Array((router.paths[tab] ?? []).prefix(crumb.depth))
+                    } label: {
+                        Label(crumb.title, systemImage: crumb.symbol)
+                    }
+                }
+            }
+    }
+
+    private var crumbs: [Breadcrumb] {
+        let path = router.paths[tab] ?? []
+        guard let index = path.lastIndex(of: destination) else { return [] }
+        return Breadcrumbs.crumbs(above: index, in: path, tab: tab, data: store.data)
     }
 }
 
