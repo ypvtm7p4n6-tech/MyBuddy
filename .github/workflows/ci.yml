@@ -80,6 +80,20 @@ jobs:
             | grep -E "ENABLE_RESOURCE_ACCESS_CALENDARS = YES" \
             || { echo "::error::ENABLE_RESOURCE_ACCESS_CALENDARS staat niet aan"; exit 1; }
 
+  ui-macos:
+    name: UI-tests macOS
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen
+      - name: De Mac-app doorklikken (zijbalk, Instellingen, Werkuren)
+        run: |
+          set -o pipefail
+          xcodebuild test -project MyBuddy.xcodeproj -scheme MyBuddyMacUITests -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= 2>&1 \
+            | grep -E "error:|Test Case|Executed|\*\* " | tail -n 60
+
   screenshots:
     if: github.event_name == 'workflow_dispatch'
     name: Screenshots
