@@ -194,7 +194,7 @@ private struct HomeDayCard: View {
         var parts: [String] = [DayText.weekdayShort(day.date)]
         if let status = CashflowText.status(of: day) { parts.append(status) }
         for event in day.events.prefix(HomeDayCard.maxEvents) {
-            parts.append(event.title + " " + DayEventStyle(event).amountText)
+            parts.append(event.title + " " + DayEventStyle(event).amountText + (event.detail.map { ", " + $0 } ?? ""))
         }
         if day.events.count > HomeDayCard.maxEvents { parts.append(moreText) }
         if let balance = day.bankBalance { parts.append("saldo aan het eind van de dag " + Fmt.euro(balance)) }
@@ -209,11 +209,20 @@ private struct HomeDayEventLine: View {
     var body: some View {
         let style = DayEventStyle(event)
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(event.title)
-                .font(.subheadline)
-                .foregroundStyle(.primary)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(event.title)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                // Bij een salaris uit je agenda: "uit agenda: 38,5 uur". VoiceOver leest het mee.
+                if let detail = event.detail {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
+                }
+            }
             Spacer(minLength: 4)
             Text(style.amountText)
                 .font(.subheadline.weight(.semibold))

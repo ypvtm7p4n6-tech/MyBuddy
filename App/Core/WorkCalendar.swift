@@ -62,6 +62,63 @@ struct CalendarFetch: Equatable, Sendable {
 enum WorkCalendarRules {
     /// Een afspraak langer dan dit (in uren) telt niet als dienst.
     static let maxShiftHours = 16
+    /// Een hele-dag-afspraak die meetelt begint om dit uur (lokale tijd); zo valt de dienst op die dag en nooit over middernacht.
+    static let allDayStartHour = 9
+
+    /// Maakt van de afspraken zoals de agenda ze geeft de diensten van een ophaalronde: geannuleerde en afgewezen afspraken vallen weg,
+    /// hele-dag-afspraken alleen als `allDayShiftHours` is ingevuld (dan elke dag van de afspraak een dienst van zoveel uur vanaf
+    /// `allDayStartHour`), afspraken langer dan `maxShiftHours` vallen weg, en overlappende diensten worden samengevoegd. Hier, en niet in
+    /// de adapter, zodat de regels zonder EventKit getest worden (`WorkCalendarCollectTests`).
+    static func collect(_ events: [CalendarEventSample], matched: [CalendarInfo], allDayShiftHours: Double?,
+                        calendar: Calendar = YearMonth.calendar) -> CalendarFetch {
+        var fetch = CalendarFetch(matched: matched)
+        var shifts: [WorkShift] = []
+        for event in events {
+            if event.isCanceled { fetch.skippedCanceled += 1; continue }
+            if event.isDeclined { fetch.skippedDeclined += 1; continue }
+            if event.isAllDay {
+                guard let hours = allDayShiftHours, hours.isFinite, hours > 0 else { fetch.skippedAllDay += 1; continue }
+                let minutes = Int((min(hours, Double(maxShiftHours)) * 60).rounded())
+                var day = calendar.startOfDay(for: event.start)
+                // Een hele-dag-afspraak eindigt om middernacht na de laatste dag; hooguit 62 dagen (een vakantie is geen dienst).
+                let end = max(event.end, day.addingTimeInterval(1))
+                var count = 0
+                while day < end && count < 62 {
+                    if let begin = calendar.date(bySettingHour: allDayStartHour, minute: 0, second: 0, of: day),
+                       let shift = WorkShift(start: begin, end: begin.addingTimeInterval(Double(minutes) * 60)) {
+                        shifts.append(shift)
+                    }
+                    guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                    day = next
+                    count += 1
+                }
+                continue
+            }
+            guard let shift = WorkShift(start: event.start, end: event.end) else { continue }
+            if shift.durationMinutes > maxShiftHours * 60 { fetch.skippedTooLong += 1; continue }
+            shifts.append(shift)
+        }
+        fetch.shifts = WorkShift.normalized(shifts)
+        return fetch
+    }
+}
+
+/// Eén afspraak zoals de adapter hem doorgeeft: alleen begin, einde en drie kenmerken. Nooit een titel, notitie, plaats of deelnemer.
+struct CalendarEventSample: Equatable, Sendable {
+    var start: Date
+    var end: Date
+    var isAllDay = false
+    var isCanceled = false
+    /// Jij bent uitgenodigd en hebt de afspraak afgewezen.
+    var isDeclined = false
+
+    init(start: Date, end: Date, isAllDay: Bool = false, isCanceled: Bool = false, isDeclined: Bool = false) {
+        self.start = start
+        self.end = end
+        self.isAllDay = isAllDay
+        self.isCanceled = isCanceled
+        self.isDeclined = isDeclined
+    }
 }
 
 /// De agenda zoals de rest van de app hem ziet. Een nagemaakte versie in de tests; `EventKitWorkCalendar` in de app.

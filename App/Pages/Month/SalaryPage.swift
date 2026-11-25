@@ -1,18 +1,26 @@
 import SwiftUI
 
-// Het salaris instellen: het standaard salaris (vast of uurloon) en wanneer je het krijgt (het schema). Een rekenpagina met
-// kaarten: de invoer is een formulier en geen lijst met rijen. Een wijziging geldt vanaf de lopende maand; eerdere maanden
-// blijven zoals ze waren (`SalaryScheduleEdit`, App/UI/SavingsDisplay.swift).
+// Het salaris instellen: het standaard salaris (vast of uurloon), het loon per maand, de uren van de volgende uitbetalingen (bij uren
+// uit je agenda) en wanneer je het krijgt (het schema). Een rekenpagina met kaarten: de invoer is een formulier en geen lijst met
+// rijen. Het schema en de soort gelden vanaf de lopende maand en leggen het verleden vast (`SalaryScheduleEdit`); een nieuw bedrag
+// (uurloon, vast bedrag, uren per week) gaat via `FinanceData.setWage(current:...)`: is er al salaris in het verleden, dan wordt het
+// een wijziging vanaf deze maand (docs/work/plan2.md par. 2.6 en 4.6).
 
 struct SalaryPage: View {
     @Environment(AppStore.self) private var store
+    @Environment(Router.self) private var router
+    @Environment(WorkCalendarController.self) private var workCalendar: WorkCalendarController?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let d = store.data
         PageScaffold(title: "Salaris") {
             VStack(spacing: Theme.pageSpacing) {
-                standardCard(d.salary)
+                standardCard(d.salarySettings(in: store.now), hasChanges: !d.salaryChanges.isEmpty)
+                WageHistoryCard()
+                if d.usesCalendarHours {
+                    SalaryHoursCard()
+                }
                 scheduleCard(d, today: store.today)
             }
             .frame(maxWidth: Theme.readableWidth)
@@ -63,6 +71,41 @@ struct SalaryPage: View {
                 })
     }
 
+    /// Het loon van deze maand: lezen uit `salarySettings(in:)`, schrijven met `setWage` (een wijziging vanaf deze maand als er al
+    /// salaris in het verleden is, anders het loon zelf).
+    private func wage(_ keyPath: KeyPath<SalarySettings, Double>,
+                      write: @escaping (inout FinanceData, YearMonth, Double) -> Void) -> Binding<Double> {
+        Binding(get: { store.data.salarySettings(in: store.now)[keyPath: keyPath] },
+                set: { value in
+                    let current = store.now
+                    store.mutate { write(&$0, current, value) }
+                })
+    }
+
+    private var hourlyRateBinding: Binding<Double> {
+        wage(\.hourlyRate) { data, current, value in data.setWage(current: current, hourlyRate: value) }
+    }
+
+    private var fixedBinding: Binding<Double> {
+        wage(\.fixedMonthly) { data, current, value in data.setWage(current: current, fixedMonthly: value) }
+    }
+
+    private var hoursBinding: Binding<Double> {
+        wage(\.hoursPerWeek) { data, current, value in data.setWage(current: current, hoursPerWeek: value) }
+    }
+
+    /// Kiest waar de uren vandaan komen. "Uren uit je agenda" vraagt zo nodig toegang en haalt de diensten meteen op.
+    private func chooseHoursSource(_ source: HoursSource) {
+        withAnimation(reduceMotion ? nil : Theme.motion) {
+            store.mutate { $0.work.hoursSource = source }
+        }
+        guard source == .calendar, let workCalendar else { return }
+        Task {
+            if workCalendar.access == .notDetermined { await workCalendar.requestAccess() }
+            await workCalendar.refresh(into: store, force: true)
+        }
+    }
+
     /// Schakelt het schema om (zie `SalaryScheduleEdit.change`).
     private func changeSchedule(to schedule: SalarySchedule) {
         let today = store.today
@@ -83,7 +126,7 @@ struct SalaryPage: View {
     }
 
     @ViewBuilder
-    private func standardCard(_ s: SalarySettings) -> some View {
+    private func standardCard(_ s: SalarySettings, hasChanges: Bool) -> some View {
         Card(title: "Standaard salaris", symbol: "eurosign.circle", domain: .money,
              subtitle: "Netto, zoals het op je rekening komt") {
             Picker("Soort", selection: salary(\.mode)) {
@@ -92,6 +135,9 @@ struct SalaryPage: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             amountFields(s)
+            if hasChanges {
+                MonthExplanation(text: WageText.currentMonthNote)
+            }
             averageFigures(s)
         }
     }
@@ -100,14 +146,38 @@ struct SalaryPage: View {
     private func amountFields(_ s: SalarySettings) -> some View {
         switch s.mode {
         case .fixed:
-            NumberRow(title: s.isMonthly ? "Per maand" : "Per uitbetaling", value: salary(\.fixedMonthly))
+            NumberRow(title: s.isMonthly ? "Per maand" : "Per uitbetaling", value: fixedBinding)
             if !s.isMonthly {
                 MonthExplanation(text: "Vul in wat er bij elke uitbetaling op je rekening komt, niet wat je per maand krijgt.")
             }
         case .hourly:
-            NumberRow(title: "Uurloon", value: salary(\.hourlyRate))
-            NumberRow(title: "Uren per week", value: salary(\.hoursPerWeek), unit: .plain("uur"))
-            MonthExplanation(text: hourlyFormula(s))
+            NumberRow(title: "Uurloon", value: hourlyRateBinding)
+            hoursSourceChoices
+            if store.data.work.hoursSource == .calendar {
+                NumberRow(title: WorkText.averageHoursTitle, value: hoursBinding, unit: .plain("uur"))
+                MonthExplanation(text: WorkText.averageHoursNote)
+                NavigationRow(title: WorkText.pageTitle, symbol: WorkText.symbol, domain: .settings,
+                              subtitle: WorkText.settingsSummary(store.data) + ", toeslagen en pauzes",
+                              destination: .settings(.workHours))
+                MonthExplanation(text: WorkText.formula)
+            } else {
+                NumberRow(title: "Uren per week", value: hoursBinding, unit: .plain("uur"))
+                MonthExplanation(text: hourlyFormula(s))
+            }
+        }
+    }
+
+    /// Waar de uren van een uurloon vandaan komen (`work.hoursSource`). Geldt ook voor het verleden vanaf je startdatum.
+    private var hoursSourceChoices: some View {
+        let source = store.data.work.hoursSource
+        return VStack(alignment: .leading, spacing: 8) {
+            ChoiceRow(title: WorkText.manualHoursTitle, detail: "Elke week hetzelfde aantal uren.",
+                      isSelected: source == .manual) { chooseHoursSource(.manual) }
+            ChoiceRow(title: WorkText.sourceTitle, detail: "Uit je agenda \u{201C}\(store.data.work.calendarTitle)\u{201D}, met toeslagen en pauzes.",
+                      isSelected: source == .calendar) { chooseHoursSource(.calendar) }
+            if source == .calendar {
+                MonthExplanation(text: WorkText.sourceFooter)
+            }
         }
     }
 

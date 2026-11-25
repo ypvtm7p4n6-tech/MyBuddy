@@ -10,6 +10,8 @@ struct RootView: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
     @Environment(\.scenePhase) private var scenePhase
+    /// De agenda voor de uren van je salaris (nil in previews zonder agenda).
+    @Environment(WorkCalendarController.self) private var workCalendar: WorkCalendarController?
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
     #endif
@@ -19,13 +21,24 @@ struct RootView: View {
         tabs
             .sheet(item: $router.orderPage) { page in BlockOrderSheet(page: page) }
             .task { await store.refreshPrices() }
+            // De uren uit je agenda: toestemming lezen (zonder te vragen) en zo nodig de diensten ophalen.
+            .task { await refreshWorkCalendar() }
             // Zolang de app open staat, gaat de klok bij: een nieuwe dag of een betaaldag verandert de "nu"-saldi.
             .task(id: scenePhase) { await keepClockFresh() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     store.refreshClock()
                     Task { await store.refreshPrices() }
+                    // Terug uit Instellingen van het systeem kan de toegang veranderd zijn; een nieuwe dag vraagt nieuwe diensten.
+                    Task { await refreshWorkCalendar() }
                 }
+            }
+            // Verandert er iets in de agenda, dan worden de diensten kort daarna opnieuw gelezen (een reeks wijzigingen telt één keer).
+            .task(id: workCalendar?.changeCount ?? 0) {
+                guard (workCalendar?.changeCount ?? 0) > 0, store.data.usesCalendarHours else { return }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                await workCalendar?.refresh(into: store, force: true)
             }
             // Begint er een nieuwe maand terwijl de app openstaat, dan schuiven de maandpagina's mee, maar alleen
             // als je niet zelf naar een andere maand was gebladerd.
@@ -92,6 +105,14 @@ struct RootView: View {
         // `.onScrollDown` bestaat alleen op iOS en iPadOS.
         content
         #endif
+    }
+
+    // MARK: Agenda
+
+    private func refreshWorkCalendar() async {
+        guard let workCalendar else { return }
+        await workCalendar.prepare()
+        await workCalendar.refresh(into: store)
     }
 
     // MARK: Klok

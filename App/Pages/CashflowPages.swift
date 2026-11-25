@@ -70,6 +70,8 @@ struct DayEventRow: View {
         var parts = [DayEventStyle(event).kindText]
         if showsDate { parts.append(DayText.short(event.date)) }
         if event.isPlanned { parts.append("gepland") }
+        // Bij een salaris uit je agenda: "uit agenda: 38,5 uur".
+        if let detail = event.detail { parts.append(detail) }
         return parts.joined(separator: " · ")
     }
 

@@ -8,6 +8,8 @@ struct MyBuddyApp: App {
     /// De sessie waarin nu gewerkt wordt (store, router, synchronisatie): de menubalk en het Instellingen-venster van de Mac
     /// lezen die. `SignedInRoot` en de voorbeeldsessie registreren zich hierin.
     @State private var session = ActiveSession()
+    /// De agenda voor de uren van je salaris: één voor de hele app, ook in het Instellingen-venster van de Mac.
+    @State private var workCalendar: WorkCalendarController
     #if DEBUG
     @State private var demo: DemoSession? = nil
     #endif
@@ -16,7 +18,12 @@ struct MyBuddyApp: App {
         #if DEBUG
         if DebugLaunch.isDemo {
             _demo = State<DemoSession?>(initialValue: DemoSession())
+            _workCalendar = State(initialValue: WorkCalendarController(source: DemoWorkCalendar()))
+        } else {
+            _workCalendar = State(initialValue: WorkCalendarController())
         }
+        #else
+        _workCalendar = State(initialValue: WorkCalendarController())
         #endif
     }
 
@@ -31,7 +38,7 @@ struct MyBuddyApp: App {
         .commands { AppCommands(session: session) }
 
         // Instellingen is op de Mac een eigen venster (Cmd+komma), geen tab.
-        SettingsScene(session: session, auth: auth, cloud: cloud)
+        SettingsScene(session: session, auth: auth, cloud: cloud, workCalendar: workCalendar)
         #else
         WindowGroup {
             windowContent
@@ -43,6 +50,7 @@ struct MyBuddyApp: App {
     private var windowContent: some View {
         content
             .environment(session)
+            .environment(workCalendar)
             .tint(Theme.accent)
             #if os(macOS)
             .frame(minWidth: 640, minHeight: 640)

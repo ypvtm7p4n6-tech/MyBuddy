@@ -35,6 +35,7 @@ struct SettingsView: View {
     private var calculationSection: some View {
         Section {
             SettingsLinkRow(page: .calculations, subtitle: calculationsSummary)
+            SettingsLinkRow(page: .workHours, subtitle: WorkText.settingsSummary(store.data))
             SettingsLinkRow(page: .prices, subtitle: pricesSummary)
         }
     }

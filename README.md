@@ -20,7 +20,7 @@ Een persoonlijke financiën-app voor **iPhone, iPad en Mac**, in de stijl van **
 - **Hulpmiddelen**: de vier rekenhulpen (Noodbuffer, Versnellers, Toekomstschatting, Aankoopcheck) met een regel uitleg. Bereikbaar via de plank Hulpmiddelen op Home en via Zoeken.
 - **Inkomen, Uitgaven, Verdelen, Bankrekening, Dag voor dag**: de pagina's van de maand. Vanaf Home, de Bibliotheek en Zoeken openen ze op de huidige maand; binnen de pagina blader je met de maandbalk.
 - **Spaarpot, belegging en doel zijn albumpagina's**: bovenaan een grote kop met een gekleurde tegel, de naam, het kerngetal, de voortgang en knoppen (bijvoorbeeld Storten, Opnemen, Bewerken), daaronder de lijst met boekingen, waarde-updates of onderdelen als "tracklijst", met swipe-acties en een contextmenu. Grafieken en rekenregels zijn ongewijzigd.
-- **Instellingen**: Account (eerst en los), Rekenen, Koersen, Gegevens (back-up, import, export), Indeling en Over MyBuddy.
+- **Instellingen**: Account (eerst en los), Rekenen, Werkuren, Koersen, Gegevens (back-up, import, export, startdatum), Indeling en Over MyBuddy.
 
 **Een pagina opent op de stapel waar je bent.** Een link wisselt niet van tab; een pagina mag op twee stapels staan, en nooit twee keer in hetzelfde pad. Tik je op de tab waar je al zit, dan ga je terug naar de wortel.
 
@@ -45,6 +45,11 @@ De rekenlogica testen zonder Xcode-project: `cd CoreTests && swift test` (ruim 1
 ## Dag voor dag
 
 Je geeft per inkomsten- of uitgavenregel een **dag van de maand** op, en per spaarpot of belegging een **overschrijfdag** (of één dag voor de hele maand). De app rekent het saldo van je bankrekening en van elke spaarpot **per dag**. Een verdeling voor een maand die nog komt wordt op die dag overgeschreven: tot die dag telt het niet mee in het potsaldo. Op de bankpagina zie je het saldo per gekozen dag, de komende 14 dagen, een dagsaldo-grafiek en een waarschuwing als je onder nul of onder je buffer komt.
+
+## Salaris: loon per maand en uren uit je agenda
+
+- **Loon per maand.** Op Salaris staat de kaart **Loon per maand**: een lijst van wijzigingen ("Vanaf januari 2027: € 22,50 per uur"), de wijziging die nu geldt met **Nu**, en de knop **Loon wijzigen vanaf een maand**. Die opent de pagina **Loon wijzigen** (een pagina, geen blad) met de maand, het nieuwe loon en wat een uitbetaling ervan wordt. Het loon van een uitbetaling is dat van de maand waarin het op je rekening komt (`FinanceData.salarySettings(forPayoutOn:)`, één plek). Inkomen, Verdelen, Dag voor dag, Home, de schattingen, de Aankoopcheck en de doelen lezen allemaal `salarySettings(in:)`. Een nieuw bedrag op de standaardkaart wordt een wijziging vanaf deze maand zodra er al salaris in het verleden is (`setWage`); eerdere maanden blijven zoals ze waren.
+- **Uren uit je agenda.** Bij een uurloon kies je op Salaris of op **Instellingen, Werkuren** "Uren uit je agenda": MyBuddy leest dan het begin en einde van de afspraken in de agenda **werken** (de naam kies je zelf), met toeslagen per weekdag, feestdag of datum, onbetaalde pauzes en de Nederlandse feestdagen. Wat de agenda nog niet kent komt uit je gemiddelde uren per week. Salaris toont de uren van de volgende twee uitbetalingen (gewerkt, gepland, verwacht, toeslag, pauze, bedrag); Inkomen, Dag voor dag en Home zeggen bij het salaris "uit agenda: 38,5 uur". De agenda wordt gelezen bij het openen, als de app weer actief wordt, kort na een wijziging in de agenda en met **Nu verversen**. Titels, notities, plaatsen en deelnemers worden nooit gelezen of bewaard. De toestemmingsvraag komt pas als je de agenda aanzet.
 
 ## Spaarpotten met rente
 

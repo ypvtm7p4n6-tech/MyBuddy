@@ -257,7 +257,7 @@ struct DataPage: View {
         readingName = url.lastPathComponent
         withAnimation(reduceMotion ? nil : Theme.motion) { isReading = true }
         let month = store.now
-        let configuredSalary = store.data.salary.monthlyAmount()
+        let configuredSalary = store.data.salarySettings(in: month).monthlyAmount()
         let started = Date()
         Task { @MainActor in
             let outcome = await SpreadsheetLoader.load(url: url, month: month)

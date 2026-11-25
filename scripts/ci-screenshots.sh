@@ -4,6 +4,8 @@
 #
 # De launch-argumenten staan in App/Debug/DebugLaunch.swift; dit script gebruikt alleen argumenten die daar bestaan:
 #   -mybuddy-demo              voorbeelddata
+#   -mybuddy-demo-verdelen     voorbeelddata met een extra bedrag, extra overschrijfdag, bankdeel en een loonwijziging
+#   -mybuddy-demo-hours        uurloon met de uren uit een vaste demo-agenda "werken"
 #   -mybuddy-tab home|library|search      de tab (de oude namen overview, month, saving, planning, savings en tools werken nog als alias)
 #   -mybuddy-open <pagina>     opent een pagina op de stapel van de tab (flow, tools, income, bank, pot0, goal0, layout, ...)
 #   -mybuddy-hero 0|1|2        Home opent op hero-kaart 0, 1 of 2 (Nog te verdelen, Vermogen, Saldo vandaag)
@@ -82,6 +84,13 @@ shoot_device() {
     shot cashflow -mybuddy-tab library -mybuddy-open cashflow
     shot cashflow-2 -mybuddy-tab library -mybuddy-open cashflow -mybuddy-scroll-to "Saldo per dag"
     shot distribute -mybuddy-tab library -mybuddy-open distribute
+    shot distribute-extra -mybuddy-demo-verdelen -mybuddy-tab library -mybuddy-open distribute
+    shot distribute-extra-2 -mybuddy-demo-verdelen -mybuddy-tab library -mybuddy-open distribute -mybuddy-scroll 700
+    shot salary-wage -mybuddy-demo-verdelen -mybuddy-tab library -mybuddy-open salary -mybuddy-scroll 450
+    shot wage-change -mybuddy-demo-verdelen -mybuddy-tab library -mybuddy-open wagechange
+    shot salary-hours -mybuddy-demo-hours -mybuddy-tab library -mybuddy-open salary -mybuddy-scroll 450
+    shot workhours -mybuddy-demo-hours -mybuddy-tab home -mybuddy-open workhours
+    shot startdate -mybuddy-tab home -mybuddy-open startdate
     # Sparen en beleggen: de lijsten en de albumpagina's
     shot pots -mybuddy-tab library -mybuddy-open pots
     shot pot -mybuddy-tab library -mybuddy-open pot0

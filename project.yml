@@ -39,6 +39,8 @@ targets:
         ENABLE_APP_SANDBOX: YES
         ENABLE_USER_SELECTED_FILES: readwrite
         ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
+        ENABLE_RESOURCE_ACCESS_CALENDARS: YES
+        INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: "MyBuddy leest alleen het begin en einde van afspraken in de agenda die je kiest (standaard 'werken') om je werkuren en salaris uit te rekenen. Titels en notities worden niet gelezen of bewaard."
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_PREVIEWS: YES
   MyBuddyTests:

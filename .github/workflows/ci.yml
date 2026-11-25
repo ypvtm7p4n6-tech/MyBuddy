@@ -69,6 +69,18 @@ jobs:
           xcodebuild -project MyBuddy.xcodeproj -scheme MyBuddy \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* " | head -n 150
+      - name: Agenda-toegang staat in de entitlements
+        run: |
+          XCENT=$(find ~/Library/Developer/Xcode/DerivedData -name "MyBuddy.app.xcent" 2>/dev/null | head -n 1)
+          if [ -z "$XCENT" ]; then
+            echo "::warning::MyBuddy.app.xcent niet gevonden; de agenda-entitlement is niet gecontroleerd."
+          elif grep -q "personal-information.calendars" "$XCENT"; then
+            echo "Agenda-entitlement aanwezig in $XCENT"
+          else
+            echo "::error::De entitlement com.apple.security.personal-information.calendars ontbreekt in $XCENT"
+            cat "$XCENT"
+            exit 1
+          fi
 
   screenshots:
     if: github.event_name == 'workflow_dispatch'

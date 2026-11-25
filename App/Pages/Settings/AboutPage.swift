@@ -52,6 +52,8 @@ struct AboutPage: View {
                 sourceRow(title: "Op dit apparaat",
                           detail: "Alles wordt alleen op dit apparaat bewaard. Accounts zijn lokaal: er is geen server en geen synchronisatie tussen apparaten.")
             }
+            sourceRow(title: "Agenda",
+                      detail: "Alleen als je de uren van je salaris uit je agenda haalt: MyBuddy leest dan het begin en einde van de afspraken in de agenda die je kiest. Titels, notities, plaatsen en deelnemers worden niet gelezen of bewaard.")
             sourceRow(title: "Back-ups en exports",
                       detail: "Een back-up of export bevat al je persoonlijke gegevens. Bewaar hem op een veilige plek en deel hem niet zomaar.")
         } header: {

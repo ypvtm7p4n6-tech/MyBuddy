@@ -8,6 +8,8 @@ import Foundation
 /// `-mybuddy-demo -mybuddy-open flow` (Maandoverzicht), `-mybuddy-open tools` (Hulpmiddelen)
 /// `-mybuddy-demo -mybuddy-hero 1` (Home opent op hero-kaart 0, 1 of 2: Nog te verdelen, Vermogen, Saldo vandaag)
 /// `-mybuddy-demo -mybuddy-order home` (opent het blad "Volgorde aanpassen" van Home)
+/// `-mybuddy-demo -mybuddy-demo-verdelen` (voorbeelddata met een extra bedrag, extra overschrijfdag, bankdeel en een loonwijziging)
+/// `-mybuddy-demo -mybuddy-demo-hours` (uurloon met de uren uit een vaste demo-agenda "werken")
 /// `-mybuddy-demo -mybuddy-settings` (pusht Instellingen op de huidige stapel; op de Mac het Settings-venster)
 /// `-mybuddy-demo -mybuddy-demo-holding only-invested` (een belegging zonder waarde-updates, zie `DemoHoldingScenario`)
 /// `-mybuddy-demo -mybuddy-scroll-to <sectiekop>` (een lijstpagina scrolt naar die sectie)
@@ -58,6 +60,19 @@ enum DebugLaunch {
 
     @MainActor
     static func apply(to router: Router, store: AppStore) {
+        if arguments.contains("-mybuddy-demo-verdelen") {
+            store.mutate { data in
+                data = FinanceData.sampleWithDistribution(now: Date())
+                data.materialize(upTo: store.now)
+            }
+        }
+        if arguments.contains("-mybuddy-demo-hours") {
+            // Uurloon met de uren uit de vaste demo-agenda (`DemoWorkCalendar`); de diensten komen bij het openen van de app.
+            store.mutate { data in
+                data.salary.mode = .hourly
+                data.work.hoursSource = .calendar
+            }
+        }
         if let scenario = demoHolding { scenario.apply(to: store) }
         if let raw = value(for: "-mybuddy-period"), let mode = PeriodMode(rawValue: raw) {
             router.periodMode = mode
@@ -118,6 +133,8 @@ enum DebugLaunch {
         case "rates", "prices": return .settings(.prices)
         case "data": return .settings(.data)
         case "startdate": return .settings(.startDate)
+        case "workhours", "werkuren": return .settings(.workHours)
+        case "wagechange": return .wageChange(store.now.adding(1))
         case "layout": return .settings(.layout)
         case "about": return .settings(.about)
         case "importreview": return .settings(.importReview)

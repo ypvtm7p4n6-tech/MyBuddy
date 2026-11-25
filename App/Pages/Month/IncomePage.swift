@@ -84,6 +84,12 @@ private struct IncomePayoutLine: Identifiable {
     let date: Date
     let amount: Double
     let isPlanned: Bool
+    /// Bij uren uit je agenda: "uit agenda: 38,5 uur" (`WorkText.payoutDetail`).
+    var hours: String? = nil
+
+    var detail: String {
+        ([isPlanned ? "Salaris · gepland" : "Salaris"] + (hours.map { [$0] } ?? [])).joined(separator: " · ")
+    }
 }
 
 /// De uitbetalingen van de maand, een afwijkend bedrag of andere uren, en een link naar Dag voor dag.
@@ -101,7 +107,7 @@ private struct IncomeSalarySection: View {
             MonthExplanation(text: subtitle(d, count: payouts.count))
             ForEach(payouts) { payout in
                 AmountRow(title: DayText.weekdayShort(payout.date), value: "+ " + Fmt.euro(payout.amount),
-                          detail: payout.isPlanned ? "Salaris · gepland" : "Salaris", color: Theme.positive,
+                          detail: payout.detail, color: Theme.positive,
                           symbol: "briefcase.fill")
             }
             scheduleNote(d, count: payouts.count)
@@ -119,7 +125,8 @@ private struct IncomeSalarySection: View {
             .map { payout in
                 let date = month.date(day: payout.day)
                 return IncomePayoutLine(id: payout.id, date: date, amount: CentsMath.value(payout.cents),
-                                        isPlanned: DayMath.isPlanned(date, asOf: today))
+                                        isPlanned: DayMath.isPlanned(date, asOf: today),
+                                        hours: WorkText.payoutDetail(payout.hours))
             }
     }
 
@@ -174,6 +181,9 @@ private struct IncomeSalarySection: View {
             if plan.hoursOverride != nil {
                 NumberRow(title: s.isMonthly ? "Gewerkte uren" : "Gewerkte uren (hele maand)",
                           value: hoursAmount, unit: .plain("uur"))
+                if d.usesCalendarHours {
+                    MonthExplanation(text: WorkText.ownHoursNote)
+                }
                 if !s.isMonthly {
                     MonthExplanation(text: "De uren worden gelijk verdeeld over de uitbetalingen van deze maand.")
                 }

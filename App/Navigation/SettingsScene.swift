@@ -1,23 +1,26 @@
 #if os(macOS)
 import SwiftUI
 
-/// Het `Settings`-venster van de Mac (Cmd+komma, App-menu). Instellingen is daar geen tab maar een eigen venster met zes
-/// panes: Account, Rekenen, Koersen, Gegevens, Indeling en Over; elke pane toont `SettingsPane(page:)`. De scene heeft de
+/// Het `Settings`-venster van de Mac (Cmd+komma, App-menu). Instellingen is daar geen tab maar een eigen venster met zeven
+/// panes: Account, Rekenen, Werkuren, Koersen, Gegevens, Indeling en Over; elke pane toont `SettingsPane(page:)`. De scene heeft de
 /// gegevens van de actieve sessie nodig (`ActiveSession`); `auth` en `cloud` staan op `MyBuddyApp` en komen er expliciet in.
 struct SettingsScene: Scene {
     let session: ActiveSession
     let auth: AuthStore
     let cloud: CloudAccount
+    let workCalendar: WorkCalendarController
 
-    init(session: ActiveSession, auth: AuthStore, cloud: CloudAccount) {
+    init(session: ActiveSession, auth: AuthStore, cloud: CloudAccount, workCalendar: WorkCalendarController) {
         self.session = session
         self.auth = auth
         self.cloud = cloud
+        self.workCalendar = workCalendar
     }
 
     var body: some Scene {
         Settings {
             SettingsSceneContent(session: session, auth: auth, cloud: cloud)
+                .environment(workCalendar)
         }
     }
 }
@@ -47,7 +50,7 @@ private struct SettingsSceneContent: View {
     }
 }
 
-/// De zes panes. De laatst gebruikte pane wordt onthouden; een diepe link (`router.go(.settings(_))`) zet
+/// De zeven panes. De laatst gebruikte pane wordt onthouden; een diepe link (`router.go(.settings(_))`) zet
 /// `router.settingsRequest`, waarna hier de pane van die pagina opent en het verzoek wordt gewist. Is de pagina een subpagina
 /// (Wachtwoord wijzigen, Account verwijderen, Back-ups van conflicten, Importoverzicht), dan krijgt de pane die subpagina als
 /// `subpageRequest` en gaat hij er zelf naartoe (`SettingsPane`).
@@ -70,6 +73,9 @@ private struct SettingsPanes: View {
             }
             Tab("Rekenen", systemImage: "percent", value: SettingsPage.calculations) {
                 SettingsPane(page: .calculations, subpageRequest: $subpageRequest)
+            }
+            Tab(LocalizedStringKey(SettingsPage.workHours.title), systemImage: SettingsPage.workHours.symbol, value: SettingsPage.workHours) {
+                SettingsPane(page: .workHours, subpageRequest: $subpageRequest)
             }
             Tab("Koersen", systemImage: "arrow.triangle.2.circlepath", value: SettingsPage.prices) {
                 SettingsPane(page: .prices, subpageRequest: $subpageRequest)

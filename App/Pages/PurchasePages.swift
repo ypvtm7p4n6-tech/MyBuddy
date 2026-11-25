@@ -217,11 +217,11 @@ private struct PurchasePageContent: View {
 
     // MARK: Gegevens
 
-    private var autoWage: Double? { store.data.effectiveHourlyWage() }
+    private var autoWage: Double? { store.data.effectiveHourlyWage(in: store.now) }
 
     /// Het uurloon waarmee gerekend wordt: zelf ingevuld, anders uit je salaris.
     private var wage: Double {
-        PurchaseCalc.resolvedWage(manual: manualWage, data: store.data) ?? 0
+        PurchaseCalc.resolvedWage(manual: manualWage, data: store.data, in: store.now) ?? 0
     }
 
     /// Invulveld: toont het salaris-uurloon zolang je niets zelf invult; typen bewaart je eigen waarde.
@@ -234,15 +234,18 @@ private struct PurchasePageContent: View {
 
     /// Bij een vast maandsalaris is het uurloon salaris gedeeld door je uren: die uren moeten dus ergens in te vullen zijn.
     private var showsWeeklyHours: Bool {
-        store.data.salary.mode == .fixed && store.data.salary.fixedMonthly > 0
+        let current = store.data.salarySettings(in: store.now)
+        return current.mode == .fixed && current.fixedMonthly > 0
     }
 
     private var weeklyHoursBinding: Binding<Double> {
         Binding(
-            get: { store.data.salary.hoursPerWeek },
+            get: { store.data.salarySettings(in: store.now).hoursPerWeek },
             set: { newValue in
                 let weekly = newValue.isFinite ? min(max(0, newValue), 168) : 0
-                store.mutate { $0.salary.hoursPerWeek = weekly }
+                let current = store.now
+                // Een nieuw aantal uren is een nieuw loon: met salaris in het verleden een wijziging vanaf deze maand.
+                store.mutate { $0.setWage(current: current, hoursPerWeek: weekly) }
             }
         )
     }
