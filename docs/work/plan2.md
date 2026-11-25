@@ -729,3 +729,17 @@ Het script faalt met exit 1 bij een treffer en meldt per fase hoeveel plekken ee
 10. **Pakketten:** V1 (Core D1 t/m D5) → tegelijk `G2V2` (werkuren-Core van `plan.md` en loon-Core), `V3A` (Verdelen en maandcijfers), `V3B` (pot, opnemen, doelen) → tegelijk `G3A` (agenda) en `G3BV3C` (Salaris en Loon per maand). Zes bouwers; eigendom per fase in het blok van par. 5, `own-check2.sh`.
 11. **Poorten:** `run-all.sh` 0 fouten, `swift test` (V1 ≥ 2040, daarna +120), `design-checks.sh`, `start-check.sh`, `verdelen-check.sh` (één bron per grootheid), `contract-check2.sh`, `own-check2.sh`, CI.
 12. **Beperkingen:** geen toestel en geen Xcode hier; de lezing van D3 en de loonmaand van D6 zijn keuzes (7.2); oudere apps laten de nieuwe velden weg.
+
+## 9. Stand van fase 3 (25 november 2026)
+
+- [x] G3A: `App/Calendar/EventKitWorkCalendar.swift` (actor), `WorkCalendarController.swift` met `DemoWorkCalendar`, `WorkCalendarRules.collect`
+      en `CalendarEventSample` in de Core (`WorkCalendarCollectTests`), injectie in `MyBuddyApp`, `RootView` en `SettingsScene`, `project.yml`
+      (entitlement en toestemmingstekst), CI-poort (Info.plist en build setting), pagina Werkuren (`WorkHoursPage` en `WorkHoursParts`, met
+      previews), rij in Instellingen, pane op de Mac, Over MyBuddy, `DebugLaunch`, `ci-screenshots.sh`, `README.md`, `system_architecture.md`,
+      `Tests/AppTests/WorkCalendarControllerTests.swift`.
+- [x] G3BV3C: `SalaryPage` (loon van de lopende maand via `setWage`, keuze van de urenbron, kaarten "Loon per maand" en "Uren van de volgende
+      uitbetalingen" in `SalaryHoursCard.swift`), `WageChangePage` (nieuw, bewerken, verhuizen, verwijderen), `WagePreviews.swift`, Inkomen,
+      Dag voor dag en Home met "uit agenda: …", Aankoopcheck en Gegevens met het loon van de lopende maand.
+- [x] `swift test` 2301 groen (10 overgeslagen); iOS- en macOS-build in CI groen; `design-checks.sh`, `verdelen-check.sh 3`, `start-check.sh`
+      en `precheck.sh` PASS.
+- Afwijking van 4.5: Salaris leest de controller wel (optioneel), zodat "Uren uit je agenda" ook daar meteen om toegang vraagt en ververst.

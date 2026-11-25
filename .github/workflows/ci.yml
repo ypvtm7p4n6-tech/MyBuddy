@@ -69,18 +69,16 @@ jobs:
           xcodebuild -project MyBuddy.xcodeproj -scheme MyBuddy \
             -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* " | head -n 150
-      - name: Agenda-toegang staat in de entitlements
+      - name: Agenda-toegang staat in de app
         run: |
-          XCENT=$(find ~/Library/Developer/Xcode/DerivedData -name "MyBuddy.app.xcent" 2>/dev/null | head -n 1)
-          if [ -z "$XCENT" ]; then
-            echo "::warning::MyBuddy.app.xcent niet gevonden; de agenda-entitlement is niet gecontroleerd."
-          elif grep -q "personal-information.calendars" "$XCENT"; then
-            echo "Agenda-entitlement aanwezig in $XCENT"
-          else
-            echo "::error::De entitlement com.apple.security.personal-information.calendars ontbreekt in $XCENT"
-            cat "$XCENT"
-            exit 1
-          fi
+          # Zonder deze tekst stort de app in bij de toestemmingsvraag; zonder de build setting geeft de sandbox geen agenda.
+          PLIST=$(find ~/Library/Developer/Xcode/DerivedData -path "*Build/Products/*/MyBuddy.app/Contents/Info.plist" 2>/dev/null | head -n 1)
+          if [ -z "$PLIST" ]; then echo "::error::Info.plist van de gebouwde app niet gevonden"; exit 1; fi
+          /usr/libexec/PlistBuddy -c "Print :NSCalendarsFullAccessUsageDescription" "$PLIST" \
+            || { echo "::error::NSCalendarsFullAccessUsageDescription ontbreekt in $PLIST"; exit 1; }
+          xcodebuild -project MyBuddy.xcodeproj -scheme MyBuddy -destination 'platform=macOS' -showBuildSettings 2>/dev/null \
+            | grep -E "ENABLE_RESOURCE_ACCESS_CALENDARS = YES" \
+            || { echo "::error::ENABLE_RESOURCE_ACCESS_CALENDARS staat niet aan"; exit 1; }
 
   screenshots:
     if: github.event_name == 'workflow_dispatch'
