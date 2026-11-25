@@ -36,7 +36,8 @@ final class FeatureUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Loon wijzigen"].waitForExistence(timeout: 5), "de pagina Loon wijzigen opent")
         let rate = app.textFields["Uurloon"]
         XCTAssertTrue(rate.waitForExistence(timeout: 5))
-        rate.tap()
+        // Het getal staat rechts in het veld: tik daar, zodat de cursor achter het getal staat en wissen werkt.
+        rate.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         rate.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 12) + "31")
         let save = app.buttons["Bewaar"]
         XCTAssertTrue(save.isEnabled, "een ander uurloon kan bewaard worden")
