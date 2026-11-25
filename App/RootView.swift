@@ -11,6 +11,9 @@ struct RootView: View {
     @Environment(AppStore.self) private var store
     @Environment(Router.self) private var router
     @Environment(\.scenePhase) private var scenePhase
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
     /// De agenda voor de uren van je salaris (nil in previews zonder agenda).
     @Environment(WorkCalendarController.self) private var workCalendar: WorkCalendarController?
     #if os(macOS)
@@ -78,29 +81,47 @@ struct RootView: View {
         withMinimizingTabBar(tabView)
     }
 
+    /// iPad (normale breedte) en Mac: de Bibliotheek is een sectie, zoals in de zijbalk van Apple TV en Apple Muziek: in de zijbalk
+    /// de kop Bibliotheek met "Alle pagina's" en de vier onderdelen eronder, in de tabbalk bovenaan één item "Bibliotheek". iPhone
+    /// (en een smal iPad-venster): drie gewone tabs.
+    private var usesLibrarySection: Bool {
+        #if os(iOS)
+        return horizontalSizeClass == .regular
+        #else
+        return true
+        #endif
+    }
+
     private var tabView: some View {
         TabView(selection: selection) {
             Tab(LocalizedStringKey(AppTab.home.title), systemImage: AppTab.home.symbol, value: AppTab.home) {
                 TabRoot(.home)
             }
-            Tab(LocalizedStringKey(AppTab.library.title), systemImage: AppTab.library.symbol, value: AppTab.library) {
-                TabRoot(.library)
+            if usesLibrarySection {
+                TabSection(LocalizedStringKey(AppTab.library.title)) {
+                    Tab("Alle pagina's", systemImage: AppTab.library.symbol, value: AppTab.library) {
+                        TabRoot(.library)
+                    }
+                    ForEach(AppTab.sidebarItems) { item in
+                        Tab(LocalizedStringKey(item.title), systemImage: item.symbol, value: item) {
+                            TabRoot(item)
+                        }
+                    }
+                }
+            } else {
+                Tab(LocalizedStringKey(AppTab.library.title), systemImage: AppTab.library.symbol, value: AppTab.library) {
+                    TabRoot(.library)
+                }
             }
             Tab(value: AppTab.search, role: .search) {
                 TabRoot(.search)
             }
-            // iPad en Mac: de onderdelen van de Bibliotheek als sectie in de zijbalk, zoals in Apple Muziek en Apple TV. De
-            // iPhone toont ze niet in de tabbalk (daar is de Bibliotheek zelf de ingang).
-            TabSection(LocalizedStringKey(AppTab.library.title)) {
-                ForEach(AppTab.sidebarItems) { item in
-                    Tab(LocalizedStringKey(item.title), systemImage: item.symbol, value: item) {
-                        TabRoot(item)
-                    }
-                    .defaultVisibility(.hidden, for: .tabBar)
-                }
-            }
         }
         .tabViewStyle(.sidebarAdaptable)
+        // Wordt het venster smal terwijl een onderdeel uit de zijbalk open is, dan ga je naar de Bibliotheek (die tab bestaat dan wel).
+        .onChange(of: usesLibrarySection) { _, regular in
+            if !regular, router.tab.rootDestination != nil { router.select(.library) }
+        }
     }
 
     /// Op iOS 26 krijgt de tabbalk de balk "Nog te verdelen" erboven (`MonthAccessory`) en schuift hij weg als je omlaag scrolt (op de Mac niet: die waarde bestaat daar niet). Eerdere versies laten alles zoals het is.

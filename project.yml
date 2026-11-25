@@ -1,6 +1,8 @@
 name: MyBuddy
 options:
   bundleIdPrefix: nl.mybuddy
+  # Nederlands: knoppen en teksten van het systeem (Terug, Meer, Annuleer in systeemmenu's) zijn Nederlands, zoals de app.
+  developmentLanguage: nl
   createIntermediateGroups: true
   deploymentTarget:
     iOS: "18.0"
